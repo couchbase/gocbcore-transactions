@@ -18,7 +18,7 @@ type Transactions struct {
 func Init(config *Config) (*Transactions, error) {
 	defaultConfig := &Config{
 		ExpirationTime:        10000 * time.Millisecond,
-		DurabilityLevel:       DurabilityLevelNone,
+		DurabilityLevel:       DurabilityLevelMajority,
 		KeyValueTimeout:       2500 * time.Millisecond,
 		CleanupWindow:         60000 * time.Millisecond,
 		CleanupClientAttempts: true,
@@ -64,6 +64,7 @@ func (t *Transactions) BeginTransaction(perConfig *PerTransactionConfig) (*Trans
 		expiryTime:      time.Now().Add(t.config.ExpirationTime),
 		durabilityLevel: durabilityLevel,
 		transactionID:   transactionUUID,
+		keyValueTimeout: t.config.KeyValueTimeout,
 	}, nil
 }
 

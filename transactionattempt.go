@@ -123,6 +123,13 @@ func (t *transactionAttempt) confirmATRPending(
 		}
 	}
 
+	var duraTimeout time.Duration
+	var deadline time.Time
+	if t.keyValueTimeout > 0 {
+		deadline = time.Now().Add(t.keyValueTimeout)
+		duraTimeout = t.keyValueTimeout * 10 / 9
+	}
+
 	_, err := agent.MutateIn(gocbcore.MutateInOptions{
 		ScopeName:      scopeName,
 		CollectionName: collectionName,
@@ -133,8 +140,10 @@ func (t *transactionAttempt) confirmATRPending(
 			atrFieldOp("st", jsonAtrStatePending, 0),
 			atrFieldOp("exp", t.expiryTime.Sub(time.Now()), 0),
 		},
-		DurabilityLevel: memd.DurabilityLevel(t.durabilityLevel),
-		Flags:           memd.SubdocDocFlagMkDoc,
+		DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
+		DurabilityLevelTimeout: duraTimeout,
+		Deadline:               deadline,
+		Flags:                  memd.SubdocDocFlagMkDoc,
 	}, func(result *gocbcore.MutateInResult, err error) {
 		if err != nil {
 			t.lock.Lock()
@@ -419,6 +428,11 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 
 	t.lock.Unlock()
 
+	var deadline time.Time
+	if t.keyValueTimeout > 0 {
+		deadline = time.Now().Add(t.keyValueTimeout)
+	}
+
 	_, err := opts.Agent.LookupIn(gocbcore.LookupInOptions{
 		ScopeName:      opts.ScopeName,
 		CollectionName: opts.CollectionName,
@@ -440,6 +454,7 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 				Flags: 0,
 			},
 		},
+		Deadline: deadline,
 	}, func(result *gocbcore.LookupInResult, err error) {
 		if errors.Is(err, gocbcore.ErrDocumentNotFound) {
 			cb(nil, ErrDocNotFound)
@@ -589,6 +604,13 @@ func (t *transactionAttempt) Insert(opts InsertOptions, cb StoreCallback) error 
 		txnMetaBytes, _ := json.Marshal(txnMeta)
 		// TODO(brett19): Don't ignore the error here.
 
+		var duraTimeout time.Duration
+		var deadline time.Time
+		if t.keyValueTimeout > 0 {
+			deadline = time.Now().Add(t.keyValueTimeout)
+			duraTimeout = t.keyValueTimeout * 10 / 9
+		}
+
 		_, err = stagedInfo.Agent.MutateIn(gocbcore.MutateInOptions{
 			ScopeName:      stagedInfo.ScopeName,
 			CollectionName: stagedInfo.CollectionName,
@@ -601,8 +623,10 @@ func (t *transactionAttempt) Insert(opts InsertOptions, cb StoreCallback) error 
 					Value: txnMetaBytes,
 				},
 			},
-			DurabilityLevel: memd.DurabilityLevel(t.durabilityLevel),
-			Flags:           memd.SubdocDocFlagAddDoc,
+			DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
+			DurabilityLevelTimeout: duraTimeout,
+			Deadline:               deadline,
+			Flags:                  memd.SubdocDocFlagAddDoc,
 		}, func(result *gocbcore.MutateInResult, err error) {
 			if err != nil {
 				t.handleError(err)
@@ -678,6 +702,13 @@ func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) erro
 		txnMetaBytes, _ := json.Marshal(txnMeta)
 		// TODO(brett19): Don't ignore the error here.
 
+		var duraTimeout time.Duration
+		var deadline time.Time
+		if t.keyValueTimeout > 0 {
+			deadline = time.Now().Add(t.keyValueTimeout)
+			duraTimeout = t.keyValueTimeout * 10 / 9
+		}
+
 		_, err = stagedInfo.Agent.MutateIn(gocbcore.MutateInOptions{
 			ScopeName:      stagedInfo.ScopeName,
 			CollectionName: stagedInfo.CollectionName,
@@ -691,8 +722,10 @@ func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) erro
 					Value: txnMetaBytes,
 				},
 			},
-			DurabilityLevel: memd.DurabilityLevel(t.durabilityLevel),
-			Flags:           memd.SubdocDocFlagNone,
+			Flags:                  memd.SubdocDocFlagNone,
+			DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
+			DurabilityLevelTimeout: duraTimeout,
+			Deadline:               deadline,
 		}, func(result *gocbcore.MutateInResult, err error) {
 			if err != nil {
 				t.handleError(err)
@@ -767,6 +800,13 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 		txnMetaBytes, _ := json.Marshal(txnMeta)
 		// TODO(brett19): Don't ignore the error here.
 
+		var duraTimeout time.Duration
+		var deadline time.Time
+		if t.keyValueTimeout > 0 {
+			deadline = time.Now().Add(t.keyValueTimeout)
+			duraTimeout = t.keyValueTimeout * 10 / 9
+		}
+
 		_, err = stagedInfo.Agent.MutateIn(gocbcore.MutateInOptions{
 			ScopeName:      stagedInfo.ScopeName,
 			CollectionName: stagedInfo.CollectionName,
@@ -780,8 +820,10 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 					Value: txnMetaBytes,
 				},
 			},
-			DurabilityLevel: memd.DurabilityLevel(t.durabilityLevel),
-			Flags:           memd.SubdocDocFlagNone,
+			Flags:                  memd.SubdocDocFlagNone,
+			DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
+			DurabilityLevelTimeout: duraTimeout,
+			Deadline:               deadline,
 		}, func(result *gocbcore.MutateInResult, err error) {
 			if err != nil {
 				t.handleError(err)
