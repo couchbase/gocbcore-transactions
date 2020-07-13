@@ -63,6 +63,10 @@ type transactionAttempt struct {
 	txnOpSection  atomicWaitQueue
 }
 
+func (t *transactionAttempt) atrCollName() string {
+	return t.atrScopeName + "." + t.atrCollectionName
+}
+
 func (t *transactionAttempt) checkDone() error {
 	t.lock.Lock()
 	defer t.lock.Unlock()
@@ -595,7 +599,7 @@ func (t *transactionAttempt) Insert(opts InsertOptions, cb StoreCallback) error 
 		var txnMeta jsonTxnXattr
 		txnMeta.ID.Transaction = t.transactionID
 		txnMeta.ID.Attempt = t.id
-		txnMeta.ATR.CollectionName = t.atrCollectionName
+		txnMeta.ATR.CollectionName = t.atrCollName()
 		txnMeta.ATR.BucketName = "" // TODO(brett19): Need the bucket name.
 		txnMeta.ATR.DocID = string(t.atrKey)
 		txnMeta.Operation.Type = jsonMutationInsert
@@ -693,7 +697,7 @@ func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) erro
 		var txnMeta jsonTxnXattr
 		txnMeta.ID.Transaction = t.transactionID
 		txnMeta.ID.Attempt = t.id
-		txnMeta.ATR.CollectionName = t.atrCollectionName
+		txnMeta.ATR.CollectionName = t.atrCollName()
 		txnMeta.ATR.BucketName = "" // TODO(brett19): Need the bucket name.
 		txnMeta.ATR.DocID = string(t.atrKey)
 		txnMeta.Operation.Type = jsonMutationReplace
@@ -791,7 +795,7 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 		var txnMeta jsonTxnXattr
 		txnMeta.ID.Transaction = t.transactionID
 		txnMeta.ID.Attempt = t.id
-		txnMeta.ATR.CollectionName = t.atrCollectionName
+		txnMeta.ATR.CollectionName = t.atrCollName()
 		txnMeta.ATR.BucketName = "" // TODO(brett19): Need the bucket name.
 		txnMeta.ATR.DocID = string(t.atrKey)
 		txnMeta.Operation.Type = jsonMutationRemove
