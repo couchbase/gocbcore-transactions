@@ -56,8 +56,8 @@ type jsonTxnXattr struct {
 		Type   jsonMutationType `json:"type,omitempty"`
 		Staged json.RawMessage  `json:"stgd,omitempty"`
 	} `json:"op,omitempty"`
-	Restore struct {
-		OriginalCAS string `json:"cas,omitempty"`
+	Restore *struct {
+		OriginalCAS uint64 `json:"cas,omitempty"`
 		ExpiryTime  uint   `json:"exptime,omitempty"`
 		RevID       string `json:"revid,omitempty"`
 	} `json:"restore,omitempty"`

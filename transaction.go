@@ -61,6 +61,8 @@ type GetResult struct {
 	scopeName      string
 	collectionName string
 	key            []byte
+	revid          string
+	expiry         uint
 
 	Value []byte
 	Cas   gocbcore.Cas

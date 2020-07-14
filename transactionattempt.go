@@ -466,7 +466,9 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 		}
 
 		var docMeta struct {
-			Cas string `json:"CAS"`
+			Cas        string `json:"CAS"`
+			RevID      string `json:"rev"`
+			Expiration uint   `json:"expiration"`
 		}
 		// TODO(brett19): Don't ignore the error here
 		json.Unmarshal(result.Ops[0].Value, &docMeta)
@@ -562,6 +564,8 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 			key:            opts.Key,
 			Value:          docBytes,
 			Cas:            docCas,
+			revid:          docMeta.RevID,
+			expiry:         docMeta.Expiration,
 		}, nil)
 	})
 	if err != nil {
@@ -702,6 +706,20 @@ func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) erro
 		txnMeta.ATR.DocID = string(t.atrKey)
 		txnMeta.Operation.Type = jsonMutationReplace
 		txnMeta.Operation.Staged = stagedInfo.Staged
+		restore := struct {
+			OriginalCAS uint64
+			ExpiryTime  uint
+			RevID       string
+		}{
+			OriginalCAS: uint64(opts.Document.Cas),
+			ExpiryTime:  opts.Document.expiry,
+			RevID:       opts.Document.revid,
+		}
+		txnMeta.Restore = (*struct {
+			OriginalCAS uint64 `json:"cas,omitempty"`
+			ExpiryTime  uint   `json:"exptime,omitempty"`
+			RevID       string `json:"revid,omitempty"`
+		})(&restore)
 
 		txnMetaBytes, _ := json.Marshal(txnMeta)
 		// TODO(brett19): Don't ignore the error here.
