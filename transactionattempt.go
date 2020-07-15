@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -139,10 +140,10 @@ func (t *transactionAttempt) confirmATRPending(
 		CollectionName: collectionName,
 		Key:            atrKey,
 		Ops: []gocbcore.SubDocOp{
-			atrFieldOp("tst", "${Mutation.CAS}", 0),
-			atrFieldOp("tid", t.transactionID, 0),
-			atrFieldOp("st", jsonAtrStatePending, 0),
-			atrFieldOp("exp", t.expiryTime.Sub(time.Now()), 0),
+			atrFieldOp("tst", "${Mutation.CAS}", memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros),
+			atrFieldOp("tid", t.transactionID, memd.SubdocFlagXattrPath),
+			atrFieldOp("st", jsonAtrStatePending, memd.SubdocFlagXattrPath),
+			atrFieldOp("exp", t.expiryTime.Sub(time.Now())/time.Millisecond, memd.SubdocFlagXattrPath),
 		},
 		DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
 		DurabilityLevelTimeout: duraTimeout,
@@ -206,14 +207,14 @@ func (t *transactionAttempt) setATRCommitted(
 
 		t.state = AttemptStateCommitted
 
-		var insMutations []jsonAtrMutation
-		var repMutations []jsonAtrMutation
-		var remMutations []jsonAtrMutation
+		insMutations := []jsonAtrMutation{}
+		repMutations := []jsonAtrMutation{}
+		remMutations := []jsonAtrMutation{}
 
 		for _, mutation := range t.stagedMutations {
 			jsonMutation := jsonAtrMutation{
 				BucketName:     "",
-				ScopeName:      "",
+				ScopeName:      mutation.ScopeName,
 				CollectionName: mutation.CollectionName,
 				DocID:          string(mutation.Key),
 			}
@@ -248,12 +249,12 @@ func (t *transactionAttempt) setATRCommitted(
 			CollectionName: atrCollectionName,
 			Key:            atrKey,
 			Ops: []gocbcore.SubDocOp{
-				atrFieldOp("st", jsonAtrStateCommitted, 0),
-				atrFieldOp("tsc", "${Mutation.CAS}", 0),
-				atrFieldOp("ins", insMutations, 0),
-				atrFieldOp("rep", repMutations, 0),
-				atrFieldOp("rem", remMutations, 0),
-				atrFieldOp("p", 0, 0),
+				atrFieldOp("st", jsonAtrStateCommitted, memd.SubdocFlagXattrPath),
+				atrFieldOp("tsc", "${Mutation.CAS}", memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros),
+				atrFieldOp("p", 0, memd.SubdocFlagXattrPath),
+				atrFieldOp("ins", insMutations, memd.SubdocFlagXattrPath),
+				atrFieldOp("rep", repMutations, memd.SubdocFlagXattrPath),
+				atrFieldOp("rem", remMutations, memd.SubdocFlagXattrPath),
 			},
 			DurabilityLevel: memd.DurabilityLevel(t.durabilityLevel),
 			Flags:           memd.SubdocDocFlagNone,
@@ -333,8 +334,8 @@ func (t *transactionAttempt) setATRCompleted(
 		CollectionName: atrCollectionName,
 		Key:            atrKey,
 		Ops: []gocbcore.SubDocOp{
-			atrFieldOp("st", jsonAtrStateCompleted, 0),
-			atrFieldOp("tsco", "${Mutation.CAS}", 0),
+			atrFieldOp("st", jsonAtrStateCompleted, memd.SubdocFlagXattrPath),
+			atrFieldOp("tsco", "${Mutation.CAS}", memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros),
 		},
 		DurabilityLevel: memd.DurabilityLevel(t.durabilityLevel),
 		Flags:           memd.SubdocDocFlagNone,
@@ -707,16 +708,16 @@ func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) erro
 		txnMeta.Operation.Type = jsonMutationReplace
 		txnMeta.Operation.Staged = stagedInfo.Staged
 		restore := struct {
-			OriginalCAS uint64
+			OriginalCAS string
 			ExpiryTime  uint
 			RevID       string
 		}{
-			OriginalCAS: uint64(opts.Document.Cas),
+			OriginalCAS: fmt.Sprintf("%s", opts.Document.Cas),
 			ExpiryTime:  opts.Document.expiry,
 			RevID:       opts.Document.revid,
 		}
 		txnMeta.Restore = (*struct {
-			OriginalCAS uint64 `json:"cas,omitempty"`
+			OriginalCAS string `json:"CAS,omitempty"`
 			ExpiryTime  uint   `json:"exptime,omitempty"`
 			RevID       string `json:"revid,omitempty"`
 		})(&restore)
