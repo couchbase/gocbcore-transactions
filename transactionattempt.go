@@ -11,15 +11,15 @@ import (
 	"github.com/couchbase/gocbcore/v9/memd"
 )
 
-type attemptState int
+type AttemptState int
 
 const (
-	attemptStateNothingWritten = attemptState(1)
-	attemptStatePending        = attemptState(2)
-	attemptStateCommitted      = attemptState(3)
-	attemptStateCompleted      = attemptState(4)
-	attemptStateAborted        = attemptState(5)
-	attemptStateRolledBack     = attemptState(6)
+	AttemptStateNothingWritten = AttemptState(1)
+	AttemptStatePending        = AttemptState(2)
+	AttemptStateCommitted      = AttemptState(3)
+	AttemptStateCompleted      = AttemptState(4)
+	AttemptStateAborted        = AttemptState(5)
+	AttemptStateRolledBack     = AttemptState(6)
 )
 
 type stagedMutationType int
@@ -49,7 +49,7 @@ type transactionAttempt struct {
 	id              string
 
 	// mutable state
-	state               attemptState
+	state               AttemptState
 	stagedMutations     []*stagedMutation
 	finalMutationTokens []gocbcore.MutationToken
 	atrAgent            *gocbcore.Agent
@@ -71,7 +71,7 @@ func (t *transactionAttempt) checkDone() error {
 	t.lock.Lock()
 	defer t.lock.Unlock()
 
-	if t.state != attemptStateNothingWritten && t.state != attemptStatePending {
+	if t.state != AttemptStateNothingWritten && t.state != AttemptStatePending {
 		return ErrOther
 	}
 
@@ -93,7 +93,7 @@ func (t *transactionAttempt) confirmATRPending(
 	cb func(error),
 ) error {
 	t.lock.Lock()
-	if t.state != attemptStateNothingWritten {
+	if t.state != AttemptStateNothingWritten {
 		t.lock.Unlock()
 
 		t.txnAtrSection.Wait(func() {
@@ -111,7 +111,7 @@ func (t *transactionAttempt) confirmATRPending(
 	t.atrCollectionName = collectionName
 	t.atrKey = atrKey
 
-	t.state = attemptStatePending
+	t.state = AttemptStatePending
 
 	t.txnAtrSection.Add(1)
 	t.lock.Unlock()
@@ -153,7 +153,7 @@ func (t *transactionAttempt) confirmATRPending(
 			t.lock.Lock()
 
 			// TODO(brett19): Do other things to cancel it here....
-			t.state = attemptStateAborted
+			t.state = AttemptStateAborted
 
 			t.txnAtrSection.Done()
 			t.lock.Unlock()
@@ -172,7 +172,7 @@ func (t *transactionAttempt) confirmATRPending(
 		t.lock.Lock()
 
 		// TODO(brett19): Do other things to cancel it here....
-		t.state = attemptStateAborted
+		t.state = AttemptStateAborted
 
 		t.txnAtrSection.Done()
 		t.lock.Unlock()
@@ -189,7 +189,7 @@ func (t *transactionAttempt) setATRCommitted(
 	t.txnOpSection.Wait(func() {
 
 		t.lock.Lock()
-		if t.state != attemptStatePending {
+		if t.state != AttemptStatePending {
 			t.lock.Unlock()
 
 			t.txnAtrSection.Wait(func() {
@@ -204,7 +204,7 @@ func (t *transactionAttempt) setATRCommitted(
 		atrKey := t.atrKey
 		atrCollectionName := t.atrCollectionName
 
-		t.state = attemptStateCommitted
+		t.state = AttemptStateCommitted
 
 		var insMutations []jsonAtrMutation
 		var repMutations []jsonAtrMutation
@@ -262,7 +262,7 @@ func (t *transactionAttempt) setATRCommitted(
 				t.lock.Lock()
 
 				// TODO(brett19): Do other things to cancel it here....
-				t.state = attemptStateAborted
+				t.state = AttemptStateAborted
 
 				t.txnAtrSection.Done()
 				t.lock.Unlock()
@@ -281,7 +281,7 @@ func (t *transactionAttempt) setATRCommitted(
 			t.lock.Lock()
 
 			// TODO(brett19): Do other things to cancel it here....
-			t.state = attemptStateAborted
+			t.state = AttemptStateAborted
 
 			t.txnAtrSection.Done()
 			t.lock.Unlock()
@@ -297,7 +297,7 @@ func (t *transactionAttempt) setATRCompleted(
 	cb func(error),
 ) error {
 	t.lock.Lock()
-	if t.state != attemptStateCommitted {
+	if t.state != AttemptStateCommitted {
 		t.lock.Unlock()
 
 		t.txnAtrSection.Wait(func() {
@@ -312,7 +312,7 @@ func (t *transactionAttempt) setATRCompleted(
 	atrKey := t.atrKey
 	atrCollectionName := t.atrCollectionName
 
-	t.state = attemptStateCompleted
+	t.state = AttemptStateCompleted
 
 	t.txnAtrSection.Add(1)
 	t.lock.Unlock()
@@ -343,7 +343,7 @@ func (t *transactionAttempt) setATRCompleted(
 			t.lock.Lock()
 
 			// TODO(brett19): Do other things to cancel it here....
-			t.state = attemptStateAborted
+			t.state = AttemptStateAborted
 
 			t.txnAtrSection.Done()
 			t.lock.Unlock()
@@ -362,7 +362,7 @@ func (t *transactionAttempt) setATRCompleted(
 		t.lock.Lock()
 
 		// TODO(brett19): Do other things to cancel it here....
-		t.state = attemptStateAborted
+		t.state = AttemptStateAborted
 
 		t.txnAtrSection.Done()
 		t.lock.Unlock()
@@ -377,7 +377,7 @@ func (t *transactionAttempt) handleError(err error) {
 	t.lock.Lock()
 
 	// TODO(brett19): Do other things to cancel it here....
-	t.state = attemptStateAborted
+	t.state = AttemptStateAborted
 
 	t.lock.Unlock()
 }

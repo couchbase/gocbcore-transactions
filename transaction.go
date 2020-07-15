@@ -24,6 +24,17 @@ type Transaction struct {
 	attempt       *transactionAttempt
 }
 
+func (t *Transaction) ID() string {
+	return t.transactionID
+}
+
+func (t *Transaction) Attempt() Attempt {
+	return Attempt{
+		State: t.attempt.state,
+		ID:    t.attempt.id,
+	}
+}
+
 // NewAttempt begins a new attempt with this transaction
 func (t *Transaction) NewAttempt() error {
 	attemptUUID := uuid.New().String()
@@ -35,7 +46,7 @@ func (t *Transaction) NewAttempt() error {
 		transactionID:   t.transactionID,
 
 		id:                  attemptUUID,
-		state:               attemptStateNothingWritten,
+		state:               AttemptStateNothingWritten,
 		stagedMutations:     nil,
 		finalMutationTokens: nil,
 		atrAgent:            nil,

@@ -7,6 +7,8 @@ import (
 // Attempt represents a singular attempt at executing a transaction.  A
 // transaction may require multiple attempts before being successful.
 type Attempt struct {
+	State AttemptState
+	ID    string
 }
 
 // Result represents the result of a transaction which was executed.
