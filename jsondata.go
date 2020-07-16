@@ -58,7 +58,7 @@ type jsonTxnXattr struct {
 	} `json:"op,omitempty"`
 	Restore *struct {
 		OriginalCAS string `json:"CAS,omitempty"`
-		ExpiryTime  uint   `json:"exptime,omitempty"`
+		ExpiryTime  uint   `json:"exptime"`
 		RevID       string `json:"revid,omitempty"`
 	} `json:"restore,omitempty"`
 }

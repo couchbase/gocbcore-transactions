@@ -213,6 +213,7 @@ func (t *transactionAttempt) setATRCommitted(
 
 		for _, mutation := range t.stagedMutations {
 			jsonMutation := jsonAtrMutation{
+				// BucketName:     mutation.Agent.Bucket(),
 				BucketName:     "",
 				ScopeName:      mutation.ScopeName,
 				CollectionName: mutation.CollectionName,
@@ -468,8 +469,8 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 
 		var docMeta struct {
 			Cas        string `json:"CAS"`
-			RevID      string `json:"rev"`
-			Expiration uint   `json:"expiration"`
+			RevID      string `json:"revid"`
+			Expiration uint   `json:"exptime"`
 		}
 		// TODO(brett19): Don't ignore the error here
 		json.Unmarshal(result.Ops[0].Value, &docMeta)
@@ -712,13 +713,13 @@ func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) erro
 			ExpiryTime  uint
 			RevID       string
 		}{
-			OriginalCAS: fmt.Sprintf("%s", opts.Document.Cas),
+			OriginalCAS: fmt.Sprintf("%d", opts.Document.Cas),
 			ExpiryTime:  opts.Document.expiry,
 			RevID:       opts.Document.revid,
 		}
 		txnMeta.Restore = (*struct {
 			OriginalCAS string `json:"CAS,omitempty"`
-			ExpiryTime  uint   `json:"exptime,omitempty"`
+			ExpiryTime  uint   `json:"exptime"`
 			RevID       string `json:"revid,omitempty"`
 		})(&restore)
 
