@@ -30,8 +30,9 @@ func (t *Transaction) ID() string {
 
 func (t *Transaction) Attempt() Attempt {
 	return Attempt{
-		State: t.attempt.state,
-		ID:    t.attempt.id,
+		State:         t.attempt.state,
+		ID:            t.attempt.id,
+		MutationState: t.attempt.finalMutationTokens,
 	}
 }
 

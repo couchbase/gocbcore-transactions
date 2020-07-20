@@ -52,7 +52,7 @@ type transactionAttempt struct {
 	// mutable state
 	state               AttemptState
 	stagedMutations     []*stagedMutation
-	finalMutationTokens []gocbcore.MutationToken
+	finalMutationTokens []MutationToken
 	atrAgent            *gocbcore.Agent
 	atrScopeName        string
 	atrCollectionName   string
@@ -213,8 +213,8 @@ func (t *transactionAttempt) setATRCommitted(
 
 		for _, mutation := range t.stagedMutations {
 			jsonMutation := jsonAtrMutation{
-				// BucketName:     mutation.Agent.Bucket(),
-				BucketName:     "",
+				BucketName: mutation.Agent.Bucket(),
+				// BucketName:     "",
 				ScopeName:      mutation.ScopeName,
 				CollectionName: mutation.CollectionName,
 				DocID:          string(mutation.Key),
@@ -888,19 +888,39 @@ func (t *transactionAttempt) unstageInsRepMutation(mutation stagedMutation, cb f
 		return
 	}
 
-	_, err := mutation.Agent.Replace(gocbcore.ReplaceOptions{
+	_, err := mutation.Agent.MutateIn(gocbcore.MutateInOptions{
 		ScopeName:      mutation.ScopeName,
 		CollectionName: mutation.CollectionName,
 		Key:            mutation.Key,
 		Cas:            mutation.Cas,
-		Flags:          (2 << 24),
-		Datatype:       0,
-		Value:          mutation.Staged,
-	}, func(result *gocbcore.StoreResult, err error) {
+		Ops: []gocbcore.SubDocOp{
+			{
+				Op:    memd.SubDocOpDictSet,
+				Path:  "txn",
+				Flags: memd.SubdocFlagXattrPath,
+				Value: []byte{110, 117, 108, 108}, // null
+			},
+			{
+				Op:    memd.SubDocOpDelete,
+				Path:  "txn",
+				Flags: memd.SubdocFlagXattrPath,
+			},
+			{
+				Op:    memd.SubDocOpSetDoc,
+				Path:  "",
+				Value: mutation.Staged,
+			},
+		},
+	}, func(result *gocbcore.MutateInResult, err error) {
 		if err != nil {
 			cb(err)
 			return
 		}
+
+		t.finalMutationTokens = append(t.finalMutationTokens, MutationToken{
+			BucketName:    mutation.Agent.Bucket(),
+			MutationToken: result.MutationToken,
+		})
 
 		cb(nil)
 	})
@@ -928,6 +948,11 @@ func (t *transactionAttempt) unstageRemMutation(mutation stagedMutation, cb func
 			cb(err)
 			return
 		}
+
+		t.finalMutationTokens = append(t.finalMutationTokens, MutationToken{
+			BucketName:    mutation.Agent.Bucket(),
+			MutationToken: result.MutationToken,
+		})
 
 		cb(nil)
 	})

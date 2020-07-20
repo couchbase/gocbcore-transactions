@@ -4,11 +4,18 @@ import (
 	gocbcore "github.com/couchbase/gocbcore/v9"
 )
 
+// MutationToken holds the mutation state information from an operation.
+type MutationToken struct {
+	BucketName string
+	gocbcore.MutationToken
+}
+
 // Attempt represents a singular attempt at executing a transaction.  A
 // transaction may require multiple attempts before being successful.
 type Attempt struct {
-	State AttemptState
-	ID    string
+	State         AttemptState
+	ID            string
+	MutationState []MutationToken
 }
 
 // Result represents the result of a transaction which was executed.
