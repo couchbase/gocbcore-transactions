@@ -213,7 +213,7 @@ func (t *transactionAttempt) setATRCommitted(
 
 		for _, mutation := range t.stagedMutations {
 			jsonMutation := jsonAtrMutation{
-				BucketName: mutation.Agent.Bucket(),
+				BucketName: mutation.Agent.BucketName(),
 				// BucketName:     "",
 				ScopeName:      mutation.ScopeName,
 				CollectionName: mutation.CollectionName,
@@ -918,7 +918,7 @@ func (t *transactionAttempt) unstageInsRepMutation(mutation stagedMutation, cb f
 		}
 
 		t.finalMutationTokens = append(t.finalMutationTokens, MutationToken{
-			BucketName:    mutation.Agent.Bucket(),
+			BucketName:    mutation.Agent.BucketName(),
 			MutationToken: result.MutationToken,
 		})
 
@@ -950,7 +950,7 @@ func (t *transactionAttempt) unstageRemMutation(mutation stagedMutation, cb func
 		}
 
 		t.finalMutationTokens = append(t.finalMutationTokens, MutationToken{
-			BucketName:    mutation.Agent.Bucket(),
+			BucketName:    mutation.Agent.BucketName(),
 			MutationToken: result.MutationToken,
 		})
 
