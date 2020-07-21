@@ -12,7 +12,7 @@ func testSetup(t *testing.T) {
 }
 
 func TestSomething(t *testing.T) {
-	cluster, err := gocb.Connect("couchbase://172.23.111.128", gocb.ClusterOptions{
+	cluster, err := gocb.Connect("couchbase://172.23.111.129", gocb.ClusterOptions{
 		Username: "Administrator",
 		Password: "password",
 	})

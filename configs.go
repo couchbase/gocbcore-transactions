@@ -49,6 +49,12 @@ type Config struct {
 	// CleanupLostAttempts controls where a background process is created
 	// to cleanup any ‘lost’ transaction attempts.
 	CleanupLostAttempts bool
+
+	// Internal specifies a set of options for internal use.
+	// Internal: This should never be used and is not supported.
+	Internal struct {
+		Hooks TransactionHooks
+	}
 }
 
 //PerTransactionConfig specifies options which can be overriden on a per transaction basis.

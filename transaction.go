@@ -9,11 +9,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// TransactionHooks provides a number of internal hooks used for testing.
-type TransactionHooks interface {
-	BeforeStagedInsert(ctx *transactionAttempt, key []byte, cb func(error))
-}
-
 // Transaction represents a single active transaction, it can be used to
 // stage mutations and finally commit them.
 type Transaction struct {
@@ -23,6 +18,7 @@ type Transaction struct {
 
 	transactionID string
 	attempt       *transactionAttempt
+	hooks         TransactionHooks
 }
 
 // ID returns the transaction ID of this transaction.
@@ -58,6 +54,7 @@ func (t *Transaction) NewAttempt() error {
 		atrCollectionName:   "",
 		atrKey:              nil,
 		expiryOvertimeMode:  false,
+		hooks:               t.hooks,
 	}
 
 	return nil

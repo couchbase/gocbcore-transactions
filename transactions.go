@@ -38,6 +38,9 @@ func Init(config *Config) (*Transactions, error) {
 	if config.CleanupWindow == 0 {
 		config.CleanupWindow = defaultConfig.CleanupWindow
 	}
+	if config.Internal.Hooks == nil {
+		config.Internal.Hooks = &defaultHooks{}
+	}
 
 	return &Transactions{
 		config: *config,
@@ -65,6 +68,7 @@ func (t *Transactions) BeginTransaction(perConfig *PerTransactionConfig) (*Trans
 		durabilityLevel: durabilityLevel,
 		transactionID:   transactionUUID,
 		keyValueTimeout: t.config.KeyValueTimeout,
+		hooks:           t.config.Internal.Hooks,
 	}, nil
 }
 

@@ -58,6 +58,7 @@ type transactionAttempt struct {
 	durabilityLevel DurabilityLevel
 	transactionID   string
 	id              string
+	hooks           TransactionHooks
 
 	// mutable state
 	state               AttemptState
@@ -161,6 +162,11 @@ func (t *transactionAttempt) confirmATRPending(
 		duraTimeout = t.keyValueTimeout * 10 / 9
 	}
 
+	if err := t.hooks.BeforeATRPending(); err != nil {
+		t.handleError(err)
+		return err
+	}
+
 	_, err := agent.MutateIn(gocbcore.MutateInOptions{
 		ScopeName:      scopeName,
 		CollectionName: collectionName,
@@ -193,6 +199,12 @@ func (t *transactionAttempt) confirmATRPending(
 		t.txnAtrSection.Done()
 		t.lock.Unlock()
 
+		if err := t.hooks.AfterATRPending(); err != nil {
+			t.handleError(err)
+			cb(err)
+			return
+		}
+
 		cb(nil)
 	})
 	if err != nil {
@@ -214,6 +226,12 @@ func (t *transactionAttempt) setATRCommitted(
 	cb func(error),
 ) error {
 	t.txnOpSection.Wait(func() {
+
+		if err := t.hooks.BeforeATRCommit(); err != nil {
+			t.handleError(err)
+			cb(err)
+			return
+		}
 
 		t.lock.Lock()
 		if t.state != AttemptStatePending {
@@ -303,6 +321,12 @@ func (t *transactionAttempt) setATRCommitted(
 			t.txnAtrSection.Done()
 			t.lock.Unlock()
 
+			if err := t.hooks.AfterATRCommit(); err != nil {
+				t.handleError(err)
+				cb(err)
+				return
+			}
+
 			cb(nil)
 		})
 		if err != nil {
@@ -324,6 +348,12 @@ func (t *transactionAttempt) setATRCommitted(
 func (t *transactionAttempt) setATRCompleted(
 	cb func(error),
 ) error {
+
+	if err := t.hooks.BeforeATRComplete(); err != nil {
+		t.handleError(err)
+		return err
+	}
+
 	t.lock.Lock()
 	if t.state != AttemptStateCommitted {
 		t.lock.Unlock()
@@ -383,6 +413,12 @@ func (t *transactionAttempt) setATRCompleted(
 		t.lock.Lock()
 		t.txnAtrSection.Done()
 		t.lock.Unlock()
+
+		if err := t.hooks.AfterATRComplete(); err != nil {
+			t.handleError(err)
+			cb(err)
+			return
+		}
 
 		cb(nil)
 	})
@@ -463,6 +499,11 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 	var deadline time.Time
 	if t.keyValueTimeout > 0 {
 		deadline = time.Now().Add(t.keyValueTimeout)
+	}
+
+	if err := t.hooks.BeforeDocGet(opts.Key); err != nil {
+		t.handleError(err)
+		return err
 	}
 
 	_, err := opts.Agent.LookupIn(gocbcore.LookupInOptions{
@@ -567,6 +608,12 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 
 			getTxnState(func(state jsonAtrState, err error) {
 				if state == jsonAtrStateCommitted {
+					if err := t.hooks.AfterGetComplete(opts.Key); err != nil {
+						t.handleError(err)
+						cb(nil, err)
+						return
+					}
+
 					// TODO(brett19): Discuss virtual CAS with Graham
 					cb(&GetResult{
 						agent:          opts.Agent,
@@ -614,6 +661,12 @@ func (t *transactionAttempt) Insert(opts InsertOptions, cb StoreCallback) error 
 
 	err := t.confirmATRPending(opts.Agent, opts.ScopeName, opts.CollectionName, opts.Key, func(err error) {
 		if err != nil {
+			t.handleError(err)
+			cb(nil, err)
+			return
+		}
+
+		if err := t.hooks.BeforeStagedInsert(opts.Key); err != nil {
 			t.handleError(err)
 			cb(nil, err)
 			return
@@ -670,6 +723,12 @@ func (t *transactionAttempt) Insert(opts InsertOptions, cb StoreCallback) error 
 				return
 			}
 
+			if err := t.hooks.AfterStagedInsertComplete(opts.Key); err != nil {
+				t.handleError(err)
+				cb(nil, err)
+				return
+			}
+
 			t.lock.Lock()
 			stagedInfo.Cas = result.Cas
 			t.stagedMutations = append(t.stagedMutations, stagedInfo)
@@ -710,8 +769,15 @@ func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) erro
 	scopeName := opts.Document.scopeName
 	collectionName := opts.Document.collectionName
 	key := opts.Document.key
+
 	err := t.confirmATRPending(agent, scopeName, collectionName, key, func(err error) {
 		if err != nil {
+			t.handleError(err)
+			cb(nil, err)
+			return
+		}
+
+		if err := t.hooks.BeforeStagedReplace(key); err != nil {
 			t.handleError(err)
 			cb(nil, err)
 			return
@@ -783,6 +849,12 @@ func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) erro
 				return
 			}
 
+			if err := t.hooks.AfterStagedReplaceComplete(key); err != nil {
+				t.handleError(err)
+				cb(nil, err)
+				return
+			}
+
 			t.lock.Lock()
 			stagedInfo.Cas = result.Cas
 			t.stagedMutations = append(t.stagedMutations, stagedInfo)
@@ -795,7 +867,7 @@ func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) erro
 				key:            stagedInfo.Key,
 				Value:          stagedInfo.Staged,
 				Cas:            result.Cas,
-			}, err)
+			}, nil)
 		})
 		if err != nil {
 			t.handleError(err)
@@ -823,8 +895,15 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 	scopeName := opts.Document.scopeName
 	collectionName := opts.Document.collectionName
 	key := opts.Document.key
+
 	err := t.confirmATRPending(agent, scopeName, collectionName, key, func(err error) {
 		if err != nil {
+			t.handleError(err)
+			cb(nil, err)
+			return
+		}
+
+		if err := t.hooks.BeforeStagedRemove(key); err != nil {
 			t.handleError(err)
 			cb(nil, err)
 			return
@@ -881,6 +960,12 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 				return
 			}
 
+			if err := t.hooks.AfterStagedRemoveComplete(key); err != nil {
+				t.handleError(err)
+				cb(nil, err)
+				return
+			}
+
 			t.lock.Lock()
 			stagedInfo.Cas = result.Cas
 			t.stagedMutations = append(t.stagedMutations, stagedInfo)
@@ -914,6 +999,12 @@ func (t *transactionAttempt) unstageInsRepMutation(mutation stagedMutation, cb f
 		return
 	}
 
+	if err := t.hooks.BeforeDocCommitted(mutation.Key); err != nil {
+		t.handleError(err)
+		cb(err)
+		return
+	}
+
 	_, err := mutation.Agent.MutateIn(gocbcore.MutateInOptions{
 		ScopeName:      mutation.ScopeName,
 		CollectionName: mutation.CollectionName,
@@ -943,6 +1034,12 @@ func (t *transactionAttempt) unstageInsRepMutation(mutation stagedMutation, cb f
 			return
 		}
 
+		if err := t.hooks.AfterDocCommittedBeforeSavingCAS(mutation.Key); err != nil {
+			t.handleError(err)
+			cb(err)
+			return
+		}
+
 		t.finalMutationTokens = append(t.finalMutationTokens, MutationToken{
 			BucketName:    mutation.Agent.BucketName(),
 			MutationToken: result.MutationToken,
@@ -964,6 +1061,12 @@ func (t *transactionAttempt) unstageRemMutation(mutation stagedMutation, cb func
 		return
 	}
 
+	if err := t.hooks.BeforeDocRemoved(mutation.Key); err != nil {
+		t.handleError(err)
+		cb(err)
+		return
+	}
+
 	_, err := mutation.Agent.Delete(gocbcore.DeleteOptions{
 		ScopeName:      mutation.ScopeName,
 		CollectionName: mutation.CollectionName,
@@ -975,10 +1078,23 @@ func (t *transactionAttempt) unstageRemMutation(mutation stagedMutation, cb func
 			return
 		}
 
+		if err := t.hooks.AfterDocRemovedPreRetry(mutation.Key); err != nil {
+			t.handleError(err)
+			cb(err)
+			return
+		}
+
 		t.finalMutationTokens = append(t.finalMutationTokens, MutationToken{
 			BucketName:    mutation.Agent.BucketName(),
 			MutationToken: result.MutationToken,
 		})
+
+		// TODO(chvck): Is this in the right place?!
+		if err := t.hooks.AfterDocRemovedPostRetry(mutation.Key); err != nil {
+			t.handleError(err)
+			cb(err)
+			return
+		}
 
 		cb(nil)
 	})
@@ -991,6 +1107,10 @@ func (t *transactionAttempt) unstageRemMutation(mutation stagedMutation, cb func
 }
 
 func (t *transactionAttempt) Commit(cb CommitCallback) error {
+	err := t.hooks.BeforeATRCommit()
+	if err != nil {
+		return err
+	}
 	// TODO(brett19): Move the wait logic from setATRCommitted to here
 	t.setATRCommitted(func(err error) {
 		if err != nil {
