@@ -107,6 +107,16 @@ type InsertOptions struct {
 // StoreCallback describes a callback for a completed Replace operation.
 type StoreCallback func(*GetResult, error)
 
+// GetMutations returns a list of all the current mutations that have been performed
+// under this transaction.
+func (t *Transaction) GetMutations() []StagedMutation {
+	if t.attempt == nil {
+		return nil
+	}
+
+	return t.attempt.GetMutations()
+}
+
 // Insert will attempt to insert a document.
 func (t *Transaction) Insert(opts InsertOptions, cb StoreCallback) error {
 	if t.attempt == nil {

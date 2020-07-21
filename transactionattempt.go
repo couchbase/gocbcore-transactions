@@ -23,16 +23,26 @@ const (
 	AttemptStateRolledBack     = AttemptState(6)
 )
 
-type stagedMutationType int
+type StagedMutationType int
 
 const (
-	stagedMutationInsert  = stagedMutationType(1)
-	stagedMutationReplace = stagedMutationType(2)
-	stagedMutationRemove  = stagedMutationType(3)
+	StagedMutationInsert  = StagedMutationType(1)
+	StagedMutationReplace = StagedMutationType(2)
+	StagedMutationRemove  = StagedMutationType(3)
 )
 
+type StagedMutation struct {
+	OpType         StagedMutationType
+	BucketName     string
+	ScopeName      string
+	CollectionName string
+	Key            []byte
+	Cas            gocbcore.Cas
+	Staged         json.RawMessage
+}
+
 type stagedMutation struct {
-	OpType         stagedMutationType
+	OpType         StagedMutationType
 	Agent          *gocbcore.Agent
 	ScopeName      string
 	CollectionName string
@@ -62,6 +72,22 @@ type transactionAttempt struct {
 	lock          sync.Mutex
 	txnAtrSection atomicWaitQueue
 	txnOpSection  atomicWaitQueue
+}
+
+func (t *transactionAttempt) GetMutations() []StagedMutation {
+	mutations := make([]StagedMutation, len(t.stagedMutations))
+	for mutationIdx, mutation := range t.stagedMutations {
+		mutations[mutationIdx] = StagedMutation{
+			OpType:         mutation.OpType,
+			BucketName:     mutation.Agent.BucketName(),
+			ScopeName:      mutation.ScopeName,
+			CollectionName: mutation.CollectionName,
+			Key:            mutation.Key,
+			Cas:            mutation.Cas,
+			Staged:         mutation.Staged,
+		}
+	}
+	return mutations
 }
 
 func (t *transactionAttempt) atrCollName() string {
@@ -220,11 +246,11 @@ func (t *transactionAttempt) setATRCommitted(
 				DocID:          string(mutation.Key),
 			}
 
-			if mutation.OpType == stagedMutationInsert {
+			if mutation.OpType == StagedMutationInsert {
 				insMutations = append(insMutations, jsonMutation)
-			} else if mutation.OpType == stagedMutationReplace {
+			} else if mutation.OpType == StagedMutationReplace {
 				repMutations = append(repMutations, jsonMutation)
-			} else if mutation.OpType == stagedMutationRemove {
+			} else if mutation.OpType == StagedMutationRemove {
 				remMutations = append(remMutations, jsonMutation)
 			} else {
 				// TODO(brett19): Signal an error here
@@ -412,7 +438,7 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 	// TODO(brett19): Use the bucket name below
 	existingMutation := t.getStagedMutationLocked("", opts.ScopeName, opts.CollectionName, opts.Key)
 	if existingMutation != nil {
-		if existingMutation.OpType == stagedMutationInsert || existingMutation.OpType == stagedMutationReplace {
+		if existingMutation.OpType == StagedMutationInsert || existingMutation.OpType == StagedMutationReplace {
 			getRes := &GetResult{
 				agent:          existingMutation.Agent,
 				scopeName:      existingMutation.ScopeName,
@@ -425,7 +451,7 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 			t.lock.Unlock()
 			cb(getRes, nil)
 			return nil
-		} else if existingMutation.OpType == stagedMutationRemove {
+		} else if existingMutation.OpType == StagedMutationRemove {
 			t.lock.Unlock()
 			cb(nil, ErrDocNotFound)
 			return nil
@@ -594,7 +620,7 @@ func (t *transactionAttempt) Insert(opts InsertOptions, cb StoreCallback) error 
 		}
 
 		stagedInfo := &stagedMutation{
-			OpType:         stagedMutationInsert,
+			OpType:         StagedMutationInsert,
 			Agent:          opts.Agent,
 			ScopeName:      opts.ScopeName,
 			CollectionName: opts.CollectionName,
@@ -692,7 +718,7 @@ func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) erro
 		}
 
 		stagedInfo := &stagedMutation{
-			OpType:         stagedMutationReplace,
+			OpType:         StagedMutationReplace,
 			Agent:          agent,
 			ScopeName:      scopeName,
 			CollectionName: collectionName,
@@ -805,7 +831,7 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 		}
 
 		stagedInfo := &stagedMutation{
-			OpType:         stagedMutationRemove,
+			OpType:         StagedMutationRemove,
 			Agent:          agent,
 			ScopeName:      scopeName,
 			CollectionName: collectionName,
@@ -883,7 +909,7 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 }
 
 func (t *transactionAttempt) unstageInsRepMutation(mutation stagedMutation, cb func(error)) {
-	if mutation.OpType != stagedMutationInsert && mutation.OpType != stagedMutationReplace {
+	if mutation.OpType != StagedMutationInsert && mutation.OpType != StagedMutationReplace {
 		cb(ErrUhOh)
 		return
 	}
@@ -933,7 +959,7 @@ func (t *transactionAttempt) unstageInsRepMutation(mutation stagedMutation, cb f
 }
 
 func (t *transactionAttempt) unstageRemMutation(mutation stagedMutation, cb func(error)) {
-	if mutation.OpType != stagedMutationRemove {
+	if mutation.OpType != StagedMutationRemove {
 		cb(ErrUhOh)
 		return
 	}
@@ -978,11 +1004,11 @@ func (t *transactionAttempt) Commit(cb CommitCallback) error {
 			waitCh := make(chan error, numMutations)
 
 			for _, mutation := range t.stagedMutations {
-				if mutation.OpType == stagedMutationInsert || mutation.OpType == stagedMutationReplace {
+				if mutation.OpType == StagedMutationInsert || mutation.OpType == StagedMutationReplace {
 					t.unstageInsRepMutation(*mutation, func(err error) {
 						waitCh <- err
 					})
-				} else if mutation.OpType == stagedMutationRemove {
+				} else if mutation.OpType == StagedMutationRemove {
 					t.unstageRemMutation(*mutation, func(err error) {
 						waitCh <- err
 					})

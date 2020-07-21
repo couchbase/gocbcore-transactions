@@ -154,6 +154,9 @@ func TestSomething(t *testing.T) {
 	}
 	log.Printf("Remove result: %+v", remRes)
 
+	mutations := txn.GetMutations()
+	log.Printf("Mutations List: %+v", mutations)
+
 	err = testBlkCommit(txn)
 	if err != nil {
 		log.Printf("Commit failed: %+v", err)
