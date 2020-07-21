@@ -289,6 +289,13 @@ func (t *transactionAttempt) setATRCommitted(
 			}
 		}
 
+		var duraTimeout time.Duration
+		var deadline time.Time
+		if t.keyValueTimeout > 0 {
+			deadline = time.Now().Add(t.keyValueTimeout)
+			duraTimeout = t.keyValueTimeout * 10 / 9
+		}
+
 		_, err := atrAgent.MutateIn(gocbcore.MutateInOptions{
 			ScopeName:      atrScopeName,
 			CollectionName: atrCollectionName,
@@ -301,8 +308,10 @@ func (t *transactionAttempt) setATRCommitted(
 				atrFieldOp("rep", repMutations, memd.SubdocFlagXattrPath),
 				atrFieldOp("rem", remMutations, memd.SubdocFlagXattrPath),
 			},
-			DurabilityLevel: memd.DurabilityLevel(t.durabilityLevel),
-			Flags:           memd.SubdocDocFlagNone,
+			DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
+			DurabilityLevelTimeout: duraTimeout,
+			Flags:                  memd.SubdocDocFlagNone,
+			Deadline:               deadline,
 		}, func(result *gocbcore.MutateInResult, err error) {
 			if err != nil {
 				t.lock.Lock()
@@ -386,6 +395,13 @@ func (t *transactionAttempt) setATRCompleted(
 		}
 	}
 
+	var duraTimeout time.Duration
+	var deadline time.Time
+	if t.keyValueTimeout > 0 {
+		deadline = time.Now().Add(t.keyValueTimeout)
+		duraTimeout = t.keyValueTimeout * 10 / 9
+	}
+
 	_, err := atrAgent.MutateIn(gocbcore.MutateInOptions{
 		ScopeName:      atrScopeName,
 		CollectionName: atrCollectionName,
@@ -394,8 +410,10 @@ func (t *transactionAttempt) setATRCompleted(
 			atrFieldOp("st", jsonAtrStateCompleted, memd.SubdocFlagXattrPath),
 			atrFieldOp("tsco", "${Mutation.CAS}", memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros),
 		},
-		DurabilityLevel: memd.DurabilityLevel(t.durabilityLevel),
-		Flags:           memd.SubdocDocFlagNone,
+		DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
+		DurabilityLevelTimeout: duraTimeout,
+		Deadline:               deadline,
+		Flags:                  memd.SubdocDocFlagNone,
 	}, func(result *gocbcore.MutateInResult, err error) {
 		if err != nil {
 			t.lock.Lock()
