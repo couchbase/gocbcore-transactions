@@ -2,6 +2,7 @@ package transactions
 
 import (
 	"encoding/json"
+	"errors"
 	"time"
 
 	gocbcore "github.com/couchbase/gocbcore/v9"
@@ -178,4 +179,10 @@ func (t *Transaction) Rollback(cb RollbackCallback) error {
 	}
 
 	return t.attempt.Rollback(cb)
+}
+
+// SerializeAttempt will serialize the current transaction attempt, allowing it
+// to be resumed later, potentially under a different transactions client.
+func (t *Transaction) SerializeAttempt() ([]byte, error) {
+	return nil, errors.New("not implemented")
 }

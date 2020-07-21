@@ -68,6 +68,12 @@ func (t *Transactions) BeginTransaction(perConfig *PerTransactionConfig) (*Trans
 	}, nil
 }
 
+// ResumeTransactionAttempt allows the resumption of an existing transaction attempt
+// which was previously serialized, potentially by a different transaction client.
+func (t *Transactions) ResumeTransactionAttempt(txnData []byte) (*Transaction, error) {
+	return nil, errors.New("not implemented")
+}
+
 // Close will shut down this Transactions object, shutting down all
 // background tasks associated with it.
 func (t *Transactions) Close() error {
