@@ -3,7 +3,7 @@ package transactions
 import (
 	"time"
 
-	"github.com/couchbase/gocbcore/v8"
+	"github.com/couchbase/gocbcore/v9/memd"
 )
 
 // DurabilityLevel specifies the durability level to use for a mutation.
@@ -14,14 +14,14 @@ const (
 	DurabilityLevelNone = DurabilityLevel(0)
 
 	// DurabilityLevelMajority indicates the operation must be replicated to the majority.
-	DurabilityLevelMajority = DurabilityLevel(gocbcore.Majority)
+	DurabilityLevelMajority = DurabilityLevel(memd.DurabilityLevelMajority)
 
 	// DurabilityLevelMajorityAndPersistToActive indicates the operation must be replicated
 	// to the majority and persisted to the active server.
-	DurabilityLevelMajorityAndPersistToActive = DurabilityLevel(gocbcore.MajorityAndPersistOnMaster)
+	DurabilityLevelMajorityAndPersistToActive = DurabilityLevel(memd.DurabilityLevelMajorityAndPersistOnMaster)
 
 	// DurabilityLevelPersistToMajority indicates the operation must be persisted to the active server.
-	DurabilityLevelPersistToMajority = DurabilityLevel(gocbcore.PersistToMajority)
+	DurabilityLevelPersistToMajority = DurabilityLevel(memd.DurabilityLevelPersistToMajority)
 )
 
 // Config specifies various tunable options related to transactions.
