@@ -5,11 +5,14 @@ import (
 	"testing"
 
 	gocb "github.com/couchbase/gocb/v2"
-	"github.com/couchbase/gocbcore/v9"
 )
 
 func testSetup(t *testing.T) {
-	cluster, err := gocb.Connect("couchbase://172.23.111.133", gocb.ClusterOptions{
+
+}
+
+func TestSomething(t *testing.T) {
+	cluster, err := gocb.Connect("couchbase://172.23.111.128", gocb.ClusterOptions{
 		Username: "Administrator",
 		Password: "password",
 	})
@@ -20,6 +23,8 @@ func testSetup(t *testing.T) {
 
 	bucket := cluster.Bucket("default")
 	collection := bucket.DefaultCollection()
+
+	// Do the setup stuff
 
 	collection.Remove("_txn:atr-296-#f79", nil)
 	collection.Remove("test-id", nil)
@@ -36,21 +41,11 @@ func testSetup(t *testing.T) {
 		panic(err)
 	}
 
-	cluster.Close(nil)
-}
+	// Setup Complete, start doing some work
 
-func TestSomething(t *testing.T) {
-	testSetup(t)
-
-	config := &gocbcore.AgentConfig{}
-	config.FromConnStr("couchbase://172.23.111.133/default")
-	config.Auth = gocbcore.PasswordAuthProvider{
-		Username: "Administrator",
-		Password: "password",
-	}
-	agent, err := gocbcore.CreateAgent(config)
+	agent, err := bucket.Internal().IORouter()
 	if err != nil {
-		log.Printf("Agent Create Error: %+v", err)
+		log.Printf("Agent Fetch Error: %+v", err)
 		panic(err)
 	}
 
