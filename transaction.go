@@ -24,10 +24,12 @@ type Transaction struct {
 	attempt       *transactionAttempt
 }
 
+// ID returns the transaction ID of this transaction.
 func (t *Transaction) ID() string {
 	return t.transactionID
 }
 
+// Attempt returns meta-data about the current attempt to complete the transaction.
 func (t *Transaction) Attempt() Attempt {
 	return Attempt{
 		State:         t.attempt.state,
@@ -36,7 +38,7 @@ func (t *Transaction) Attempt() Attempt {
 	}
 }
 
-// NewAttempt begins a new attempt with this transaction
+// NewAttempt begins a new attempt with this transaction.
 func (t *Transaction) NewAttempt() error {
 	attemptUUID := uuid.New().String()
 
@@ -60,6 +62,7 @@ func (t *Transaction) NewAttempt() error {
 	return nil
 }
 
+// GetOptions provides options for a Get operation.
 type GetOptions struct {
 	Agent          *gocbcore.Agent
 	ScopeName      string
@@ -92,6 +95,7 @@ func (t *Transaction) Get(opts GetOptions, cb GetCallback) error {
 	return t.attempt.Get(opts, cb)
 }
 
+// InsertOptions provides options for a Insert operation.
 type InsertOptions struct {
 	Agent          *gocbcore.Agent
 	ScopeName      string
@@ -112,6 +116,7 @@ func (t *Transaction) Insert(opts InsertOptions, cb StoreCallback) error {
 	return t.attempt.Insert(opts, cb)
 }
 
+// ReplaceOptions provides options for a Replace operation.
 type ReplaceOptions struct {
 	Document *GetResult
 	Value    json.RawMessage
@@ -126,6 +131,7 @@ func (t *Transaction) Replace(opts ReplaceOptions, cb StoreCallback) error {
 	return t.attempt.Replace(opts, cb)
 }
 
+// RemoveOptions provides options for a Remove operation.
 type RemoveOptions struct {
 	Document *GetResult
 }
