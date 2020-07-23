@@ -5,10 +5,11 @@ import "encoding/json"
 type jsonAtrState string
 
 const (
-	jsonAtrStatePending   = jsonAtrState("PENDING")
-	jsonAtrStateCommitted = jsonAtrState("COMMITTED")
-	jsonAtrStateCompleted = jsonAtrState("COMPLETED")
-	jsonAtrStateAborted   = jsonAtrState("ABORTED")
+	jsonAtrStatePending    = jsonAtrState("PENDING")
+	jsonAtrStateCommitted  = jsonAtrState("COMMITTED")
+	jsonAtrStateCompleted  = jsonAtrState("COMPLETED")
+	jsonAtrStateAborted    = jsonAtrState("ABORTED")
+	jsonAtrStateRolledBack = jsonAtrState("ROLLED_BACK")
 )
 
 type jsonMutationType string
