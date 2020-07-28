@@ -12,25 +12,50 @@ import (
 	"github.com/couchbase/gocbcore/v9/memd"
 )
 
+// AttemptState represents the current state of a transaction
 type AttemptState int
 
 const (
+	// AttemptStateNothingWritten indicates that nothing has been written yet.
 	AttemptStateNothingWritten = AttemptState(1)
-	AttemptStatePending        = AttemptState(2)
-	AttemptStateCommitted      = AttemptState(3)
-	AttemptStateCompleted      = AttemptState(4)
-	AttemptStateAborted        = AttemptState(5)
-	AttemptStateRolledBack     = AttemptState(6)
+
+	// AttemptStatePending indicates that the transaction ATR has been written and
+	// the transaction is currently pending.
+	AttemptStatePending = AttemptState(2)
+
+	// AttemptStateCommitted indicates that the transaction is now logically committed
+	// but the unstaging of documents is still underway.
+	AttemptStateCommitted = AttemptState(3)
+
+	// AttemptStateCompleted indicates that the transaction has been fully completed
+	// and no longer has work to perform.
+	AttemptStateCompleted = AttemptState(4)
+
+	// AttemptStateAborted indicates that the transaction was aborted.
+	AttemptStateAborted = AttemptState(5)
+
+	// AttemptStateRolledBack indicates that the transaction was not committed and instead
+	// was rolled back in its entirety.
+	AttemptStateRolledBack = AttemptState(6)
 )
 
+// StagedMutationType represents the type of a mutation performed in a transaction.
 type StagedMutationType int
 
 const (
-	StagedMutationInsert  = StagedMutationType(1)
+	// StagedMutationInsert indicates the staged mutation was an insert operation.
+	StagedMutationInsert = StagedMutationType(1)
+
+	// StagedMutationReplace indicates the staged mutation was an replace operation.
 	StagedMutationReplace = StagedMutationType(2)
-	StagedMutationRemove  = StagedMutationType(3)
+
+	// StagedMutationRemove indicates the staged mutation was an remove operation.
+	StagedMutationRemove = StagedMutationType(3)
 )
 
+// StagedMutation wraps all of the information about a mutation which has been staged
+// as part of the transaction and which should later be unstaged when the transaction
+// has been committed.
 type StagedMutation struct {
 	OpType         StagedMutationType
 	BucketName     string
