@@ -57,6 +57,7 @@ type transactionAttempt struct {
 	atrCollectionName   string
 	atrKey              []byte
 	expiryOvertimeMode  bool
+	fatalError          bool
 
 	lock          sync.Mutex
 	txnAtrSection atomicWaitQueue

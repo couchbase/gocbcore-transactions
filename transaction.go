@@ -39,6 +39,12 @@ func (t *Transaction) Attempt() Attempt {
 func (t *Transaction) NewAttempt() error {
 	attemptUUID := uuid.New().String()
 
+	if t.attempt != nil {
+		if t.attempt.fatalError {
+			return ErrUhOh
+		}
+	}
+
 	t.attempt = &transactionAttempt{
 		expiryTime:      t.expiryTime,
 		keyValueTimeout: t.keyValueTimeout,
