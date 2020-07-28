@@ -39,7 +39,7 @@ func Init(config *Config) (*Transactions, error) {
 		config.CleanupWindow = defaultConfig.CleanupWindow
 	}
 	if config.Internal.Hooks == nil {
-		config.Internal.Hooks = &defaultHooks{}
+		config.Internal.Hooks = &DefaultHooks{}
 	}
 
 	return &Transactions{

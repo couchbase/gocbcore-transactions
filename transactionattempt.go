@@ -162,26 +162,54 @@ func (t *transactionAttempt) confirmATRPending(
 		duraTimeout = t.keyValueTimeout * 10 / 9
 	}
 
-	if err := t.hooks.BeforeATRPending(); err != nil {
-		t.handleError(err)
-		return err
-	}
+	t.hooks.BeforeATRPending(func(err error) {
+		if err != nil {
+			t.handleError(err)
+			cb(err)
+		}
 
-	_, err := agent.MutateIn(gocbcore.MutateInOptions{
-		ScopeName:      scopeName,
-		CollectionName: collectionName,
-		Key:            atrKey,
-		Ops: []gocbcore.SubDocOp{
-			atrFieldOp("tst", "${Mutation.CAS}", memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros),
-			atrFieldOp("tid", t.transactionID, memd.SubdocFlagXattrPath),
-			atrFieldOp("st", jsonAtrStatePending, memd.SubdocFlagXattrPath),
-			atrFieldOp("exp", t.expiryTime.Sub(time.Now())/time.Millisecond, memd.SubdocFlagXattrPath),
-		},
-		DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
-		DurabilityLevelTimeout: duraTimeout,
-		Deadline:               deadline,
-		Flags:                  memd.SubdocDocFlagMkDoc,
-	}, func(result *gocbcore.MutateInResult, err error) {
+		_, err = agent.MutateIn(gocbcore.MutateInOptions{
+			ScopeName:      scopeName,
+			CollectionName: collectionName,
+			Key:            atrKey,
+			Ops: []gocbcore.SubDocOp{
+				atrFieldOp("tst", "${Mutation.CAS}", memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros),
+				atrFieldOp("tid", t.transactionID, memd.SubdocFlagXattrPath),
+				atrFieldOp("st", jsonAtrStatePending, memd.SubdocFlagXattrPath),
+				atrFieldOp("exp", t.expiryTime.Sub(time.Now())/time.Millisecond, memd.SubdocFlagXattrPath),
+			},
+			DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
+			DurabilityLevelTimeout: duraTimeout,
+			Deadline:               deadline,
+			Flags:                  memd.SubdocDocFlagMkDoc,
+		}, func(result *gocbcore.MutateInResult, err error) {
+			if err != nil {
+				t.lock.Lock()
+
+				// TODO(brett19): Do other things to cancel it here....
+				t.state = AttemptStateAborted
+
+				t.txnAtrSection.Done()
+				t.lock.Unlock()
+
+				cb(err)
+				return
+			}
+
+			t.lock.Lock()
+			t.txnAtrSection.Done()
+			t.lock.Unlock()
+
+			t.hooks.AfterATRPending(func(err error) {
+				if err != nil {
+					t.handleError(err)
+					cb(err)
+					return
+				}
+
+				cb(nil)
+			})
+		})
 		if err != nil {
 			t.lock.Lock()
 
@@ -194,30 +222,7 @@ func (t *transactionAttempt) confirmATRPending(
 			cb(err)
 			return
 		}
-
-		t.lock.Lock()
-		t.txnAtrSection.Done()
-		t.lock.Unlock()
-
-		if err := t.hooks.AfterATRPending(); err != nil {
-			t.handleError(err)
-			cb(err)
-			return
-		}
-
-		cb(nil)
 	})
-	if err != nil {
-		t.lock.Lock()
-
-		// TODO(brett19): Do other things to cancel it here....
-		t.state = AttemptStateAborted
-
-		t.txnAtrSection.Done()
-		t.lock.Unlock()
-
-		return err
-	}
 
 	return nil
 }
@@ -226,21 +231,155 @@ func (t *transactionAttempt) setATRCommitted(
 	cb func(error),
 ) error {
 	t.txnOpSection.Wait(func() {
+		t.hooks.BeforeATRCommit(func(err error) {
+			if err != nil {
+				t.handleError(err)
+				cb(err)
+				return
+			}
 
-		if err := t.hooks.BeforeATRCommit(); err != nil {
+			t.lock.Lock()
+			if t.state != AttemptStatePending {
+				t.lock.Unlock()
+
+				t.txnAtrSection.Wait(func() {
+					cb(nil)
+				})
+
+				return
+			}
+
+			atrAgent := t.atrAgent
+			atrScopeName := t.atrScopeName
+			atrKey := t.atrKey
+			atrCollectionName := t.atrCollectionName
+
+			t.state = AttemptStateCommitted
+
+			insMutations := []jsonAtrMutation{}
+			repMutations := []jsonAtrMutation{}
+			remMutations := []jsonAtrMutation{}
+
+			for _, mutation := range t.stagedMutations {
+				jsonMutation := jsonAtrMutation{
+					BucketName: mutation.Agent.BucketName(),
+					// BucketName:     "",
+					ScopeName:      mutation.ScopeName,
+					CollectionName: mutation.CollectionName,
+					DocID:          string(mutation.Key),
+				}
+
+				if mutation.OpType == StagedMutationInsert {
+					insMutations = append(insMutations, jsonMutation)
+				} else if mutation.OpType == StagedMutationReplace {
+					repMutations = append(repMutations, jsonMutation)
+				} else if mutation.OpType == StagedMutationRemove {
+					remMutations = append(remMutations, jsonMutation)
+				} else {
+					// TODO(brett19): Signal an error here
+				}
+			}
+
+			t.txnAtrSection.Add(1)
+			t.lock.Unlock()
+
+			atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag) gocbcore.SubDocOp {
+				bytes, _ := json.Marshal(data)
+
+				return gocbcore.SubDocOp{
+					Op:    memd.SubDocOpDictSet,
+					Flags: memd.SubdocFlagMkDirP | flags,
+					Path:  "attempts." + t.id + "." + fieldName,
+					Value: bytes,
+				}
+			}
+
+			var duraTimeout time.Duration
+			var deadline time.Time
+			if t.keyValueTimeout > 0 {
+				deadline = time.Now().Add(t.keyValueTimeout)
+				duraTimeout = t.keyValueTimeout * 10 / 9
+			}
+
+			_, err = atrAgent.MutateIn(gocbcore.MutateInOptions{
+				ScopeName:      atrScopeName,
+				CollectionName: atrCollectionName,
+				Key:            atrKey,
+				Ops: []gocbcore.SubDocOp{
+					atrFieldOp("st", jsonAtrStateCommitted, memd.SubdocFlagXattrPath),
+					atrFieldOp("tsc", "${Mutation.CAS}", memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros),
+					atrFieldOp("p", 0, memd.SubdocFlagXattrPath),
+					atrFieldOp("ins", insMutations, memd.SubdocFlagXattrPath),
+					atrFieldOp("rep", repMutations, memd.SubdocFlagXattrPath),
+					atrFieldOp("rem", remMutations, memd.SubdocFlagXattrPath),
+				},
+				DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
+				DurabilityLevelTimeout: duraTimeout,
+				Flags:                  memd.SubdocDocFlagNone,
+				Deadline:               deadline,
+			}, func(result *gocbcore.MutateInResult, err error) {
+				if err != nil {
+					t.lock.Lock()
+
+					// TODO(brett19): Do other things to cancel it here....
+					t.state = AttemptStateAborted
+
+					t.txnAtrSection.Done()
+					t.lock.Unlock()
+
+					cb(err)
+					return
+				}
+
+				t.lock.Lock()
+				t.txnAtrSection.Done()
+				t.lock.Unlock()
+
+				t.hooks.AfterATRCommit(func(err error) {
+					if err != nil {
+						t.handleError(err)
+						cb(err)
+						return
+					}
+
+					cb(nil)
+				})
+			})
+			if err != nil {
+				t.lock.Lock()
+
+				// TODO(brett19): Do other things to cancel it here....
+				t.state = AttemptStateAborted
+
+				t.txnAtrSection.Done()
+				t.lock.Unlock()
+
+				cb(err)
+			}
+		})
+	})
+	return nil
+}
+
+func (t *transactionAttempt) setATRCompleted(
+	cb func(error),
+) error {
+	t.hooks.BeforeATRComplete(func(err error) {
+		if err != nil {
 			t.handleError(err)
 			cb(err)
 			return
 		}
 
 		t.lock.Lock()
-		if t.state != AttemptStatePending {
+		if t.state != AttemptStateCommitted {
 			t.lock.Unlock()
 
 			t.txnAtrSection.Wait(func() {
 				cb(nil)
 			})
 
+			cb(nil)
 			return
 		}
 
@@ -249,31 +388,7 @@ func (t *transactionAttempt) setATRCommitted(
 		atrKey := t.atrKey
 		atrCollectionName := t.atrCollectionName
 
-		t.state = AttemptStateCommitted
-
-		insMutations := []jsonAtrMutation{}
-		repMutations := []jsonAtrMutation{}
-		remMutations := []jsonAtrMutation{}
-
-		for _, mutation := range t.stagedMutations {
-			jsonMutation := jsonAtrMutation{
-				BucketName: mutation.Agent.BucketName(),
-				// BucketName:     "",
-				ScopeName:      mutation.ScopeName,
-				CollectionName: mutation.CollectionName,
-				DocID:          string(mutation.Key),
-			}
-
-			if mutation.OpType == StagedMutationInsert {
-				insMutations = append(insMutations, jsonMutation)
-			} else if mutation.OpType == StagedMutationReplace {
-				repMutations = append(repMutations, jsonMutation)
-			} else if mutation.OpType == StagedMutationRemove {
-				remMutations = append(remMutations, jsonMutation)
-			} else {
-				// TODO(brett19): Signal an error here
-			}
-		}
+		t.state = AttemptStateCompleted
 
 		t.txnAtrSection.Add(1)
 		t.lock.Unlock()
@@ -296,22 +411,18 @@ func (t *transactionAttempt) setATRCommitted(
 			duraTimeout = t.keyValueTimeout * 10 / 9
 		}
 
-		_, err := atrAgent.MutateIn(gocbcore.MutateInOptions{
+		_, err = atrAgent.MutateIn(gocbcore.MutateInOptions{
 			ScopeName:      atrScopeName,
 			CollectionName: atrCollectionName,
 			Key:            atrKey,
 			Ops: []gocbcore.SubDocOp{
-				atrFieldOp("st", jsonAtrStateCommitted, memd.SubdocFlagXattrPath),
-				atrFieldOp("tsc", "${Mutation.CAS}", memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros),
-				atrFieldOp("p", 0, memd.SubdocFlagXattrPath),
-				atrFieldOp("ins", insMutations, memd.SubdocFlagXattrPath),
-				atrFieldOp("rep", repMutations, memd.SubdocFlagXattrPath),
-				atrFieldOp("rem", remMutations, memd.SubdocFlagXattrPath),
+				atrFieldOp("st", jsonAtrStateCompleted, memd.SubdocFlagXattrPath),
+				atrFieldOp("tsco", "${Mutation.CAS}", memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros),
 			},
 			DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
 			DurabilityLevelTimeout: duraTimeout,
-			Flags:                  memd.SubdocDocFlagNone,
 			Deadline:               deadline,
+			Flags:                  memd.SubdocDocFlagNone,
 		}, func(result *gocbcore.MutateInResult, err error) {
 			if err != nil {
 				t.lock.Lock()
@@ -330,91 +441,16 @@ func (t *transactionAttempt) setATRCommitted(
 			t.txnAtrSection.Done()
 			t.lock.Unlock()
 
-			if err := t.hooks.AfterATRCommit(); err != nil {
-				t.handleError(err)
-				cb(err)
-				return
-			}
+			t.hooks.AfterATRComplete(func(err error) {
+				if err != nil {
+					t.handleError(err)
+					cb(err)
+					return
+				}
 
-			cb(nil)
+				cb(nil)
+			})
 		})
-		if err != nil {
-			t.lock.Lock()
-
-			// TODO(brett19): Do other things to cancel it here....
-			t.state = AttemptStateAborted
-
-			t.txnAtrSection.Done()
-			t.lock.Unlock()
-
-			cb(err)
-		}
-
-	})
-	return nil
-}
-
-func (t *transactionAttempt) setATRCompleted(
-	cb func(error),
-) error {
-
-	if err := t.hooks.BeforeATRComplete(); err != nil {
-		t.handleError(err)
-		return err
-	}
-
-	t.lock.Lock()
-	if t.state != AttemptStateCommitted {
-		t.lock.Unlock()
-
-		t.txnAtrSection.Wait(func() {
-			cb(nil)
-		})
-
-		return nil
-	}
-
-	atrAgent := t.atrAgent
-	atrScopeName := t.atrScopeName
-	atrKey := t.atrKey
-	atrCollectionName := t.atrCollectionName
-
-	t.state = AttemptStateCompleted
-
-	t.txnAtrSection.Add(1)
-	t.lock.Unlock()
-
-	atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag) gocbcore.SubDocOp {
-		bytes, _ := json.Marshal(data)
-
-		return gocbcore.SubDocOp{
-			Op:    memd.SubDocOpDictSet,
-			Flags: memd.SubdocFlagMkDirP | flags,
-			Path:  "attempts." + t.id + "." + fieldName,
-			Value: bytes,
-		}
-	}
-
-	var duraTimeout time.Duration
-	var deadline time.Time
-	if t.keyValueTimeout > 0 {
-		deadline = time.Now().Add(t.keyValueTimeout)
-		duraTimeout = t.keyValueTimeout * 10 / 9
-	}
-
-	_, err := atrAgent.MutateIn(gocbcore.MutateInOptions{
-		ScopeName:      atrScopeName,
-		CollectionName: atrCollectionName,
-		Key:            atrKey,
-		Ops: []gocbcore.SubDocOp{
-			atrFieldOp("st", jsonAtrStateCompleted, memd.SubdocFlagXattrPath),
-			atrFieldOp("tsco", "${Mutation.CAS}", memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros),
-		},
-		DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
-		DurabilityLevelTimeout: duraTimeout,
-		Deadline:               deadline,
-		Flags:                  memd.SubdocDocFlagNone,
-	}, func(result *gocbcore.MutateInResult, err error) {
 		if err != nil {
 			t.lock.Lock()
 
@@ -427,30 +463,7 @@ func (t *transactionAttempt) setATRCompleted(
 			cb(err)
 			return
 		}
-
-		t.lock.Lock()
-		t.txnAtrSection.Done()
-		t.lock.Unlock()
-
-		if err := t.hooks.AfterATRComplete(); err != nil {
-			t.handleError(err)
-			cb(err)
-			return
-		}
-
-		cb(nil)
 	})
-	if err != nil {
-		t.lock.Lock()
-
-		// TODO(brett19): Do other things to cancel it here....
-		t.state = AttemptStateAborted
-
-		t.txnAtrSection.Done()
-		t.lock.Unlock()
-
-		cb(err)
-	}
 
 	return nil
 }
@@ -519,151 +532,157 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 		deadline = time.Now().Add(t.keyValueTimeout)
 	}
 
-	if err := t.hooks.BeforeDocGet(opts.Key); err != nil {
-		t.handleError(err)
-		return err
-	}
-
-	_, err := opts.Agent.LookupIn(gocbcore.LookupInOptions{
-		ScopeName:      opts.ScopeName,
-		CollectionName: opts.CollectionName,
-		Key:            opts.Key,
-		Ops: []gocbcore.SubDocOp{
-			{
-				Op:    memd.SubDocOpGet,
-				Path:  "$document",
-				Flags: memd.SubdocFlagXattrPath,
-			},
-			{
-				Op:    memd.SubDocOpGet,
-				Path:  "txn",
-				Flags: memd.SubdocFlagXattrPath,
-			},
-			{
-				Op:    memd.SubDocOpGetDoc,
-				Path:  "",
-				Flags: 0,
-			},
-		},
-		Deadline: deadline,
-	}, func(result *gocbcore.LookupInResult, err error) {
-		if errors.Is(err, gocbcore.ErrDocumentNotFound) {
-			cb(nil, ErrDocNotFound)
+	t.hooks.BeforeDocGet(opts.Key, func(err error) {
+		if err != nil {
+			t.handleError(err)
+			cb(nil, err)
 			return
 		}
 
-		var docMeta struct {
-			Cas        string `json:"CAS"`
-			RevID      string `json:"revid"`
-			Expiration uint   `json:"exptime"`
-		}
-		// TODO(brett19): Don't ignore the error here
-		json.Unmarshal(result.Ops[0].Value, &docMeta)
-
-		var txnMeta *jsonTxnXattr
-		if result.Ops[1].Err == nil {
-			var txnMetaVal jsonTxnXattr
-			// TODO(brett19): Don't ignore the error here
-			json.Unmarshal(result.Ops[1].Value, &txnMetaVal)
-			txnMeta = &txnMetaVal
-		}
-
-		docBytes := result.Ops[2].Value
-		docCas := result.Cas
-
-		if txnMeta != nil {
-			getTxnState := func(cb func(jsonAtrState, error)) {
-				if txnMeta.ID.Attempt != t.id {
-					_, err := opts.Agent.LookupIn(gocbcore.LookupInOptions{
-						ScopeName:      opts.ScopeName,
-						CollectionName: opts.CollectionName,
-						Key:            []byte(txnMeta.ATR.DocID),
-						Ops: []gocbcore.SubDocOp{
-							{
-								Op:    memd.SubDocOpGet,
-								Path:  "attempts." + t.id + ".st",
-								Flags: 0,
-							},
-						},
-					}, func(result *gocbcore.LookupInResult, err error) {
-						if err != nil {
-							if errors.Is(err, gocbcore.ErrDocumentNotFound) {
-								cb(jsonAtrStateCommitted, ErrAtrNotFound)
-								return
-							}
-
-							cb(jsonAtrStateCommitted, err)
-							return
-						}
-
-						err = result.Ops[0].Err
-						if err != nil {
-							if errors.Is(err, gocbcore.ErrPathNotFound) {
-								// TODO(brett19): Discuss with Graham if this is correct.
-								cb(jsonAtrStateCommitted, nil)
-								return
-							}
-
-							cb(jsonAtrStateCommitted, err)
-							return
-						}
-
-						// TODO(brett19): Don't ignore the error here.
-						var txnState jsonAtrState
-						json.Unmarshal(result.Ops[0].Value, &txnState)
-
-						cb(txnState, nil)
-					})
-					if err != nil {
-						cb(jsonAtrStateCommitted, err)
-						return
-					}
-				} else {
-					cb(jsonAtrStateCommitted, nil)
-					return
-				}
+		_, err = opts.Agent.LookupIn(gocbcore.LookupInOptions{
+			ScopeName:      opts.ScopeName,
+			CollectionName: opts.CollectionName,
+			Key:            opts.Key,
+			Ops: []gocbcore.SubDocOp{
+				{
+					Op:    memd.SubDocOpGet,
+					Path:  "$document",
+					Flags: memd.SubdocFlagXattrPath,
+				},
+				{
+					Op:    memd.SubDocOpGet,
+					Path:  "txn",
+					Flags: memd.SubdocFlagXattrPath,
+				},
+				{
+					Op:    memd.SubDocOpGetDoc,
+					Path:  "",
+					Flags: 0,
+				},
+			},
+			Deadline: deadline,
+		}, func(result *gocbcore.LookupInResult, err error) {
+			if errors.Is(err, gocbcore.ErrDocumentNotFound) {
+				cb(nil, ErrDocNotFound)
+				return
 			}
 
-			getTxnState(func(state jsonAtrState, err error) {
-				if state == jsonAtrStateCommitted {
-					if err := t.hooks.AfterGetComplete(opts.Key); err != nil {
-						t.handleError(err)
-						cb(nil, err)
+			var docMeta struct {
+				Cas        string `json:"CAS"`
+				RevID      string `json:"revid"`
+				Expiration uint   `json:"exptime"`
+			}
+			// TODO(brett19): Don't ignore the error here
+			json.Unmarshal(result.Ops[0].Value, &docMeta)
+
+			var txnMeta *jsonTxnXattr
+			if result.Ops[1].Err == nil {
+				var txnMetaVal jsonTxnXattr
+				// TODO(brett19): Don't ignore the error here
+				json.Unmarshal(result.Ops[1].Value, &txnMetaVal)
+				txnMeta = &txnMetaVal
+			}
+
+			docBytes := result.Ops[2].Value
+			docCas := result.Cas
+
+			if txnMeta != nil {
+				getTxnState := func(cb func(jsonAtrState, error)) {
+					if txnMeta.ID.Attempt != t.id {
+						_, err := opts.Agent.LookupIn(gocbcore.LookupInOptions{
+							ScopeName:      opts.ScopeName,
+							CollectionName: opts.CollectionName,
+							Key:            []byte(txnMeta.ATR.DocID),
+							Ops: []gocbcore.SubDocOp{
+								{
+									Op:    memd.SubDocOpGet,
+									Path:  "attempts." + t.id + ".st",
+									Flags: 0,
+								},
+							},
+						}, func(result *gocbcore.LookupInResult, err error) {
+							if err != nil {
+								if errors.Is(err, gocbcore.ErrDocumentNotFound) {
+									cb(jsonAtrStateCommitted, ErrAtrNotFound)
+									return
+								}
+
+								cb(jsonAtrStateCommitted, err)
+								return
+							}
+
+							err = result.Ops[0].Err
+							if err != nil {
+								if errors.Is(err, gocbcore.ErrPathNotFound) {
+									// TODO(brett19): Discuss with Graham if this is correct.
+									cb(jsonAtrStateCommitted, nil)
+									return
+								}
+
+								cb(jsonAtrStateCommitted, err)
+								return
+							}
+
+							// TODO(brett19): Don't ignore the error here.
+							var txnState jsonAtrState
+							json.Unmarshal(result.Ops[0].Value, &txnState)
+
+							cb(txnState, nil)
+						})
+						if err != nil {
+							cb(jsonAtrStateCommitted, err)
+							return
+						}
+					} else {
+						cb(jsonAtrStateCommitted, nil)
 						return
 					}
-
-					// TODO(brett19): Discuss virtual CAS with Graham
-					cb(&GetResult{
-						agent:          opts.Agent,
-						scopeName:      opts.ScopeName,
-						collectionName: opts.CollectionName,
-						key:            opts.Key,
-						Value:          txnMeta.Operation.Staged,
-						Cas:            docCas,
-					}, nil)
-				} else if txnMeta.Operation.Type == jsonMutationRemove {
-					cb(nil, ErrDocNotFound)
-				} else {
-					cb(nil, ErrOther)
 				}
-			})
-			return
-		}
 
-		cb(&GetResult{
-			agent:          opts.Agent,
-			scopeName:      opts.ScopeName,
-			collectionName: opts.CollectionName,
-			key:            opts.Key,
-			Value:          docBytes,
-			Cas:            docCas,
-			revid:          docMeta.RevID,
-			expiry:         docMeta.Expiration,
-		}, nil)
+				getTxnState(func(state jsonAtrState, err error) {
+					if state == jsonAtrStateCommitted {
+
+						t.hooks.AfterGetComplete(opts.Key, func(err error) {
+							if err != nil {
+								t.handleError(err)
+								cb(nil, err)
+								return
+							}
+
+							// TODO(brett19): Discuss virtual CAS with Graham
+							cb(&GetResult{
+								agent:          opts.Agent,
+								scopeName:      opts.ScopeName,
+								collectionName: opts.CollectionName,
+								key:            opts.Key,
+								Value:          txnMeta.Operation.Staged,
+								Cas:            docCas,
+							}, nil)
+						})
+					} else if txnMeta.Operation.Type == jsonMutationRemove {
+						cb(nil, ErrDocNotFound)
+					} else {
+						cb(nil, ErrOther)
+					}
+				})
+				return
+			}
+
+			cb(&GetResult{
+				agent:          opts.Agent,
+				scopeName:      opts.ScopeName,
+				collectionName: opts.CollectionName,
+				key:            opts.Key,
+				Value:          docBytes,
+				Cas:            docCas,
+				revid:          docMeta.RevID,
+				expiry:         docMeta.Expiration,
+			}, nil)
+		})
+		if err != nil {
+			cb(nil, err)
+		}
 	})
-	if err != nil {
-		return err
-	}
 
 	return nil
 }
@@ -684,87 +703,91 @@ func (t *transactionAttempt) Insert(opts InsertOptions, cb StoreCallback) error 
 			return
 		}
 
-		if err := t.hooks.BeforeStagedInsert(opts.Key); err != nil {
-			t.handleError(err)
-			cb(nil, err)
-			return
-		}
-
-		stagedInfo := &stagedMutation{
-			OpType:         StagedMutationInsert,
-			Agent:          opts.Agent,
-			ScopeName:      opts.ScopeName,
-			CollectionName: opts.CollectionName,
-			Key:            opts.Key,
-			Staged:         opts.Value,
-		}
-
-		var txnMeta jsonTxnXattr
-		txnMeta.ID.Transaction = t.transactionID
-		txnMeta.ID.Attempt = t.id
-		txnMeta.ATR.CollectionName = t.atrCollName()
-		txnMeta.ATR.BucketName = "" // TODO(brett19): Need the bucket name.
-		txnMeta.ATR.DocID = string(t.atrKey)
-		txnMeta.Operation.Type = jsonMutationInsert
-		txnMeta.Operation.Staged = stagedInfo.Staged
-
-		txnMetaBytes, _ := json.Marshal(txnMeta)
-		// TODO(brett19): Don't ignore the error here.
-
-		var duraTimeout time.Duration
-		var deadline time.Time
-		if t.keyValueTimeout > 0 {
-			deadline = time.Now().Add(t.keyValueTimeout)
-			duraTimeout = t.keyValueTimeout * 10 / 9
-		}
-
-		_, err = stagedInfo.Agent.MutateIn(gocbcore.MutateInOptions{
-			ScopeName:      stagedInfo.ScopeName,
-			CollectionName: stagedInfo.CollectionName,
-			Key:            stagedInfo.Key,
-			Ops: []gocbcore.SubDocOp{
-				{
-					Op:    memd.SubDocOpDictAdd,
-					Path:  "txn",
-					Flags: memd.SubdocFlagMkDirP | memd.SubdocFlagXattrPath,
-					Value: txnMetaBytes,
-				},
-			},
-			DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
-			DurabilityLevelTimeout: duraTimeout,
-			Deadline:               deadline,
-			Flags:                  memd.SubdocDocFlagAddDoc,
-		}, func(result *gocbcore.MutateInResult, err error) {
+		t.hooks.BeforeStagedInsert(opts.Key, func(err error) {
 			if err != nil {
 				t.handleError(err)
 				cb(nil, err)
 				return
 			}
 
-			if err := t.hooks.AfterStagedInsertComplete(opts.Key); err != nil {
-				t.handleError(err)
-				cb(nil, err)
-				return
+			stagedInfo := &stagedMutation{
+				OpType:         StagedMutationInsert,
+				Agent:          opts.Agent,
+				ScopeName:      opts.ScopeName,
+				CollectionName: opts.CollectionName,
+				Key:            opts.Key,
+				Staged:         opts.Value,
 			}
 
-			t.lock.Lock()
-			stagedInfo.Cas = result.Cas
-			t.stagedMutations = append(t.stagedMutations, stagedInfo)
-			t.lock.Unlock()
+			var txnMeta jsonTxnXattr
+			txnMeta.ID.Transaction = t.transactionID
+			txnMeta.ID.Attempt = t.id
+			txnMeta.ATR.CollectionName = t.atrCollName()
+			txnMeta.ATR.BucketName = "" // TODO(brett19): Need the bucket name.
+			txnMeta.ATR.DocID = string(t.atrKey)
+			txnMeta.Operation.Type = jsonMutationInsert
+			txnMeta.Operation.Staged = stagedInfo.Staged
 
-			cb(&GetResult{
-				agent:          stagedInfo.Agent,
-				scopeName:      stagedInfo.ScopeName,
-				collectionName: stagedInfo.CollectionName,
-				key:            stagedInfo.Key,
-				Value:          stagedInfo.Staged,
-				Cas:            result.Cas,
-			}, err)
+			txnMetaBytes, _ := json.Marshal(txnMeta)
+			// TODO(brett19): Don't ignore the error here.
+
+			var duraTimeout time.Duration
+			var deadline time.Time
+			if t.keyValueTimeout > 0 {
+				deadline = time.Now().Add(t.keyValueTimeout)
+				duraTimeout = t.keyValueTimeout * 10 / 9
+			}
+
+			_, err = stagedInfo.Agent.MutateIn(gocbcore.MutateInOptions{
+				ScopeName:      stagedInfo.ScopeName,
+				CollectionName: stagedInfo.CollectionName,
+				Key:            stagedInfo.Key,
+				Ops: []gocbcore.SubDocOp{
+					{
+						Op:    memd.SubDocOpDictAdd,
+						Path:  "txn",
+						Flags: memd.SubdocFlagMkDirP | memd.SubdocFlagXattrPath,
+						Value: txnMetaBytes,
+					},
+				},
+				DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
+				DurabilityLevelTimeout: duraTimeout,
+				Deadline:               deadline,
+				Flags:                  memd.SubdocDocFlagAddDoc,
+			}, func(result *gocbcore.MutateInResult, err error) {
+				if err != nil {
+					t.handleError(err)
+					cb(nil, err)
+					return
+				}
+
+				t.hooks.AfterStagedInsertComplete(opts.Key, func(err error) {
+					if err != nil {
+						t.handleError(err)
+						cb(nil, err)
+						return
+					}
+
+					t.lock.Lock()
+					stagedInfo.Cas = result.Cas
+					t.stagedMutations = append(t.stagedMutations, stagedInfo)
+					t.lock.Unlock()
+
+					cb(&GetResult{
+						agent:          stagedInfo.Agent,
+						scopeName:      stagedInfo.ScopeName,
+						collectionName: stagedInfo.CollectionName,
+						key:            stagedInfo.Key,
+						Value:          stagedInfo.Staged,
+						Cas:            result.Cas,
+					}, err)
+				})
+			})
+			if err != nil {
+				t.handleError(err)
+				cb(nil, err)
+			}
 		})
-		if err != nil {
-			t.handleError(err)
-			cb(nil, err)
-		}
 	})
 	if err != nil {
 		t.handleError(err)
@@ -795,102 +818,106 @@ func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) erro
 			return
 		}
 
-		if err := t.hooks.BeforeStagedReplace(key); err != nil {
-			t.handleError(err)
-			cb(nil, err)
-			return
-		}
-
-		stagedInfo := &stagedMutation{
-			OpType:         StagedMutationReplace,
-			Agent:          agent,
-			ScopeName:      scopeName,
-			CollectionName: collectionName,
-			Key:            key,
-			Staged:         opts.Value,
-		}
-
-		var txnMeta jsonTxnXattr
-		txnMeta.ID.Transaction = t.transactionID
-		txnMeta.ID.Attempt = t.id
-		txnMeta.ATR.CollectionName = t.atrCollName()
-		txnMeta.ATR.BucketName = "" // TODO(brett19): Need the bucket name.
-		txnMeta.ATR.DocID = string(t.atrKey)
-		txnMeta.Operation.Type = jsonMutationReplace
-		txnMeta.Operation.Staged = stagedInfo.Staged
-		restore := struct {
-			OriginalCAS string
-			ExpiryTime  uint
-			RevID       string
-		}{
-			OriginalCAS: fmt.Sprintf("%d", opts.Document.Cas),
-			ExpiryTime:  opts.Document.expiry,
-			RevID:       opts.Document.revid,
-		}
-		txnMeta.Restore = (*struct {
-			OriginalCAS string `json:"CAS,omitempty"`
-			ExpiryTime  uint   `json:"exptime"`
-			RevID       string `json:"revid,omitempty"`
-		})(&restore)
-
-		txnMetaBytes, _ := json.Marshal(txnMeta)
-		// TODO(brett19): Don't ignore the error here.
-
-		var duraTimeout time.Duration
-		var deadline time.Time
-		if t.keyValueTimeout > 0 {
-			deadline = time.Now().Add(t.keyValueTimeout)
-			duraTimeout = t.keyValueTimeout * 10 / 9
-		}
-
-		_, err = stagedInfo.Agent.MutateIn(gocbcore.MutateInOptions{
-			ScopeName:      stagedInfo.ScopeName,
-			CollectionName: stagedInfo.CollectionName,
-			Key:            stagedInfo.Key,
-			Cas:            opts.Document.Cas,
-			Ops: []gocbcore.SubDocOp{
-				{
-					Op:    memd.SubDocOpDictAdd,
-					Path:  "txn",
-					Flags: memd.SubdocFlagMkDirP | memd.SubdocFlagXattrPath,
-					Value: txnMetaBytes,
-				},
-			},
-			Flags:                  memd.SubdocDocFlagNone,
-			DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
-			DurabilityLevelTimeout: duraTimeout,
-			Deadline:               deadline,
-		}, func(result *gocbcore.MutateInResult, err error) {
+		t.hooks.BeforeStagedReplace(key, func(err error) {
 			if err != nil {
 				t.handleError(err)
 				cb(nil, err)
 				return
 			}
 
-			if err := t.hooks.AfterStagedReplaceComplete(key); err != nil {
-				t.handleError(err)
-				cb(nil, err)
-				return
+			stagedInfo := &stagedMutation{
+				OpType:         StagedMutationReplace,
+				Agent:          agent,
+				ScopeName:      scopeName,
+				CollectionName: collectionName,
+				Key:            key,
+				Staged:         opts.Value,
 			}
 
-			t.lock.Lock()
-			stagedInfo.Cas = result.Cas
-			t.stagedMutations = append(t.stagedMutations, stagedInfo)
-			t.lock.Unlock()
+			var txnMeta jsonTxnXattr
+			txnMeta.ID.Transaction = t.transactionID
+			txnMeta.ID.Attempt = t.id
+			txnMeta.ATR.CollectionName = t.atrCollName()
+			txnMeta.ATR.BucketName = "" // TODO(brett19): Need the bucket name.
+			txnMeta.ATR.DocID = string(t.atrKey)
+			txnMeta.Operation.Type = jsonMutationReplace
+			txnMeta.Operation.Staged = stagedInfo.Staged
+			restore := struct {
+				OriginalCAS string
+				ExpiryTime  uint
+				RevID       string
+			}{
+				OriginalCAS: fmt.Sprintf("%d", opts.Document.Cas),
+				ExpiryTime:  opts.Document.expiry,
+				RevID:       opts.Document.revid,
+			}
+			txnMeta.Restore = (*struct {
+				OriginalCAS string `json:"CAS,omitempty"`
+				ExpiryTime  uint   `json:"exptime"`
+				RevID       string `json:"revid,omitempty"`
+			})(&restore)
 
-			cb(&GetResult{
-				agent:          stagedInfo.Agent,
-				scopeName:      stagedInfo.ScopeName,
-				collectionName: stagedInfo.CollectionName,
-				key:            stagedInfo.Key,
-				Value:          stagedInfo.Staged,
-				Cas:            result.Cas,
-			}, nil)
+			txnMetaBytes, _ := json.Marshal(txnMeta)
+			// TODO(brett19): Don't ignore the error here.
+
+			var duraTimeout time.Duration
+			var deadline time.Time
+			if t.keyValueTimeout > 0 {
+				deadline = time.Now().Add(t.keyValueTimeout)
+				duraTimeout = t.keyValueTimeout * 10 / 9
+			}
+
+			_, err = stagedInfo.Agent.MutateIn(gocbcore.MutateInOptions{
+				ScopeName:      stagedInfo.ScopeName,
+				CollectionName: stagedInfo.CollectionName,
+				Key:            stagedInfo.Key,
+				Cas:            opts.Document.Cas,
+				Ops: []gocbcore.SubDocOp{
+					{
+						Op:    memd.SubDocOpDictAdd,
+						Path:  "txn",
+						Flags: memd.SubdocFlagMkDirP | memd.SubdocFlagXattrPath,
+						Value: txnMetaBytes,
+					},
+				},
+				Flags:                  memd.SubdocDocFlagNone,
+				DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
+				DurabilityLevelTimeout: duraTimeout,
+				Deadline:               deadline,
+			}, func(result *gocbcore.MutateInResult, err error) {
+				if err != nil {
+					t.handleError(err)
+					cb(nil, err)
+					return
+				}
+
+				t.hooks.AfterStagedReplaceComplete(key, func(err error) {
+					if err != nil {
+						t.handleError(err)
+						cb(nil, err)
+						return
+					}
+
+					t.lock.Lock()
+					stagedInfo.Cas = result.Cas
+					t.stagedMutations = append(t.stagedMutations, stagedInfo)
+					t.lock.Unlock()
+
+					cb(&GetResult{
+						agent:          stagedInfo.Agent,
+						scopeName:      stagedInfo.ScopeName,
+						collectionName: stagedInfo.CollectionName,
+						key:            stagedInfo.Key,
+						Value:          stagedInfo.Staged,
+						Cas:            result.Cas,
+					}, nil)
+				})
+			})
+			if err != nil {
+				t.handleError(err)
+				cb(nil, err)
+			}
 		})
-		if err != nil {
-			t.handleError(err)
-			cb(nil, err)
-		}
 	})
 	if err != nil {
 		t.handleError(err)
@@ -921,87 +948,91 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 			return
 		}
 
-		if err := t.hooks.BeforeStagedRemove(key); err != nil {
-			t.handleError(err)
-			cb(nil, err)
-			return
-		}
-
-		stagedInfo := &stagedMutation{
-			OpType:         StagedMutationRemove,
-			Agent:          agent,
-			ScopeName:      scopeName,
-			CollectionName: collectionName,
-			Key:            key,
-		}
-
-		var txnMeta jsonTxnXattr
-		txnMeta.ID.Transaction = t.transactionID
-		txnMeta.ID.Attempt = t.id
-		txnMeta.ATR.CollectionName = t.atrCollName()
-		txnMeta.ATR.BucketName = "" // TODO(brett19): Need the bucket name.
-		txnMeta.ATR.DocID = string(t.atrKey)
-		txnMeta.Operation.Type = jsonMutationRemove
-		txnMeta.Operation.Staged = stagedInfo.Staged
-
-		txnMetaBytes, _ := json.Marshal(txnMeta)
-		// TODO(brett19): Don't ignore the error here.
-
-		var duraTimeout time.Duration
-		var deadline time.Time
-		if t.keyValueTimeout > 0 {
-			deadline = time.Now().Add(t.keyValueTimeout)
-			duraTimeout = t.keyValueTimeout * 10 / 9
-		}
-
-		_, err = stagedInfo.Agent.MutateIn(gocbcore.MutateInOptions{
-			ScopeName:      stagedInfo.ScopeName,
-			CollectionName: stagedInfo.CollectionName,
-			Key:            stagedInfo.Key,
-			Cas:            opts.Document.Cas,
-			Ops: []gocbcore.SubDocOp{
-				{
-					Op:    memd.SubDocOpDictAdd,
-					Path:  "txn",
-					Flags: memd.SubdocFlagMkDirP | memd.SubdocFlagXattrPath,
-					Value: txnMetaBytes,
-				},
-			},
-			Flags:                  memd.SubdocDocFlagNone,
-			DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
-			DurabilityLevelTimeout: duraTimeout,
-			Deadline:               deadline,
-		}, func(result *gocbcore.MutateInResult, err error) {
+		t.hooks.BeforeStagedRemove(key, func(err error) {
 			if err != nil {
 				t.handleError(err)
 				cb(nil, err)
 				return
 			}
 
-			if err := t.hooks.AfterStagedRemoveComplete(key); err != nil {
-				t.handleError(err)
-				cb(nil, err)
-				return
+			stagedInfo := &stagedMutation{
+				OpType:         StagedMutationRemove,
+				Agent:          agent,
+				ScopeName:      scopeName,
+				CollectionName: collectionName,
+				Key:            key,
 			}
 
-			t.lock.Lock()
-			stagedInfo.Cas = result.Cas
-			t.stagedMutations = append(t.stagedMutations, stagedInfo)
-			t.lock.Unlock()
+			var txnMeta jsonTxnXattr
+			txnMeta.ID.Transaction = t.transactionID
+			txnMeta.ID.Attempt = t.id
+			txnMeta.ATR.CollectionName = t.atrCollName()
+			txnMeta.ATR.BucketName = "" // TODO(brett19): Need the bucket name.
+			txnMeta.ATR.DocID = string(t.atrKey)
+			txnMeta.Operation.Type = jsonMutationRemove
+			txnMeta.Operation.Staged = stagedInfo.Staged
 
-			cb(&GetResult{
-				agent:          stagedInfo.Agent,
-				scopeName:      stagedInfo.ScopeName,
-				collectionName: stagedInfo.CollectionName,
-				key:            stagedInfo.Key,
-				Value:          stagedInfo.Staged,
-				Cas:            result.Cas,
-			}, err)
+			txnMetaBytes, _ := json.Marshal(txnMeta)
+			// TODO(brett19): Don't ignore the error here.
+
+			var duraTimeout time.Duration
+			var deadline time.Time
+			if t.keyValueTimeout > 0 {
+				deadline = time.Now().Add(t.keyValueTimeout)
+				duraTimeout = t.keyValueTimeout * 10 / 9
+			}
+
+			_, err = stagedInfo.Agent.MutateIn(gocbcore.MutateInOptions{
+				ScopeName:      stagedInfo.ScopeName,
+				CollectionName: stagedInfo.CollectionName,
+				Key:            stagedInfo.Key,
+				Cas:            opts.Document.Cas,
+				Ops: []gocbcore.SubDocOp{
+					{
+						Op:    memd.SubDocOpDictAdd,
+						Path:  "txn",
+						Flags: memd.SubdocFlagMkDirP | memd.SubdocFlagXattrPath,
+						Value: txnMetaBytes,
+					},
+				},
+				Flags:                  memd.SubdocDocFlagNone,
+				DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
+				DurabilityLevelTimeout: duraTimeout,
+				Deadline:               deadline,
+			}, func(result *gocbcore.MutateInResult, err error) {
+				if err != nil {
+					t.handleError(err)
+					cb(nil, err)
+					return
+				}
+
+				t.hooks.AfterStagedRemoveComplete(key, func(err error) {
+					if err != nil {
+						t.handleError(err)
+						cb(nil, err)
+						return
+					}
+
+					t.lock.Lock()
+					stagedInfo.Cas = result.Cas
+					t.stagedMutations = append(t.stagedMutations, stagedInfo)
+					t.lock.Unlock()
+
+					cb(&GetResult{
+						agent:          stagedInfo.Agent,
+						scopeName:      stagedInfo.ScopeName,
+						collectionName: stagedInfo.CollectionName,
+						key:            stagedInfo.Key,
+						Value:          stagedInfo.Staged,
+						Cas:            result.Cas,
+					}, err)
+				})
+			})
+			if err != nil {
+				t.handleError(err)
+				cb(nil, err)
+			}
 		})
-		if err != nil {
-			t.handleError(err)
-			cb(nil, err)
-		}
 	})
 	if err != nil {
 		t.handleError(err)
@@ -1017,60 +1048,62 @@ func (t *transactionAttempt) unstageInsRepMutation(mutation stagedMutation, cb f
 		return
 	}
 
-	if err := t.hooks.BeforeDocCommitted(mutation.Key); err != nil {
-		t.handleError(err)
-		cb(err)
-		return
-	}
-
-	_, err := mutation.Agent.MutateIn(gocbcore.MutateInOptions{
-		ScopeName:      mutation.ScopeName,
-		CollectionName: mutation.CollectionName,
-		Key:            mutation.Key,
-		Cas:            mutation.Cas,
-		Ops: []gocbcore.SubDocOp{
-			{
-				Op:    memd.SubDocOpDictSet,
-				Path:  "txn",
-				Flags: memd.SubdocFlagXattrPath,
-				Value: []byte{110, 117, 108, 108}, // null
-			},
-			{
-				Op:    memd.SubDocOpDelete,
-				Path:  "txn",
-				Flags: memd.SubdocFlagXattrPath,
-			},
-			{
-				Op:    memd.SubDocOpSetDoc,
-				Path:  "",
-				Value: mutation.Staged,
-			},
-		},
-	}, func(result *gocbcore.MutateInResult, err error) {
+	t.hooks.BeforeDocCommitted(mutation.Key, func(err error) {
 		if err != nil {
-			cb(err)
-			return
-		}
-
-		if err := t.hooks.AfterDocCommittedBeforeSavingCAS(mutation.Key); err != nil {
 			t.handleError(err)
 			cb(err)
 			return
 		}
 
-		t.finalMutationTokens = append(t.finalMutationTokens, MutationToken{
-			BucketName:    mutation.Agent.BucketName(),
-			MutationToken: result.MutationToken,
+		_, err = mutation.Agent.MutateIn(gocbcore.MutateInOptions{
+			ScopeName:      mutation.ScopeName,
+			CollectionName: mutation.CollectionName,
+			Key:            mutation.Key,
+			Cas:            mutation.Cas,
+			Ops: []gocbcore.SubDocOp{
+				{
+					Op:    memd.SubDocOpDictSet,
+					Path:  "txn",
+					Flags: memd.SubdocFlagXattrPath,
+					Value: []byte{110, 117, 108, 108}, // null
+				},
+				{
+					Op:    memd.SubDocOpDelete,
+					Path:  "txn",
+					Flags: memd.SubdocFlagXattrPath,
+				},
+				{
+					Op:    memd.SubDocOpSetDoc,
+					Path:  "",
+					Value: mutation.Staged,
+				},
+			},
+		}, func(result *gocbcore.MutateInResult, err error) {
+			if err != nil {
+				cb(err)
+				return
+			}
+
+			t.hooks.AfterDocCommittedBeforeSavingCAS(mutation.Key, func(err error) {
+				if err != nil {
+					t.handleError(err)
+					cb(err)
+					return
+				}
+
+				t.finalMutationTokens = append(t.finalMutationTokens, MutationToken{
+					BucketName:    mutation.Agent.BucketName(),
+					MutationToken: result.MutationToken,
+				})
+
+				cb(nil)
+			})
 		})
-
-		cb(nil)
+		if err != nil {
+			cb(err)
+			return
+		}
 	})
-	if err != nil {
-		cb(err)
-		return
-	}
-
-	cb(nil)
 }
 
 func (t *transactionAttempt) unstageRemMutation(mutation stagedMutation, cb func(error)) {
@@ -1079,97 +1112,103 @@ func (t *transactionAttempt) unstageRemMutation(mutation stagedMutation, cb func
 		return
 	}
 
-	if err := t.hooks.BeforeDocRemoved(mutation.Key); err != nil {
-		t.handleError(err)
-		cb(err)
-		return
-	}
-
-	_, err := mutation.Agent.Delete(gocbcore.DeleteOptions{
-		ScopeName:      mutation.ScopeName,
-		CollectionName: mutation.CollectionName,
-		Key:            mutation.Key,
-		Cas:            mutation.Cas,
-	}, func(result *gocbcore.DeleteResult, err error) {
+	t.hooks.BeforeDocRemoved(mutation.Key, func(err error) {
 		if err != nil {
-			cb(err)
-			return
-		}
-
-		if err := t.hooks.AfterDocRemovedPreRetry(mutation.Key); err != nil {
 			t.handleError(err)
 			cb(err)
 			return
 		}
 
-		t.finalMutationTokens = append(t.finalMutationTokens, MutationToken{
-			BucketName:    mutation.Agent.BucketName(),
-			MutationToken: result.MutationToken,
-		})
-
-		// TODO(chvck): Is this in the right place?!
-		if err := t.hooks.AfterDocRemovedPostRetry(mutation.Key); err != nil {
-			t.handleError(err)
-			cb(err)
-			return
-		}
-
-		cb(nil)
-	})
-	if err != nil {
-		cb(err)
-		return
-	}
-
-	cb(nil)
-}
-
-func (t *transactionAttempt) Commit(cb CommitCallback) error {
-	err := t.hooks.BeforeATRCommit()
-	if err != nil {
-		return err
-	}
-	// TODO(brett19): Move the wait logic from setATRCommitted to here
-	t.setATRCommitted(func(err error) {
-		if err != nil {
-			cb(err)
-			return
-		}
-
-		// TODO(brett19): Use atomic counters instead of a goroutine here
-		go func() {
-			numMutations := len(t.stagedMutations)
-			waitCh := make(chan error, numMutations)
-
-			for _, mutation := range t.stagedMutations {
-				if mutation.OpType == StagedMutationInsert || mutation.OpType == StagedMutationReplace {
-					t.unstageInsRepMutation(*mutation, func(err error) {
-						waitCh <- err
-					})
-				} else if mutation.OpType == StagedMutationRemove {
-					t.unstageRemMutation(*mutation, func(err error) {
-						waitCh <- err
-					})
-				} else {
-					// TODO(brett19): Pretty sure I can do better than this
-					waitCh <- ErrUhOh
-				}
+		_, err = mutation.Agent.Delete(gocbcore.DeleteOptions{
+			ScopeName:      mutation.ScopeName,
+			CollectionName: mutation.CollectionName,
+			Key:            mutation.Key,
+			Cas:            mutation.Cas,
+		}, func(result *gocbcore.DeleteResult, err error) {
+			if err != nil {
+				cb(err)
+				return
 			}
 
-			for i := 0; i < numMutations; i++ {
-				// TODO(brett19): Handle errors here better
-				<-waitCh
-			}
-
-			t.setATRCompleted(func(err error) {
+			t.hooks.AfterDocRemovedPreRetry(mutation.Key, func(err error) {
 				if err != nil {
+					t.handleError(err)
 					cb(err)
 					return
 				}
 
-				cb(nil)
+				t.finalMutationTokens = append(t.finalMutationTokens, MutationToken{
+					BucketName:    mutation.Agent.BucketName(),
+					MutationToken: result.MutationToken,
+				})
+
+				// TODO(chvck): Is this in the right place?!
+				t.hooks.AfterDocRemovedPostRetry(mutation.Key, func(err error) {
+					if err != nil {
+						t.handleError(err)
+						cb(err)
+						return
+					}
+
+					cb(nil)
+				})
 			})
-		}()
+		})
+		if err != nil {
+			cb(err)
+			return
+		}
+	})
+}
+
+func (t *transactionAttempt) Commit(cb CommitCallback) error {
+	t.hooks.BeforeATRCommit(func(err error) {
+		if err != nil {
+			cb(err)
+			return
+		}
+		// TODO(brett19): Move the wait logic from setATRCommitted to here
+		t.setATRCommitted(func(err error) {
+			if err != nil {
+				cb(err)
+				return
+			}
+
+			// TODO(brett19): Use atomic counters instead of a goroutine here
+			go func() {
+				numMutations := len(t.stagedMutations)
+				waitCh := make(chan error, numMutations)
+
+				for _, mutation := range t.stagedMutations {
+					if mutation.OpType == StagedMutationInsert || mutation.OpType == StagedMutationReplace {
+						t.unstageInsRepMutation(*mutation, func(err error) {
+							waitCh <- err
+						})
+					} else if mutation.OpType == StagedMutationRemove {
+						t.unstageRemMutation(*mutation, func(err error) {
+							waitCh <- err
+						})
+					} else {
+						// TODO(brett19): Pretty sure I can do better than this
+						waitCh <- ErrUhOh
+					}
+				}
+
+				for i := 0; i < numMutations; i++ {
+					// TODO(brett19): Handle errors here better
+					<-waitCh
+				}
+
+				t.setATRCompleted(func(err error) {
+					if err != nil {
+						cb(err)
+						return
+					}
+
+					cb(nil)
+				})
+			}()
+		})
 	})
 	return nil
 }
@@ -1183,29 +1222,274 @@ func (t *transactionAttempt) setATRAborted(
 			return
 		}
 
-		if err := t.hooks.BeforeATRAborted(); err != nil {
+		t.hooks.BeforeATRAborted(func(err error) {
+			if err != nil {
+				t.handleError(err)
+				cb(err)
+				return
+			}
+
+			t.lock.Lock()
+			if len(t.stagedMutations) == 0 {
+				t.lock.Unlock()
+				t.txnAtrSection.Wait(func() {
+					cb(nil)
+				})
+
+				return
+			}
+
+			if t.state == AttemptStateRolledBack || t.state == AttemptStateCompleted || t.state == AttemptStateCommitted {
+				t.lock.Unlock()
+
+				t.txnAtrSection.Wait(func() {
+					cb(ErrUhOh)
+				})
+
+				return
+			}
+
+			atrAgent := t.atrAgent
+			atrScopeName := t.atrScopeName
+			atrKey := t.atrKey
+			atrCollectionName := t.atrCollectionName
+
+			t.state = AttemptStateAborted
+
+			insMutations := []jsonAtrMutation{}
+			repMutations := []jsonAtrMutation{}
+			remMutations := []jsonAtrMutation{}
+
+			for _, mutation := range t.stagedMutations {
+				jsonMutation := jsonAtrMutation{
+					BucketName:     mutation.Agent.BucketName(),
+					ScopeName:      mutation.ScopeName,
+					CollectionName: mutation.CollectionName,
+					DocID:          string(mutation.Key),
+				}
+
+				if mutation.OpType == StagedMutationInsert {
+					insMutations = append(insMutations, jsonMutation)
+				} else if mutation.OpType == StagedMutationReplace {
+					repMutations = append(repMutations, jsonMutation)
+				} else if mutation.OpType == StagedMutationRemove {
+					remMutations = append(remMutations, jsonMutation)
+				} else {
+					// TODO(brett19): Signal an error here
+				}
+			}
+
+			t.txnAtrSection.Add(1)
+			t.lock.Unlock()
+
+			atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag) gocbcore.SubDocOp {
+				bytes, _ := json.Marshal(data)
+
+				return gocbcore.SubDocOp{
+					Op:    memd.SubDocOpDictSet,
+					Flags: memd.SubdocFlagMkDirP | flags,
+					Path:  "attempts." + t.id + "." + fieldName,
+					Value: bytes,
+				}
+			}
+
+			var duraTimeout time.Duration
+			var deadline time.Time
+			if t.keyValueTimeout > 0 {
+				deadline = time.Now().Add(t.keyValueTimeout)
+				duraTimeout = t.keyValueTimeout * 10 / 9
+			}
+
+			_, err = atrAgent.MutateIn(gocbcore.MutateInOptions{
+				ScopeName:      atrScopeName,
+				CollectionName: atrCollectionName,
+				Key:            atrKey,
+				Ops: []gocbcore.SubDocOp{
+					atrFieldOp("st", jsonAtrStateAborted, memd.SubdocFlagXattrPath),
+					atrFieldOp("tsrs", "${Mutation.CAS}", memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros),
+					atrFieldOp("p", 0, memd.SubdocFlagXattrPath),
+					atrFieldOp("ins", insMutations, memd.SubdocFlagXattrPath),
+					atrFieldOp("rep", repMutations, memd.SubdocFlagXattrPath),
+					atrFieldOp("rem", remMutations, memd.SubdocFlagXattrPath),
+				},
+				DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
+				DurabilityLevelTimeout: duraTimeout,
+				Flags:                  memd.SubdocDocFlagNone,
+				Deadline:               deadline,
+			}, func(result *gocbcore.MutateInResult, err error) {
+				if err != nil {
+					t.lock.Lock()
+
+					// TODO(brett19): Do other things to cancel it here....
+					t.state = AttemptStateAborted
+
+					t.txnAtrSection.Done()
+					t.lock.Unlock()
+
+					cb(err)
+					return
+				}
+
+				t.lock.Lock()
+				t.txnAtrSection.Done()
+				t.lock.Unlock()
+
+				t.hooks.AfterATRAborted(func(err error) {
+					if err != nil {
+						t.handleError(err)
+						cb(err)
+						return
+					}
+
+					cb(nil)
+				})
+			})
+			if err != nil {
+				t.lock.Lock()
+
+				// TODO(brett19): Do other things to cancel it here....
+				t.state = AttemptStateAborted
+
+				t.txnAtrSection.Done()
+				t.lock.Unlock()
+
+				cb(err)
+			}
+		})
+	})
+	return nil
+}
+
+func (t *transactionAttempt) rollbackInsMutation(mutation stagedMutation, cb func(error)) {
+	if mutation.OpType != StagedMutationInsert {
+		cb(ErrUhOh)
+		return
+	}
+
+	t.hooks.BeforeRollbackDeleteInserted(mutation.Key, func(err error) {
+		if err != nil {
 			t.handleError(err)
 			cb(err)
 			return
 		}
 
+		_, err = mutation.Agent.MutateIn(gocbcore.MutateInOptions{
+			ScopeName:      mutation.ScopeName,
+			CollectionName: mutation.CollectionName,
+			Key:            mutation.Key,
+			Cas:            mutation.Cas,
+			Flags:          memd.SubdocDocFlagAccessDeleted,
+			Ops: []gocbcore.SubDocOp{
+				{
+					Op:    memd.SubDocOpDictSet,
+					Path:  "txn",
+					Flags: memd.SubdocFlagXattrPath,
+					Value: []byte{110, 117, 108, 108}, // null
+				},
+				{
+					Op:    memd.SubDocOpDelete,
+					Path:  "txn",
+					Flags: memd.SubdocFlagXattrPath,
+				},
+			},
+		}, func(result *gocbcore.MutateInResult, err error) {
+			if err != nil {
+				cb(err)
+				return
+			}
+
+			t.hooks.AfterRollbackDeleteInserted(mutation.Key, func(err error) {
+				if err != nil {
+					t.handleError(err)
+					cb(err)
+					return
+				}
+
+				cb(nil)
+			})
+		})
+		if err != nil {
+			cb(err)
+			return
+		}
+	})
+}
+
+func (t *transactionAttempt) rollbackRepRemMutation(mutation stagedMutation, cb func(error)) {
+	if mutation.OpType != StagedMutationRemove && mutation.OpType != StagedMutationReplace {
+		cb(ErrUhOh)
+		return
+	}
+
+	t.hooks.BeforeDocRolledBack(mutation.Key, func(err error) {
+		if err != nil {
+			t.handleError(err)
+			cb(err)
+			return
+		}
+
+		_, err = mutation.Agent.MutateIn(gocbcore.MutateInOptions{
+			ScopeName:      mutation.ScopeName,
+			CollectionName: mutation.CollectionName,
+			Key:            mutation.Key,
+			Cas:            mutation.Cas,
+			Flags:          memd.SubdocDocFlagAccessDeleted,
+			Ops: []gocbcore.SubDocOp{
+				{
+					Op:    memd.SubDocOpDictSet,
+					Path:  "txn",
+					Flags: memd.SubdocFlagXattrPath,
+					Value: []byte{110, 117, 108, 108}, // null
+				},
+				{
+					Op:    memd.SubDocOpDelete,
+					Path:  "txn",
+					Flags: memd.SubdocFlagXattrPath,
+				},
+			},
+		}, func(result *gocbcore.MutateInResult, err error) {
+			if err != nil {
+				cb(err)
+				return
+			}
+
+			t.hooks.AfterRollbackReplaceOrRemove(mutation.Key, func(err error) {
+				if err != nil {
+					t.handleError(err)
+					cb(err)
+					return
+				}
+
+				cb(nil)
+			})
+		})
+		if err != nil {
+			cb(err)
+			return
+		}
+	})
+}
+
+func (t *transactionAttempt) setATRRolledBack(
+	cb func(error),
+) error {
+
+	t.hooks.BeforeATRRolledBack(func(err error) {
+		if err != nil {
+			t.handleError(err)
+			cb(nil)
+			return
+		}
+
 		t.lock.Lock()
-		if len(t.stagedMutations) == 0 {
+		if t.state != AttemptStateAborted {
 			t.lock.Unlock()
+
 			t.txnAtrSection.Wait(func() {
 				cb(nil)
 			})
 
-			return
-		}
-
-		if t.state == AttemptStateRolledBack || t.state == AttemptStateCompleted || t.state == AttemptStateCommitted {
-			t.lock.Unlock()
-
-			t.txnAtrSection.Wait(func() {
-				cb(ErrUhOh)
-			})
-
+			cb(nil)
 			return
 		}
 
@@ -1214,30 +1498,7 @@ func (t *transactionAttempt) setATRAborted(
 		atrKey := t.atrKey
 		atrCollectionName := t.atrCollectionName
 
-		t.state = AttemptStateAborted
-
-		insMutations := []jsonAtrMutation{}
-		repMutations := []jsonAtrMutation{}
-		remMutations := []jsonAtrMutation{}
-
-		for _, mutation := range t.stagedMutations {
-			jsonMutation := jsonAtrMutation{
-				BucketName:     mutation.Agent.BucketName(),
-				ScopeName:      mutation.ScopeName,
-				CollectionName: mutation.CollectionName,
-				DocID:          string(mutation.Key),
-			}
-
-			if mutation.OpType == StagedMutationInsert {
-				insMutations = append(insMutations, jsonMutation)
-			} else if mutation.OpType == StagedMutationReplace {
-				repMutations = append(repMutations, jsonMutation)
-			} else if mutation.OpType == StagedMutationRemove {
-				remMutations = append(remMutations, jsonMutation)
-			} else {
-				// TODO(brett19): Signal an error here
-			}
-		}
+		t.state = AttemptStateRolledBack
 
 		t.txnAtrSection.Add(1)
 		t.lock.Unlock()
@@ -1260,22 +1521,18 @@ func (t *transactionAttempt) setATRAborted(
 			duraTimeout = t.keyValueTimeout * 10 / 9
 		}
 
-		_, err := atrAgent.MutateIn(gocbcore.MutateInOptions{
+		_, err = atrAgent.MutateIn(gocbcore.MutateInOptions{
 			ScopeName:      atrScopeName,
 			CollectionName: atrCollectionName,
 			Key:            atrKey,
 			Ops: []gocbcore.SubDocOp{
-				atrFieldOp("st", jsonAtrStateAborted, memd.SubdocFlagXattrPath),
-				atrFieldOp("tsrs", "${Mutation.CAS}", memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros),
-				atrFieldOp("p", 0, memd.SubdocFlagXattrPath),
-				atrFieldOp("ins", insMutations, memd.SubdocFlagXattrPath),
-				atrFieldOp("rep", repMutations, memd.SubdocFlagXattrPath),
-				atrFieldOp("rem", remMutations, memd.SubdocFlagXattrPath),
+				atrFieldOp("st", jsonAtrStateRolledBack, memd.SubdocFlagXattrPath),
+				atrFieldOp("tsrc", "${Mutation.CAS}", memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros),
 			},
 			DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
 			DurabilityLevelTimeout: duraTimeout,
-			Flags:                  memd.SubdocDocFlagNone,
 			Deadline:               deadline,
+			Flags:                  memd.SubdocDocFlagNone,
 		}, func(result *gocbcore.MutateInResult, err error) {
 			if err != nil {
 				t.lock.Lock()
@@ -1294,13 +1551,15 @@ func (t *transactionAttempt) setATRAborted(
 			t.txnAtrSection.Done()
 			t.lock.Unlock()
 
-			if err := t.hooks.AfterATRAborted(); err != nil {
-				t.handleError(err)
-				cb(err)
-				return
-			}
+			t.hooks.AfterATRRolledBack(func(err error) {
+				if err != nil {
+					t.handleError(err)
+					cb(err)
+					return
+				}
 
-			cb(nil)
+				cb(nil)
+			})
 		})
 		if err != nil {
 			t.lock.Lock()
@@ -1313,213 +1572,7 @@ func (t *transactionAttempt) setATRAborted(
 
 			cb(err)
 		}
-
 	})
-	return nil
-}
-
-func (t *transactionAttempt) rollbackInsMutation(mutation stagedMutation, cb func(error)) {
-	if mutation.OpType != StagedMutationInsert {
-		cb(ErrUhOh)
-		return
-	}
-
-	if err := t.hooks.BeforeRollbackDeleteInserted(mutation.Key); err != nil {
-		t.handleError(err)
-		cb(err)
-		return
-	}
-
-	_, err := mutation.Agent.MutateIn(gocbcore.MutateInOptions{
-		ScopeName:      mutation.ScopeName,
-		CollectionName: mutation.CollectionName,
-		Key:            mutation.Key,
-		Cas:            mutation.Cas,
-		Flags:          memd.SubdocDocFlagAccessDeleted,
-		Ops: []gocbcore.SubDocOp{
-			{
-				Op:    memd.SubDocOpDictSet,
-				Path:  "txn",
-				Flags: memd.SubdocFlagXattrPath,
-				Value: []byte{110, 117, 108, 108}, // null
-			},
-			{
-				Op:    memd.SubDocOpDelete,
-				Path:  "txn",
-				Flags: memd.SubdocFlagXattrPath,
-			},
-		},
-	}, func(result *gocbcore.MutateInResult, err error) {
-		if err != nil {
-			cb(err)
-			return
-		}
-
-		if err := t.hooks.AfterRollbackDeleteInserted(mutation.Key); err != nil {
-			t.handleError(err)
-			cb(err)
-			return
-		}
-
-		cb(nil)
-	})
-	if err != nil {
-		cb(err)
-		return
-	}
-
-	cb(nil)
-}
-
-func (t *transactionAttempt) rollbackRepRemMutation(mutation stagedMutation, cb func(error)) {
-	if mutation.OpType != StagedMutationRemove && mutation.OpType != StagedMutationReplace {
-		cb(ErrUhOh)
-		return
-	}
-
-	if err := t.hooks.BeforeDocRolledBack(mutation.Key); err != nil {
-		t.handleError(err)
-		cb(err)
-		return
-	}
-
-	_, err := mutation.Agent.MutateIn(gocbcore.MutateInOptions{
-		ScopeName:      mutation.ScopeName,
-		CollectionName: mutation.CollectionName,
-		Key:            mutation.Key,
-		Cas:            mutation.Cas,
-		Flags:          memd.SubdocDocFlagAccessDeleted,
-		Ops: []gocbcore.SubDocOp{
-			{
-				Op:    memd.SubDocOpDictSet,
-				Path:  "txn",
-				Flags: memd.SubdocFlagXattrPath,
-				Value: []byte{110, 117, 108, 108}, // null
-			},
-			{
-				Op:    memd.SubDocOpDelete,
-				Path:  "txn",
-				Flags: memd.SubdocFlagXattrPath,
-			},
-		},
-	}, func(result *gocbcore.MutateInResult, err error) {
-		if err != nil {
-			cb(err)
-			return
-		}
-
-		if err := t.hooks.AfterRollbackReplaceOrRemove(mutation.Key); err != nil {
-			t.handleError(err)
-			cb(err)
-			return
-		}
-
-		cb(nil)
-	})
-	if err != nil {
-		cb(err)
-		return
-	}
-
-	cb(nil)
-}
-func (t *transactionAttempt) setATRRolledBack(
-	cb func(error),
-) error {
-
-	if err := t.hooks.BeforeATRRolledBack(); err != nil {
-		t.handleError(err)
-		return err
-	}
-
-	t.lock.Lock()
-	if t.state != AttemptStateAborted {
-		t.lock.Unlock()
-
-		t.txnAtrSection.Wait(func() {
-			cb(nil)
-		})
-
-		return nil
-	}
-
-	atrAgent := t.atrAgent
-	atrScopeName := t.atrScopeName
-	atrKey := t.atrKey
-	atrCollectionName := t.atrCollectionName
-
-	t.state = AttemptStateRolledBack
-
-	t.txnAtrSection.Add(1)
-	t.lock.Unlock()
-
-	atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag) gocbcore.SubDocOp {
-		bytes, _ := json.Marshal(data)
-
-		return gocbcore.SubDocOp{
-			Op:    memd.SubDocOpDictSet,
-			Flags: memd.SubdocFlagMkDirP | flags,
-			Path:  "attempts." + t.id + "." + fieldName,
-			Value: bytes,
-		}
-	}
-
-	var duraTimeout time.Duration
-	var deadline time.Time
-	if t.keyValueTimeout > 0 {
-		deadline = time.Now().Add(t.keyValueTimeout)
-		duraTimeout = t.keyValueTimeout * 10 / 9
-	}
-
-	_, err := atrAgent.MutateIn(gocbcore.MutateInOptions{
-		ScopeName:      atrScopeName,
-		CollectionName: atrCollectionName,
-		Key:            atrKey,
-		Ops: []gocbcore.SubDocOp{
-			atrFieldOp("st", jsonAtrStateRolledBack, memd.SubdocFlagXattrPath),
-			atrFieldOp("tsrc", "${Mutation.CAS}", memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros),
-		},
-		DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
-		DurabilityLevelTimeout: duraTimeout,
-		Deadline:               deadline,
-		Flags:                  memd.SubdocDocFlagNone,
-	}, func(result *gocbcore.MutateInResult, err error) {
-		if err != nil {
-			t.lock.Lock()
-
-			// TODO(brett19): Do other things to cancel it here....
-			t.state = AttemptStateAborted
-
-			t.txnAtrSection.Done()
-			t.lock.Unlock()
-
-			cb(err)
-			return
-		}
-
-		t.lock.Lock()
-		t.txnAtrSection.Done()
-		t.lock.Unlock()
-
-		if err := t.hooks.AfterATRRolledBack(); err != nil {
-			t.handleError(err)
-			cb(err)
-			return
-		}
-
-		cb(nil)
-	})
-	if err != nil {
-		t.lock.Lock()
-
-		// TODO(brett19): Do other things to cancel it here....
-		t.state = AttemptStateAborted
-
-		t.txnAtrSection.Done()
-		t.lock.Unlock()
-
-		cb(err)
-	}
 
 	return nil
 }
