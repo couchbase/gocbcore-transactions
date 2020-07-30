@@ -32,6 +32,8 @@ func (t *Transaction) Attempt() Attempt {
 		State:         t.attempt.state,
 		ID:            t.attempt.id,
 		MutationState: t.attempt.finalMutationTokens,
+		ShouldRetry:   t.attempt.shouldRetry,
+		Internal:      struct{ NoRollback bool }{NoRollback: t.attempt.state != AttemptStateCompleted && t.attempt.state != AttemptStateRolledBack},
 	}
 }
 
@@ -40,7 +42,7 @@ func (t *Transaction) NewAttempt() error {
 	attemptUUID := uuid.New().String()
 
 	if t.attempt != nil {
-		if t.attempt.fatalError {
+		if !t.attempt.shouldRetry {
 			return ErrUhOh
 		}
 	}

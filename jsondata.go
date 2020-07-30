@@ -1,6 +1,10 @@
 package transactions
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/couchbase/gocbcore/v9"
+)
 
 type jsonAtrState string
 
@@ -62,4 +66,17 @@ type jsonTxnXattr struct {
 		ExpiryTime  uint   `json:"exptime"`
 		RevID       string `json:"revid,omitempty"`
 	} `json:"restore,omitempty"`
+}
+
+type docMeta struct {
+	Cas        string `json:"CAS"`
+	RevID      string `json:"revid"`
+	Expiration uint   `json:"exptime"`
+}
+
+type getDoc struct {
+	Body    []byte
+	TxnMeta *jsonTxnXattr
+	DocMeta *docMeta
+	Cas     gocbcore.Cas
 }

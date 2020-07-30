@@ -16,6 +16,13 @@ type Attempt struct {
 	State         AttemptState
 	ID            string
 	MutationState []MutationToken
+
+	ShouldRetry bool
+
+	// Internal: This should never be used and is not supported.
+	Internal struct {
+		NoRollback bool
+	}
 }
 
 // Result represents the result of a transaction which was executed.
