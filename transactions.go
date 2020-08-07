@@ -4,6 +4,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/couchbase/gocbcore/v9"
 	"github.com/google/uuid"
 )
 
@@ -82,4 +83,42 @@ func (t *Transactions) ResumeTransactionAttempt(txnData []byte) (*Transaction, e
 // background tasks associated with it.
 func (t *Transactions) Close() error {
 	return errors.New("not implemented")
+}
+
+// TransactionsInternal exposes internal methods that are useful for testing and/or
+// other forms of internal use.
+type TransactionsInternal struct {
+	parent *Transactions
+}
+
+// Internal returns an TransactionsInternal object which can be used for specialized
+// internal use cases.
+func (t *Transactions) Internal() *TransactionsInternal {
+	return &TransactionsInternal{
+		parent: t,
+	}
+}
+
+// CreateGetResultOptions exposes options for the Internal CreateGetResult method.
+type CreateGetResultOptions struct {
+	Agent          *gocbcore.Agent
+	ScopeName      string
+	CollectionName string
+	Key            []byte
+	Cas            gocbcore.Cas
+}
+
+// CreateGetResult creates a false GetResult which can be used with Replace/Remove operations
+// where the original GetResult is no longer available.
+func (t *TransactionsInternal) CreateGetResult(opts CreateGetResultOptions) *GetResult {
+	return &GetResult{
+		agent:          opts.Agent,
+		scopeName:      opts.ScopeName,
+		collectionName: opts.CollectionName,
+		key:            opts.Key,
+		revid:          "",
+		expiry:         0,
+		Value:          nil,
+		Cas:            opts.Cas,
+	}
 }
