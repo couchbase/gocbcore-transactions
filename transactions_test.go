@@ -7,10 +7,6 @@ import (
 	gocb "github.com/couchbase/gocb/v2"
 )
 
-func testSetup(t *testing.T) {
-
-}
-
 func TestSomething(t *testing.T) {
 	cluster, err := gocb.Connect("couchbase://172.23.111.129", gocb.ClusterOptions{
 		Username: "Administrator",
