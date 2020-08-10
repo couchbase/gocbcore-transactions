@@ -1275,53 +1275,47 @@ func (t *transactionAttempt) unstageRemMutation(mutation stagedMutation, cb func
 }
 
 func (t *transactionAttempt) Commit(cb CommitCallback) error {
-	t.hooks.BeforeATRCommit(func(err error) {
+	// TODO(brett19): Move the wait logic from setATRCommitted to here
+	t.setATRCommitted(func(err error) {
 		if err != nil {
 			cb(err)
 			return
 		}
-		// TODO(brett19): Move the wait logic from setATRCommitted to here
-		t.setATRCommitted(func(err error) {
-			if err != nil {
-				cb(err)
-				return
+
+		// TODO(brett19): Use atomic counters instead of a goroutine here
+		go func() {
+			numMutations := len(t.stagedMutations)
+			waitCh := make(chan error, numMutations)
+
+			for _, mutation := range t.stagedMutations {
+				if mutation.OpType == StagedMutationInsert || mutation.OpType == StagedMutationReplace {
+					t.unstageInsRepMutation(*mutation, func(err error) {
+						waitCh <- err
+					})
+				} else if mutation.OpType == StagedMutationRemove {
+					t.unstageRemMutation(*mutation, func(err error) {
+						waitCh <- err
+					})
+				} else {
+					// TODO(brett19): Pretty sure I can do better than this
+					waitCh <- ErrUhOh
+				}
 			}
 
-			// TODO(brett19): Use atomic counters instead of a goroutine here
-			go func() {
-				numMutations := len(t.stagedMutations)
-				waitCh := make(chan error, numMutations)
+			for i := 0; i < numMutations; i++ {
+				// TODO(brett19): Handle errors here better
+				<-waitCh
+			}
 
-				for _, mutation := range t.stagedMutations {
-					if mutation.OpType == StagedMutationInsert || mutation.OpType == StagedMutationReplace {
-						t.unstageInsRepMutation(*mutation, func(err error) {
-							waitCh <- err
-						})
-					} else if mutation.OpType == StagedMutationRemove {
-						t.unstageRemMutation(*mutation, func(err error) {
-							waitCh <- err
-						})
-					} else {
-						// TODO(brett19): Pretty sure I can do better than this
-						waitCh <- ErrUhOh
-					}
+			t.setATRCompleted(func(err error) {
+				if err != nil {
+					cb(err)
+					return
 				}
 
-				for i := 0; i < numMutations; i++ {
-					// TODO(brett19): Handle errors here better
-					<-waitCh
-				}
-
-				t.setATRCompleted(func(err error) {
-					if err != nil {
-						cb(err)
-						return
-					}
-
-					cb(nil)
-				})
-			}()
-		})
+				cb(nil)
+			})
+		}()
 	})
 	return nil
 }
