@@ -33,7 +33,7 @@ func (t *Transaction) Attempt() Attempt {
 		ID:            t.attempt.id,
 		MutationState: t.attempt.finalMutationTokens,
 		ShouldRetry:   t.attempt.shouldRetry,
-		Internal:      struct{ NoRollback bool }{NoRollback: t.attempt.state != AttemptStateCompleted && t.attempt.state != AttemptStateRolledBack},
+		Internal:      struct{ NoRollback bool }{NoRollback: t.attempt.state == AttemptStateCompleted || t.attempt.state == AttemptStateRolledBack},
 	}
 }
 
