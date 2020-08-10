@@ -414,7 +414,6 @@ func (t *transactionAttempt) setATRCompleted(
 				cb(nil)
 			})
 
-			cb(nil)
 			return
 		}
 
