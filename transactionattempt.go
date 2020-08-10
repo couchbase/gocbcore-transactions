@@ -278,7 +278,7 @@ func (t *transactionAttempt) setATRCommitted(
 				t.lock.Unlock()
 
 				t.txnAtrSection.Wait(func() {
-					cb(nil)
+					cb(ErrOther)
 				})
 
 				return
