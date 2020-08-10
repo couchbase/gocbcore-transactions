@@ -819,7 +819,7 @@ func (t *transactionAttempt) Insert(opts InsertOptions, cb StoreCallback) error 
 			txnMeta.ID.Transaction = t.transactionID
 			txnMeta.ID.Attempt = t.id
 			txnMeta.ATR.CollectionName = t.atrCollName()
-			txnMeta.ATR.BucketName = "" // TODO(brett19): Need the bucket name.
+			txnMeta.ATR.BucketName = t.atrAgent.BucketName()
 			txnMeta.ATR.DocID = string(t.atrKey)
 			txnMeta.Operation.Type = jsonMutationInsert
 			txnMeta.Operation.Staged = stagedInfo.Staged
@@ -975,7 +975,7 @@ func (t *transactionAttempt) doReplace(opts ReplaceOptions, cb func(*stagedMutat
 		txnMeta.ID.Transaction = t.transactionID
 		txnMeta.ID.Attempt = t.id
 		txnMeta.ATR.CollectionName = t.atrCollName()
-		txnMeta.ATR.BucketName = "" // TODO(brett19): Need the bucket name.
+		txnMeta.ATR.BucketName = t.atrAgent.BucketName()
 		txnMeta.ATR.DocID = string(t.atrKey)
 		txnMeta.Operation.Type = jsonMutationReplace
 		txnMeta.Operation.Staged = stagedInfo.Staged
@@ -1080,7 +1080,7 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 			txnMeta.ID.Transaction = t.transactionID
 			txnMeta.ID.Attempt = t.id
 			txnMeta.ATR.CollectionName = t.atrCollName()
-			txnMeta.ATR.BucketName = "" // TODO(brett19): Need the bucket name.
+			txnMeta.ATR.BucketName = t.atrAgent.BucketName()
 			txnMeta.ATR.DocID = string(t.atrKey)
 			txnMeta.Operation.Type = jsonMutationRemove
 			txnMeta.Operation.Staged = stagedInfo.Staged
