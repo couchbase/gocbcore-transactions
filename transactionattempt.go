@@ -39,6 +39,8 @@ const (
 	AttemptStateRolledBack = AttemptState(6)
 )
 
+var stagedRemoveTxt = json.RawMessage{34, 60, 60, 82, 69, 77, 79, 86, 69, 62, 62, 34, 10}
+
 type transactionAttempt struct {
 	// immutable state
 	expiryTime      time.Time
@@ -511,18 +513,18 @@ func (t *transactionAttempt) handleError(err error) {
 	t.lock.Unlock()
 }
 
-func (t *transactionAttempt) getStagedMutationLocked(bucketName, scopeName, collectionName string, key []byte) *stagedMutation {
-	for _, mutation := range t.stagedMutations {
+func (t *transactionAttempt) getStagedMutationLocked(bucketName, scopeName, collectionName string, key []byte) (int, *stagedMutation) {
+	for i, mutation := range t.stagedMutations {
 		// TODO(brett19): Need to check the bucket names here
 		//if mutation.BucketName == bucketName &&
 		if mutation.ScopeName == scopeName &&
 			mutation.CollectionName == collectionName &&
 			bytes.Compare(mutation.Key, key) == 0 {
-			return mutation
+			return i, mutation
 		}
 	}
 
-	return nil
+	return 0, nil
 }
 
 func (t *transactionAttempt) getFullDoc(opts GetOptions, deadline time.Time,
@@ -555,8 +557,14 @@ func (t *transactionAttempt) getFullDoc(opts GetOptions, deadline time.Time,
 				},
 			},
 			Deadline: deadline,
+			Flags:    memd.SubdocDocFlagAccessDeleted,
 		}, func(result *gocbcore.LookupInResult, err error) {
 			if errors.Is(err, gocbcore.ErrDocumentNotFound) {
+				cb(nil, ErrDocNotFound)
+				return
+			}
+
+			if result.Internal.IsDeleted {
 				cb(nil, ErrDocNotFound)
 				return
 			}
@@ -657,7 +665,7 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 	t.lock.Lock()
 
 	// TODO(brett19): Use the bucket name below
-	existingMutation := t.getStagedMutationLocked("", opts.ScopeName, opts.CollectionName, opts.Key)
+	_, existingMutation := t.getStagedMutationLocked("", opts.ScopeName, opts.CollectionName, opts.Key)
 	if existingMutation != nil {
 		if existingMutation.OpType == StagedMutationInsert || existingMutation.OpType == StagedMutationReplace {
 			getRes := &GetResult{
@@ -667,6 +675,7 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 				key:            existingMutation.Key,
 				Value:          existingMutation.Staged,
 				Cas:            existingMutation.Cas,
+				deleted:        existingMutation.IsTombstone,
 			}
 
 			t.lock.Unlock()
@@ -813,6 +822,7 @@ func (t *transactionAttempt) Insert(opts InsertOptions, cb StoreCallback) error 
 				CollectionName: opts.CollectionName,
 				Key:            opts.Key,
 				Staged:         opts.Value,
+				IsTombstone:    true,
 			}
 
 			var txnMeta jsonTxnXattr
@@ -849,7 +859,7 @@ func (t *transactionAttempt) Insert(opts InsertOptions, cb StoreCallback) error 
 				DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
 				DurabilityLevelTimeout: duraTimeout,
 				Deadline:               deadline,
-				Flags:                  memd.SubdocDocFlagAddDoc,
+				Flags:                  memd.SubdocDocFlagAddDoc | memd.SubdocDocFlagCreateAsDeleted | memd.SubdocDocFlagAccessDeleted,
 			}, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
 					t.handleError(err)
@@ -930,7 +940,20 @@ func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) erro
 				}
 			}
 			t.lock.Lock()
-			t.stagedMutations = append(t.stagedMutations, stagedInfo)
+
+			// TODO(brett19): Use the bucket name below
+			idx, existingMutation := t.getStagedMutationLocked("", opts.Document.scopeName, opts.Document.collectionName,
+				opts.Document.key)
+			if existingMutation == nil {
+				t.stagedMutations = append(t.stagedMutations, stagedInfo)
+			} else {
+				if existingMutation.OpType == StagedMutationReplace {
+					t.stagedMutations[idx] = stagedInfo
+				} else if existingMutation.OpType == StagedMutationInsert {
+					t.stagedMutations = append(t.stagedMutations[:idx+copy(t.stagedMutations[idx:], t.stagedMutations[idx+1:])], stagedInfo)
+				}
+
+			}
 			t.lock.Unlock()
 
 			cb(&GetResult{
@@ -940,6 +963,7 @@ func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) erro
 				key:            stagedInfo.Key,
 				Value:          stagedInfo.Staged,
 				Cas:            stagedInfo.Cas,
+				deleted:        stagedInfo.IsTombstone,
 			}, nil)
 		})
 	})
@@ -955,6 +979,7 @@ func (t *transactionAttempt) doReplace(opts ReplaceOptions, cb func(*stagedMutat
 	scopeName := opts.Document.scopeName
 	collectionName := opts.Document.collectionName
 	key := opts.Document.key
+	deleted := opts.Document.deleted
 
 	t.hooks.BeforeStagedReplace(key, func(err error) {
 		if err != nil {
@@ -969,6 +994,7 @@ func (t *transactionAttempt) doReplace(opts ReplaceOptions, cb func(*stagedMutat
 			CollectionName: collectionName,
 			Key:            key,
 			Staged:         opts.Value,
+			IsTombstone:    deleted,
 		}
 
 		var txnMeta jsonTxnXattr
@@ -1004,6 +1030,11 @@ func (t *transactionAttempt) doReplace(opts ReplaceOptions, cb func(*stagedMutat
 			duraTimeout = t.keyValueTimeout * 10 / 9
 		}
 
+		flags := memd.SubdocDocFlagNone
+		if deleted {
+			flags = memd.SubdocDocFlagAccessDeleted
+		}
+
 		_, err = stagedInfo.Agent.MutateIn(gocbcore.MutateInOptions{
 			ScopeName:      stagedInfo.ScopeName,
 			CollectionName: stagedInfo.CollectionName,
@@ -1017,7 +1048,7 @@ func (t *transactionAttempt) doReplace(opts ReplaceOptions, cb func(*stagedMutat
 					Value: txnMetaBytes,
 				},
 			},
-			Flags:                  memd.SubdocDocFlagNone,
+			Flags:                  flags,
 			DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
 			DurabilityLevelTimeout: duraTimeout,
 			Deadline:               deadline,
@@ -1074,6 +1105,8 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 				ScopeName:      scopeName,
 				CollectionName: collectionName,
 				Key:            key,
+				Staged:         stagedRemoveTxt,
+				IsTombstone:    true,
 			}
 
 			var txnMeta jsonTxnXattr
@@ -1085,6 +1118,21 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 			txnMeta.Operation.Type = jsonMutationRemove
 			txnMeta.Operation.Staged = stagedInfo.Staged
 
+			restore := struct {
+				OriginalCAS string
+				ExpiryTime  uint
+				RevID       string
+			}{
+				OriginalCAS: fmt.Sprintf("%d", opts.Document.Cas),
+				ExpiryTime:  opts.Document.expiry,
+				RevID:       opts.Document.revid,
+			}
+			txnMeta.Restore = (*struct {
+				OriginalCAS string `json:"CAS,omitempty"`
+				ExpiryTime  uint   `json:"exptime"`
+				RevID       string `json:"revid,omitempty"`
+			})(&restore)
+
 			txnMetaBytes, _ := json.Marshal(txnMeta)
 			// TODO(brett19): Don't ignore the error here.
 
@@ -1093,6 +1141,11 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 			if t.keyValueTimeout > 0 {
 				deadline = time.Now().Add(t.keyValueTimeout)
 				duraTimeout = t.keyValueTimeout * 10 / 9
+			}
+
+			flags := memd.SubdocDocFlagNone
+			if opts.Document.deleted {
+				flags = memd.SubdocDocFlagAccessDeleted
 			}
 
 			_, err = stagedInfo.Agent.MutateIn(gocbcore.MutateInOptions{
@@ -1108,7 +1161,7 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 						Value: txnMetaBytes,
 					},
 				},
-				Flags:                  memd.SubdocDocFlagNone,
+				Flags:                  flags,
 				DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
 				DurabilityLevelTimeout: duraTimeout,
 				Deadline:               deadline,
@@ -1155,7 +1208,7 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 	return nil
 }
 
-func (t *transactionAttempt) unstageInsRepMutation(mutation stagedMutation, cb func(error)) {
+func (t *transactionAttempt) unstageRepMutation(mutation stagedMutation, cb func(error)) {
 	if mutation.OpType != StagedMutationInsert && mutation.OpType != StagedMutationReplace {
 		cb(ErrUhOh)
 		return
@@ -1192,6 +1245,52 @@ func (t *transactionAttempt) unstageInsRepMutation(mutation stagedMutation, cb f
 				},
 			},
 		}, func(result *gocbcore.MutateInResult, err error) {
+			if err != nil {
+				cb(err)
+				return
+			}
+
+			t.hooks.AfterDocCommittedBeforeSavingCAS(mutation.Key, func(err error) {
+				if err != nil {
+					t.handleError(err)
+					cb(err)
+					return
+				}
+
+				t.finalMutationTokens = append(t.finalMutationTokens, MutationToken{
+					BucketName:    mutation.Agent.BucketName(),
+					MutationToken: result.MutationToken,
+				})
+
+				cb(nil)
+			})
+		})
+		if err != nil {
+			cb(err)
+			return
+		}
+	})
+}
+
+func (t *transactionAttempt) unstageInsMutation(mutation stagedMutation, cb func(error)) {
+	if mutation.OpType != StagedMutationInsert && mutation.OpType != StagedMutationReplace {
+		cb(ErrUhOh)
+		return
+	}
+
+	t.hooks.BeforeDocCommitted(mutation.Key, func(err error) {
+		if err != nil {
+			t.handleError(err)
+			cb(err)
+			return
+		}
+
+		_, err = mutation.Agent.Add(gocbcore.AddOptions{
+			ScopeName:      mutation.ScopeName,
+			CollectionName: mutation.CollectionName,
+			Key:            mutation.Key,
+			Value:          mutation.Staged,
+		}, func(result *gocbcore.StoreResult, err error) {
 			if err != nil {
 				cb(err)
 				return
@@ -1288,8 +1387,12 @@ func (t *transactionAttempt) Commit(cb CommitCallback) error {
 			waitCh := make(chan error, numMutations)
 
 			for _, mutation := range t.stagedMutations {
-				if mutation.OpType == StagedMutationInsert || mutation.OpType == StagedMutationReplace {
-					t.unstageInsRepMutation(*mutation, func(err error) {
+				if mutation.OpType == StagedMutationInsert {
+					t.unstageInsMutation(*mutation, func(err error) {
+						waitCh <- err
+					})
+				} else if mutation.OpType == StagedMutationReplace {
+					t.unstageRepMutation(*mutation, func(err error) {
 						waitCh <- err
 					})
 				} else if mutation.OpType == StagedMutationRemove {

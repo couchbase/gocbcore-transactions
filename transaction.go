@@ -84,6 +84,7 @@ type GetResult struct {
 	key            []byte
 	revid          string
 	expiry         uint
+	deleted        bool
 
 	Value []byte
 	Cas   gocbcore.Cas
