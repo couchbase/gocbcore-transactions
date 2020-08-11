@@ -39,8 +39,6 @@ const (
 	AttemptStateRolledBack = AttemptState(6)
 )
 
-var stagedRemoveTxt = json.RawMessage{34, 60, 60, 82, 69, 77, 79, 86, 69, 62, 62, 34}
-
 var crc32cMacro = []byte("\"${Mutation.value_crc32c}\"")
 
 type transactionAttempt struct {
@@ -1119,7 +1117,6 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 				ScopeName:      scopeName,
 				CollectionName: collectionName,
 				Key:            key,
-				Staged:         stagedRemoveTxt,
 				IsTombstone:    true,
 			}
 
@@ -1130,7 +1127,6 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 			txnMeta.ATR.BucketName = t.atrAgent.BucketName()
 			txnMeta.ATR.DocID = string(t.atrKey)
 			txnMeta.Operation.Type = jsonMutationRemove
-			txnMeta.Operation.Staged = stagedInfo.Staged
 
 			restore := struct {
 				OriginalCAS string
