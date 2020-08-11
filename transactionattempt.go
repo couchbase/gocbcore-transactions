@@ -39,7 +39,9 @@ const (
 	AttemptStateRolledBack = AttemptState(6)
 )
 
-var stagedRemoveTxt = json.RawMessage{34, 60, 60, 82, 69, 77, 79, 86, 69, 62, 62, 34, 10}
+var stagedRemoveTxt = json.RawMessage{34, 60, 60, 82, 69, 77, 79, 86, 69, 62, 62, 34}
+
+var crc32cMacro = []byte("\"${Mutation.value_crc32c}\"")
 
 type transactionAttempt struct {
 	// immutable state
@@ -855,6 +857,12 @@ func (t *transactionAttempt) Insert(opts InsertOptions, cb StoreCallback) error 
 						Flags: memd.SubdocFlagMkDirP | memd.SubdocFlagXattrPath,
 						Value: txnMetaBytes,
 					},
+					{
+						Op:    memd.SubDocOpDictAdd,
+						Path:  "txn.op.crc32",
+						Flags: memd.SubdocFlagMkDirP | memd.SubdocFlagXattrPath | memd.SubdocFlagExpandMacros,
+						Value: crc32cMacro,
+					},
 				},
 				DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
 				DurabilityLevelTimeout: duraTimeout,
@@ -1047,6 +1055,12 @@ func (t *transactionAttempt) doReplace(opts ReplaceOptions, cb func(*stagedMutat
 					Flags: memd.SubdocFlagMkDirP | memd.SubdocFlagXattrPath,
 					Value: txnMetaBytes,
 				},
+				{
+					Op:    memd.SubDocOpDictAdd,
+					Path:  "txn.op.crc32",
+					Flags: memd.SubdocFlagMkDirP | memd.SubdocFlagXattrPath | memd.SubdocFlagExpandMacros,
+					Value: crc32cMacro,
+				},
 			},
 			Flags:                  flags,
 			DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
@@ -1159,6 +1173,12 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 						Path:  "txn",
 						Flags: memd.SubdocFlagMkDirP | memd.SubdocFlagXattrPath,
 						Value: txnMetaBytes,
+					},
+					{
+						Op:    memd.SubDocOpDictAdd,
+						Path:  "txn.op.crc32",
+						Flags: memd.SubdocFlagMkDirP | memd.SubdocFlagXattrPath | memd.SubdocFlagExpandMacros,
+						Value: crc32cMacro,
 					},
 				},
 				Flags:                  flags,
