@@ -1636,12 +1636,12 @@ func (t *transactionAttempt) abort(
 					return
 				}
 
-				t.setATRAborted(cb)
+				t.setATRAborted(handler)
 			})
 			return
 		}
 
-		t.setATRAborted(cb)
+		t.setATRAborted(handler)
 	})
 
 	return nil
