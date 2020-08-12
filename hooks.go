@@ -37,7 +37,7 @@ type TransactionHooks interface {
 	AfterATRAborted(func(err error))
 	AfterATRRolledBack(func(err error))
 	RandomATRIDForVbucket(vbID []byte, cb func(string, error))
-	HasExpiredClientSideHook(stage string, vbID []byte, cb func(bool, error))
+	HasExpiredClientSideHook(stage string, docID []byte, cb func(bool, error))
 }
 
 // DefaultHooks is default set of noop hooks used within the library.
@@ -219,3 +219,25 @@ func (dh *DefaultHooks) RandomATRIDForVbucket(vbID []byte, cb func(string, error
 func (dh *DefaultHooks) HasExpiredClientSideHook(stage string, docID []byte, cb func(bool, error)) {
 	cb(false, nil)
 }
+
+const (
+	hookRollback           = "rollback"
+	hookGet                = "get"
+	hookInsert             = "insert"
+	hookReplace            = "replace"
+	hookRemove             = "remove"
+	hookBeforeCommit       = "commit"
+	hookAbortGetATR        = "abortGetAtr"
+	hookRollbackDoc        = "rollbackDoc"
+	hookDeleteInserted     = "deleteInserted"
+	hookCreateStagedInsert = "createdStagedInsert"
+	hookRemoveDoc          = "removeDoc"
+	hookCommitDoc          = "commitDoc"
+
+	hookATRCommit                    = "atrCommit"
+	hookATRCommitAmbiguityResolution = "atrCommitAmbiguityResolution"
+	hookATRAbort                     = "atrAbort"
+	hookATRRollbackComplete          = "atrRollbackComplete"
+	hookATRPending                   = "atrPending"
+	hookATRComplete                  = "atrComplete"
+)
