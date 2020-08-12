@@ -270,7 +270,6 @@ func (t *transactionAttempt) setATRCommitted(
 	t.txnOpSection.Wait(func() {
 		t.hooks.BeforeATRCommit(func(err error) {
 			if err != nil {
-				t.handleError(err)
 				cb(err)
 				return
 			}
@@ -374,7 +373,6 @@ func (t *transactionAttempt) setATRCommitted(
 
 				t.hooks.AfterATRCommit(func(err error) {
 					if err != nil {
-						t.handleError(err)
 						cb(err)
 						return
 					}
@@ -403,7 +401,6 @@ func (t *transactionAttempt) setATRCompleted(
 ) error {
 	t.hooks.BeforeATRComplete(func(err error) {
 		if err != nil {
-			t.handleError(err)
 			cb(err)
 			return
 		}
@@ -479,7 +476,6 @@ func (t *transactionAttempt) setATRCompleted(
 
 			t.hooks.AfterATRComplete(func(err error) {
 				if err != nil {
-					t.handleError(err)
 					cb(err)
 					return
 				}
@@ -502,15 +498,6 @@ func (t *transactionAttempt) setATRCompleted(
 	})
 
 	return nil
-}
-
-func (t *transactionAttempt) handleError(err error) {
-	t.lock.Lock()
-
-	// TODO(brett19): Do other things to cancel it here....
-	t.state = AttemptStateAborted
-
-	t.lock.Unlock()
 }
 
 func (t *transactionAttempt) getStagedMutationLocked(bucketName, scopeName, collectionName string, key []byte) (int, *stagedMutation) {
@@ -787,12 +774,139 @@ func (t *transactionAttempt) classifyError(err error) error {
 		err = ErrAmbiguous
 	} else if errors.Is(err, gocbcore.ErrValueTooLarge) {
 		err = ErrAtrFull
+	} else if errors.Is(err, gocbcore.ErrFeatureNotAvailable) {
+		err = ErrOther
 	}
 
 	return err
 }
 
 func (t *transactionAttempt) Insert(opts InsertOptions, cb StoreCallback) error {
+	var handler func(result *GetResult, err error)
+	handler = func(result *GetResult, err error) {
+		if err != nil {
+			err = t.classifyError(err)
+
+			if errors.Is(err, ErrHard) {
+				t.lock.Lock()
+				t.state = AttemptStateCompleted
+				t.lock.Unlock()
+			} else if errors.Is(err, ErrTransient) {
+				t.shouldRetry = true
+			} else if errors.Is(err, ErrExpiry) {
+				if t.expiryOvertimeMode {
+					t.lock.Lock()
+					t.state = AttemptStateCompleted
+					t.lock.Unlock()
+				} else {
+					t.expiryOvertimeMode = true
+				}
+			} else if errors.Is(err, ErrAmbiguous) {
+				time.AfterFunc(3*time.Millisecond, func() {
+					err := t.insert(opts, 0, handler)
+					if err != nil {
+						cb(nil, t.classifyError(err))
+					}
+				})
+				return
+			} else if errors.Is(err, ErrCasMismatch) || errors.Is(err, ErrDocAlreadyExists) {
+				t.getForInsert(opts, func(result gocbcore.Cas, err error) {
+					if err != nil {
+						err = t.classifyError(err)
+						if errors.Is(err, ErrDocNotFound) {
+							t.shouldRetry = true
+						} else if errors.Is(err, ErrPathNotFound) {
+							t.shouldRetry = true
+						} else if errors.Is(err, ErrTransient) {
+							t.shouldRetry = true
+						}
+
+						cb(nil, err)
+						return
+					}
+
+					err = t.insert(opts, result, handler)
+					if err != nil {
+						cb(nil, t.classifyError(err))
+					}
+				})
+			}
+
+			cb(nil, err)
+			return
+		}
+
+		cb(result, nil)
+	}
+
+	return t.insert(opts, 0, handler)
+}
+
+func (t *transactionAttempt) getForInsert(opts InsertOptions, cb func(gocbcore.Cas, error)) {
+	t.hooks.BeforeGetDocInExistsDuringStagedInsert(opts.Key, func(err error) {
+		if err != nil {
+			cb(0, err)
+			return
+		}
+
+		var deadline time.Time
+		if t.keyValueTimeout > 0 {
+			deadline = time.Now().Add(t.keyValueTimeout)
+		}
+
+		_, err = opts.Agent.LookupIn(gocbcore.LookupInOptions{
+			ScopeName:      opts.ScopeName,
+			CollectionName: opts.CollectionName,
+			Key:            opts.Key,
+			Ops: []gocbcore.SubDocOp{
+				{
+					Op:    memd.SubDocOpGet,
+					Path:  "$document",
+					Flags: memd.SubdocFlagXattrPath,
+				},
+				{
+					Op:    memd.SubDocOpGet,
+					Path:  "txn",
+					Flags: memd.SubdocFlagXattrPath,
+				},
+				{
+					Op:    memd.SubDocOpGetDoc,
+					Path:  "",
+					Flags: 0,
+				},
+			},
+			Deadline: deadline,
+			Flags:    memd.SubdocDocFlagAccessDeleted,
+		}, func(result *gocbcore.LookupInResult, err error) {
+			if err != nil {
+				cb(0, err)
+				return
+			}
+
+			var txnMeta *jsonTxnXattr
+			if result.Ops[1].Err == nil {
+				var txnMetaVal jsonTxnXattr
+				// TODO(brett19): Don't ignore the error here
+				json.Unmarshal(result.Ops[1].Value, &txnMetaVal)
+				txnMeta = &txnMetaVal
+			}
+
+			if txnMeta == nil {
+				// This doc isn't in a transaction
+				cb(0, ErrDocAlreadyExists)
+				return
+			}
+
+			cb(result.Cas, nil)
+		})
+		if err != nil {
+			cb(0, err)
+			return
+		}
+	})
+}
+
+func (t *transactionAttempt) insert(opts InsertOptions, cas gocbcore.Cas, cb StoreCallback) error {
 	if err := t.checkDone(); err != nil {
 		return err
 	}
@@ -803,14 +917,12 @@ func (t *transactionAttempt) Insert(opts InsertOptions, cb StoreCallback) error 
 
 	err := t.confirmATRPending(opts.Agent, opts.ScopeName, opts.CollectionName, opts.Key, func(err error) {
 		if err != nil {
-			t.handleError(err)
 			cb(nil, err)
 			return
 		}
 
 		t.hooks.BeforeStagedInsert(opts.Key, func(err error) {
 			if err != nil {
-				t.handleError(err)
 				cb(nil, err)
 				return
 			}
@@ -848,6 +960,7 @@ func (t *transactionAttempt) Insert(opts InsertOptions, cb StoreCallback) error 
 				ScopeName:      stagedInfo.ScopeName,
 				CollectionName: stagedInfo.CollectionName,
 				Key:            stagedInfo.Key,
+				Cas:            cas,
 				Ops: []gocbcore.SubDocOp{
 					{
 						Op:    memd.SubDocOpDictAdd,
@@ -868,14 +981,12 @@ func (t *transactionAttempt) Insert(opts InsertOptions, cb StoreCallback) error 
 				Flags:                  memd.SubdocDocFlagAddDoc | memd.SubdocDocFlagCreateAsDeleted | memd.SubdocDocFlagAccessDeleted,
 			}, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
-					t.handleError(err)
 					cb(nil, err)
 					return
 				}
 
 				t.hooks.AfterStagedInsertComplete(opts.Key, func(err error) {
 					if err != nil {
-						t.handleError(err)
 						cb(nil, err)
 						return
 					}
@@ -896,13 +1007,11 @@ func (t *transactionAttempt) Insert(opts InsertOptions, cb StoreCallback) error 
 				})
 			})
 			if err != nil {
-				t.handleError(err)
 				cb(nil, err)
 			}
 		})
 	})
 	if err != nil {
-		t.handleError(err)
 		return err
 	}
 
@@ -1099,14 +1208,12 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 
 	err := t.confirmATRPending(agent, scopeName, collectionName, key, func(err error) {
 		if err != nil {
-			t.handleError(err)
 			cb(nil, err)
 			return
 		}
 
 		t.hooks.BeforeStagedRemove(key, func(err error) {
 			if err != nil {
-				t.handleError(err)
 				cb(nil, err)
 				return
 			}
@@ -1183,14 +1290,12 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 				Deadline:               deadline,
 			}, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
-					t.handleError(err)
 					cb(nil, err)
 					return
 				}
 
 				t.hooks.AfterStagedRemoveComplete(key, func(err error) {
 					if err != nil {
-						t.handleError(err)
 						cb(nil, err)
 						return
 					}
@@ -1211,13 +1316,11 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 				})
 			})
 			if err != nil {
-				t.handleError(err)
 				cb(nil, err)
 			}
 		})
 	})
 	if err != nil {
-		t.handleError(err)
 		return err
 	}
 
@@ -1232,7 +1335,6 @@ func (t *transactionAttempt) unstageRepMutation(mutation stagedMutation, cb func
 
 	t.hooks.BeforeDocCommitted(mutation.Key, func(err error) {
 		if err != nil {
-			t.handleError(err)
 			cb(err)
 			return
 		}
@@ -1268,7 +1370,6 @@ func (t *transactionAttempt) unstageRepMutation(mutation stagedMutation, cb func
 
 			t.hooks.AfterDocCommittedBeforeSavingCAS(mutation.Key, func(err error) {
 				if err != nil {
-					t.handleError(err)
 					cb(err)
 					return
 				}
@@ -1296,7 +1397,6 @@ func (t *transactionAttempt) unstageInsMutation(mutation stagedMutation, cb func
 
 	t.hooks.BeforeDocCommitted(mutation.Key, func(err error) {
 		if err != nil {
-			t.handleError(err)
 			cb(err)
 			return
 		}
@@ -1314,7 +1414,6 @@ func (t *transactionAttempt) unstageInsMutation(mutation stagedMutation, cb func
 
 			t.hooks.AfterDocCommittedBeforeSavingCAS(mutation.Key, func(err error) {
 				if err != nil {
-					t.handleError(err)
 					cb(err)
 					return
 				}
@@ -1342,7 +1441,6 @@ func (t *transactionAttempt) unstageRemMutation(mutation stagedMutation, cb func
 
 	t.hooks.BeforeDocRemoved(mutation.Key, func(err error) {
 		if err != nil {
-			t.handleError(err)
 			cb(err)
 			return
 		}
@@ -1360,7 +1458,6 @@ func (t *transactionAttempt) unstageRemMutation(mutation stagedMutation, cb func
 
 			t.hooks.AfterDocRemovedPreRetry(mutation.Key, func(err error) {
 				if err != nil {
-					t.handleError(err)
 					cb(err)
 					return
 				}
@@ -1373,7 +1470,6 @@ func (t *transactionAttempt) unstageRemMutation(mutation stagedMutation, cb func
 				// TODO(chvck): Is this in the right place?!
 				t.hooks.AfterDocRemovedPostRetry(mutation.Key, func(err error) {
 					if err != nil {
-						t.handleError(err)
 						cb(err)
 						return
 					}
@@ -1450,7 +1546,6 @@ func (t *transactionAttempt) setATRAborted(
 
 		t.hooks.BeforeATRAborted(func(err error) {
 			if err != nil {
-				t.handleError(err)
 				cb(err)
 				return
 			}
@@ -1562,7 +1657,6 @@ func (t *transactionAttempt) setATRAborted(
 
 				t.hooks.AfterATRAborted(func(err error) {
 					if err != nil {
-						t.handleError(err)
 						cb(err)
 						return
 					}
@@ -1594,7 +1688,6 @@ func (t *transactionAttempt) rollbackInsMutation(mutation stagedMutation, cb fun
 
 	t.hooks.BeforeRollbackDeleteInserted(mutation.Key, func(err error) {
 		if err != nil {
-			t.handleError(err)
 			cb(err)
 			return
 		}
@@ -1626,7 +1719,6 @@ func (t *transactionAttempt) rollbackInsMutation(mutation stagedMutation, cb fun
 
 			t.hooks.AfterRollbackDeleteInserted(mutation.Key, func(err error) {
 				if err != nil {
-					t.handleError(err)
 					cb(err)
 					return
 				}
@@ -1649,7 +1741,6 @@ func (t *transactionAttempt) rollbackRepRemMutation(mutation stagedMutation, cb 
 
 	t.hooks.BeforeDocRolledBack(mutation.Key, func(err error) {
 		if err != nil {
-			t.handleError(err)
 			cb(err)
 			return
 		}
@@ -1681,7 +1772,6 @@ func (t *transactionAttempt) rollbackRepRemMutation(mutation stagedMutation, cb 
 
 			t.hooks.AfterRollbackReplaceOrRemove(mutation.Key, func(err error) {
 				if err != nil {
-					t.handleError(err)
 					cb(err)
 					return
 				}
@@ -1702,7 +1792,6 @@ func (t *transactionAttempt) setATRRolledBack(
 
 	t.hooks.BeforeATRRolledBack(func(err error) {
 		if err != nil {
-			t.handleError(err)
 			cb(nil)
 			return
 		}
@@ -1778,7 +1867,6 @@ func (t *transactionAttempt) setATRRolledBack(
 
 			t.hooks.AfterATRRolledBack(func(err error) {
 				if err != nil {
-					t.handleError(err)
 					cb(err)
 					return
 				}
