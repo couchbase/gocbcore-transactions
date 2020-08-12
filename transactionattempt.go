@@ -1992,7 +1992,7 @@ func (t *transactionAttempt) setATRRolledBack(
 }
 
 func (t *transactionAttempt) Rollback(cb RollbackCallback) error {
-	t.setATRAborted(func(err error) {
+	t.abort(func(err error) {
 		if err != nil {
 			cb(err)
 			return
