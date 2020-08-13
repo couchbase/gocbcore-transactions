@@ -60,6 +60,7 @@ type transactionAttempt struct {
 	atrKey              []byte
 	expiryOvertimeMode  bool
 	shouldRetry         bool
+	shouldNotRollback   bool
 
 	lock          sync.Mutex
 	txnAtrSection atomicWaitQueue
@@ -169,9 +170,7 @@ func (t *transactionAttempt) confirmATRPending(
 		if err != nil {
 			err = t.classifyError(err)
 			if errors.Is(err, ErrHard) {
-				t.lock.Lock()
-				t.state = AttemptStateCompleted
-				t.lock.Unlock()
+				t.shouldNotRollback = true
 			} else if errors.Is(err, ErrTransient) {
 				t.shouldRetry = true
 			} else if errors.Is(err, ErrAmbiguous) {
@@ -206,21 +205,11 @@ func (t *transactionAttempt) confirmATRPending(
 			if err != nil {
 				err = t.classifyError(err)
 				if errors.Is(err, ErrHard) {
-					t.lock.Lock()
-					t.state = AttemptStateCompleted
-					t.txnAtrSection.Done()
-					t.lock.Unlock()
-
-					cb(err)
-					return
+					t.shouldNotRollback = true
 				} else if errors.Is(err, ErrTransient) {
 					t.shouldRetry = true
 				}
 				t.lock.Lock()
-
-				// TODO(brett19): Do other things to cancel it here....
-				t.state = AttemptStateAborted
-
 				t.txnAtrSection.Done()
 				t.lock.Unlock()
 				cb(err)
@@ -235,9 +224,7 @@ func (t *transactionAttempt) confirmATRPending(
 				if err != nil {
 					err = t.classifyError(err)
 					if errors.Is(err, ErrHard) {
-						t.lock.Lock()
-						t.state = AttemptStateCompleted
-						t.lock.Unlock()
+						t.shouldNotRollback = true
 					} else if errors.Is(err, ErrTransient) {
 						t.shouldRetry = true
 					}
@@ -251,21 +238,11 @@ func (t *transactionAttempt) confirmATRPending(
 		if err != nil {
 			err = t.classifyError(err)
 			if errors.Is(err, ErrHard) {
-				t.lock.Lock()
-				t.state = AttemptStateCompleted
-				t.txnAtrSection.Done()
-				t.lock.Unlock()
-
-				cb(err)
-				return
+				t.shouldNotRollback = true
 			} else if errors.Is(err, ErrTransient) {
 				t.shouldRetry = true
 			}
 			t.lock.Lock()
-
-			// TODO(brett19): Do other things to cancel it here....
-			t.state = AttemptStateAborted
-
 			t.txnAtrSection.Done()
 			t.lock.Unlock()
 			cb(err)
@@ -392,10 +369,6 @@ func (t *transactionAttempt) setATRCommitted(
 		})
 		if err != nil {
 			t.lock.Lock()
-
-			// TODO(brett19): Do other things to cancel it here....
-			t.state = AttemptStateAborted
-
 			t.txnAtrSection.Done()
 			t.lock.Unlock()
 
@@ -468,10 +441,6 @@ func (t *transactionAttempt) setATRCompleted(
 		}, func(result *gocbcore.MutateInResult, err error) {
 			if err != nil {
 				t.lock.Lock()
-
-				// TODO(brett19): Do other things to cancel it here....
-				t.state = AttemptStateAborted
-
 				t.txnAtrSection.Done()
 				t.lock.Unlock()
 
@@ -494,10 +463,6 @@ func (t *transactionAttempt) setATRCompleted(
 		})
 		if err != nil {
 			t.lock.Lock()
-
-			// TODO(brett19): Do other things to cancel it here....
-			t.state = AttemptStateAborted
-
 			t.txnAtrSection.Done()
 			t.lock.Unlock()
 
@@ -512,8 +477,8 @@ func (t *transactionAttempt) setATRCompleted(
 func (t *transactionAttempt) getStagedMutationLocked(bucketName, scopeName, collectionName string, key []byte) (int, *stagedMutation) {
 	for i, mutation := range t.stagedMutations {
 		// TODO(brett19): Need to check the bucket names here
-		//if mutation.BucketName == bucketName &&
-		if mutation.ScopeName == scopeName &&
+		if mutation.Agent.BucketName() == bucketName &&
+			mutation.ScopeName == scopeName &&
 			mutation.CollectionName == collectionName &&
 			bytes.Compare(mutation.Key, key) == 0 {
 			return i, mutation
@@ -712,12 +677,7 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 					if err != nil {
 						err = t.classifyError(err)
 						if errors.Is(err, ErrHard) {
-							t.lock.Lock()
-							t.state = AttemptStateCompleted
-							t.lock.Unlock()
-
-							cb(nil, err)
-							return
+							t.shouldNotRollback = true
 						} else if errors.Is(err, ErrTransient) {
 							t.shouldRetry = true
 						}
@@ -800,16 +760,12 @@ func (t *transactionAttempt) Insert(opts InsertOptions, cb StoreCallback) error 
 			err = t.classifyError(err)
 
 			if errors.Is(err, ErrHard) {
-				t.lock.Lock()
-				t.state = AttemptStateCompleted
-				t.lock.Unlock()
+				t.shouldNotRollback = true
 			} else if errors.Is(err, ErrTransient) {
 				t.shouldRetry = true
 			} else if errors.Is(err, ErrAttemptExpired) {
 				if t.expiryOvertimeMode {
-					t.lock.Lock()
-					t.state = AttemptStateCompleted
-					t.lock.Unlock()
+					t.shouldNotRollback = true
 				} else {
 					t.expiryOvertimeMode = true
 				}
@@ -1064,13 +1020,11 @@ func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) erro
 					} else if errors.Is(err, ErrTransient) || errors.Is(err, ErrAmbiguous) {
 						t.shouldRetry = true
 					} else if errors.Is(err, ErrHard) {
-						t.lock.Lock()
-						t.state = AttemptStateCompleted
-						t.lock.Unlock()
-
-						cb(nil, err)
-						return
+						t.shouldNotRollback = true
 					}
+
+					cb(nil, err)
+					return
 				}
 				t.lock.Lock()
 
@@ -1602,23 +1556,15 @@ func (t *transactionAttempt) abort(
 				})
 				return
 			} else if errors.Is(err, ErrPathNotFound) {
-				t.lock.Lock()
-				t.state = AttemptStateCompleted
-				t.lock.Unlock()
+				t.shouldNotRollback = true
 				err = ErrAtrEntryNotFound
 			} else if errors.Is(err, ErrDocNotFound) {
-				t.lock.Lock()
-				t.state = AttemptStateCompleted
-				t.lock.Unlock()
+				t.shouldNotRollback = true
 				err = ErrAtrNotFound
 			} else if errors.Is(err, ErrAtrFull) {
-				t.lock.Lock()
-				t.state = AttemptStateCompleted
-				t.lock.Unlock()
+				t.shouldNotRollback = true
 			} else if errors.Is(err, ErrHard) {
-				t.lock.Lock()
-				t.state = AttemptStateCompleted
-				t.lock.Unlock()
+				t.shouldNotRollback = true
 			}
 
 			cb(err)
