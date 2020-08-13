@@ -798,6 +798,8 @@ func (t *transactionAttempt) Insert(opts InsertOptions, cb StoreCallback) error 
 						cb(nil, t.classifyError(err))
 					}
 				})
+
+				return
 			}
 
 			cb(nil, err)
@@ -861,11 +863,18 @@ func (t *transactionAttempt) getForInsert(opts InsertOptions, cb func(gocbcore.C
 
 			if txnMeta == nil {
 				// This doc isn't in a transaction
+				if result.Internal.IsDeleted {
+					cb(result.Cas, nil)
+					return
+				}
+
 				cb(0, ErrDocAlreadyExists)
 				return
 			}
 
+			// TODO: checkwritewrite here
 			cb(result.Cas, nil)
+			return
 		})
 		if err != nil {
 			cb(0, err)
@@ -926,6 +935,15 @@ func (t *transactionAttempt) insert(opts InsertOptions, cas gocbcore.Cas, cb Sto
 					duraTimeout = t.keyValueTimeout * 10 / 9
 				}
 
+				flags := memd.SubdocDocFlagCreateAsDeleted | memd.SubdocDocFlagAccessDeleted
+				var txnOp memd.SubDocOpType
+				if cas == 0 {
+					flags |= memd.SubdocDocFlagAddDoc
+					txnOp = memd.SubDocOpDictAdd
+				} else {
+					txnOp = memd.SubDocOpDictSet
+				}
+
 				_, err = stagedInfo.Agent.MutateIn(gocbcore.MutateInOptions{
 					ScopeName:      stagedInfo.ScopeName,
 					CollectionName: stagedInfo.CollectionName,
@@ -933,7 +951,7 @@ func (t *transactionAttempt) insert(opts InsertOptions, cas gocbcore.Cas, cb Sto
 					Cas:            cas,
 					Ops: []gocbcore.SubDocOp{
 						{
-							Op:    memd.SubDocOpDictAdd,
+							Op:    txnOp,
 							Path:  "txn",
 							Flags: memd.SubdocFlagMkDirP | memd.SubdocFlagXattrPath,
 							Value: txnMetaBytes,
@@ -948,7 +966,7 @@ func (t *transactionAttempt) insert(opts InsertOptions, cas gocbcore.Cas, cb Sto
 					DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
 					DurabilityLevelTimeout: duraTimeout,
 					Deadline:               deadline,
-					Flags:                  memd.SubdocDocFlagAddDoc | memd.SubdocDocFlagCreateAsDeleted | memd.SubdocDocFlagAccessDeleted,
+					Flags:                  flags,
 				}, func(result *gocbcore.MutateInResult, err error) {
 					if err != nil {
 						cb(nil, err)
