@@ -1558,9 +1558,6 @@ func (t *transactionAttempt) abort(
 			err = t.classifyError(err)
 
 			if t.expiryOvertimeMode {
-				t.lock.Lock()
-				t.state = AttemptStateCompleted
-				t.lock.Unlock()
 				cb(err)
 				return
 			}
