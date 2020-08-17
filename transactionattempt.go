@@ -627,8 +627,7 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 
 		t.lock.Lock()
 
-		// TODO(brett19): Use the bucket name below
-		_, existingMutation := t.getStagedMutationLocked("", opts.ScopeName, opts.CollectionName, opts.Key)
+		_, existingMutation := t.getStagedMutationLocked(opts.Agent.BucketName(), opts.ScopeName, opts.CollectionName, opts.Key)
 		if existingMutation != nil {
 			if existingMutation.OpType == StagedMutationInsert || existingMutation.OpType == StagedMutationReplace {
 				getRes := &GetResult{
@@ -1046,8 +1045,7 @@ func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) erro
 				}
 				t.lock.Lock()
 
-				// TODO(brett19): Use the bucket name below
-				idx, existingMutation := t.getStagedMutationLocked("", opts.Document.scopeName, opts.Document.collectionName,
+				idx, existingMutation := t.getStagedMutationLocked(agent.BucketName(), opts.Document.scopeName, opts.Document.collectionName,
 					opts.Document.key)
 				if existingMutation == nil {
 					t.stagedMutations = append(t.stagedMutations, stagedInfo)
