@@ -556,60 +556,55 @@ func (t *transactionAttempt) getFullDoc(opts GetOptions, deadline time.Time,
 }
 
 func (t *transactionAttempt) getTxnState(opts GetOptions, deadline time.Time, doc *getDoc, cb func(jsonAtrState, error)) {
-	if doc.TxnMeta.ID.Attempt != t.id {
-		_, err := opts.Agent.LookupIn(gocbcore.LookupInOptions{
-			ScopeName:      opts.ScopeName,
-			CollectionName: opts.CollectionName,
-			Key:            []byte(doc.TxnMeta.ATR.DocID),
-			Ops: []gocbcore.SubDocOp{
-				{
-					Op:    memd.SubDocOpGet,
-					Path:  "attempts." + t.id + ".st",
-					Flags: 0,
-				},
+	_, err := opts.Agent.LookupIn(gocbcore.LookupInOptions{
+		ScopeName:      opts.ScopeName,
+		CollectionName: opts.CollectionName,
+		Key:            []byte(doc.TxnMeta.ATR.DocID),
+		Ops: []gocbcore.SubDocOp{
+			{
+				Op:    memd.SubDocOpGet,
+				Path:  "attempts." + doc.TxnMeta.ID.Attempt + ".st",
+				Flags: memd.SubdocFlagXattrPath,
 			},
-			Deadline: deadline,
-		}, func(result *gocbcore.LookupInResult, err error) {
-			if err != nil {
-				if errors.Is(err, gocbcore.ErrDocumentNotFound) {
-					cb("", ErrAtrNotFound)
-					return
-				}
-
-				cb("", err)
-				return
-			}
-
-			err = result.Ops[0].Err
-			if err != nil {
-				if errors.Is(err, gocbcore.ErrPathNotFound) {
-					// TODO(brett19): Discuss with Graham if this is correct.
-					cb("", ErrAtrEntryNotFound)
-					return
-				}
-
-				cb("", err)
-				return
-			}
-
-			// TODO(brett19): Don't ignore the error here.
-			var txnState jsonAtrState
-			json.Unmarshal(result.Ops[0].Value, &txnState)
-
-			t.hooks.AfterGetComplete(opts.Key, func(err error) {
-				if err != nil {
-					cb("", err)
-					return
-				}
-				cb(txnState, nil)
-			})
-		})
+		},
+		Deadline: deadline,
+	}, func(result *gocbcore.LookupInResult, err error) {
 		if err != nil {
+			if errors.Is(err, gocbcore.ErrDocumentNotFound) {
+				cb("", ErrAtrNotFound)
+				return
+			}
+
 			cb("", err)
 			return
 		}
-	} else {
-		cb("", nil)
+
+		err = result.Ops[0].Err
+		if err != nil {
+			if errors.Is(err, gocbcore.ErrPathNotFound) {
+				// TODO(brett19): Discuss with Graham if this is correct.
+				cb("", ErrAtrEntryNotFound)
+				return
+			}
+
+			cb("", err)
+			return
+		}
+
+		// TODO(brett19): Don't ignore the error here.
+		var txnState jsonAtrState
+		json.Unmarshal(result.Ops[0].Value, &txnState)
+
+		t.hooks.AfterGetComplete(opts.Key, func(err error) {
+			if err != nil {
+				cb("", err)
+				return
+			}
+			cb(txnState, nil)
+		})
+	})
+	if err != nil {
+		cb("", err)
 		return
 	}
 }
@@ -672,6 +667,18 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 			}
 
 			if doc.TxnMeta != nil {
+				if doc.TxnMeta.ID.Attempt == t.id {
+					cb(&GetResult{
+						agent:          opts.Agent,
+						scopeName:      opts.ScopeName,
+						collectionName: opts.CollectionName,
+						key:            opts.Key,
+						Value:          doc.TxnMeta.Operation.Staged,
+						Cas:            doc.Cas,
+					}, nil)
+					return
+				}
+
 				t.getTxnState(opts, deadline, doc, func(state jsonAtrState, err error) {
 					if err != nil {
 						err = t.classifyError(err)
@@ -1032,7 +1039,7 @@ func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) erro
 			t.doReplace(opts, func(stagedInfo *stagedMutation, err error) {
 				if err != nil {
 					err = t.classifyError(err)
-					if errors.Is(err, ErrDocNotFound) || errors.Is(err, ErrCasMismatch) {
+					if errors.Is(err, ErrDocNotFound) || errors.Is(err, ErrCasMismatch) || errors.Is(err, ErrDocAlreadyExists) {
 						t.shouldRetry = true
 					} else if errors.Is(err, ErrTransient) || errors.Is(err, ErrAmbiguous) {
 						t.shouldRetry = true
