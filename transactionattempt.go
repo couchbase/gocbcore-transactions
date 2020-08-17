@@ -1558,13 +1558,14 @@ func (t *transactionAttempt) abort(
 			err = t.classifyError(err)
 
 			if t.expiryOvertimeMode {
+				t.shouldNotRollback = true
 				cb(err)
 				return
 			}
 			if errors.Is(err, ErrAttemptExpired) {
 				t.expiryOvertimeMode = true
 				time.AfterFunc(3*time.Millisecond, func() {
-					err := t.setATRAborted(handler)
+					err := t.abort(handler)
 					if err != nil {
 						cb(t.classifyError(err))
 					}
@@ -1580,6 +1581,11 @@ func (t *transactionAttempt) abort(
 				t.shouldNotRollback = true
 			} else if errors.Is(err, ErrHard) {
 				t.shouldNotRollback = true
+			} else {
+				time.AfterFunc(3*time.Millisecond, func() {
+					t.abort(handler)
+				})
+				return
 			}
 
 			cb(err)
