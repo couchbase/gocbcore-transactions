@@ -1053,6 +1053,7 @@ func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) erro
 					if existingMutation.OpType == StagedMutationReplace {
 						t.stagedMutations[idx] = stagedInfo
 					} else if existingMutation.OpType == StagedMutationInsert {
+						stagedInfo.OpType = StagedMutationInsert
 						t.stagedMutations = append(t.stagedMutations[:idx+copy(t.stagedMutations[idx:], t.stagedMutations[idx+1:])], stagedInfo)
 					}
 
@@ -1147,13 +1148,13 @@ func (t *transactionAttempt) doReplace(opts ReplaceOptions, cb func(*stagedMutat
 			Cas:            opts.Document.Cas,
 			Ops: []gocbcore.SubDocOp{
 				{
-					Op:    memd.SubDocOpDictAdd,
+					Op:    memd.SubDocOpDictSet,
 					Path:  "txn",
 					Flags: memd.SubdocFlagMkDirP | memd.SubdocFlagXattrPath,
 					Value: txnMetaBytes,
 				},
 				{
-					Op:    memd.SubDocOpDictAdd,
+					Op:    memd.SubDocOpDictSet,
 					Path:  "txn.op.crc32",
 					Flags: memd.SubdocFlagMkDirP | memd.SubdocFlagXattrPath | memd.SubdocFlagExpandMacros,
 					Value: crc32cMacro,
@@ -1322,7 +1323,7 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 }
 
 func (t *transactionAttempt) unstageRepMutation(mutation stagedMutation, cb func(error)) {
-	if mutation.OpType != StagedMutationInsert && mutation.OpType != StagedMutationReplace {
+	if mutation.OpType != StagedMutationReplace {
 		cb(ErrUhOh)
 		return
 	}
@@ -1386,7 +1387,7 @@ func (t *transactionAttempt) unstageRepMutation(mutation stagedMutation, cb func
 }
 
 func (t *transactionAttempt) unstageInsMutation(mutation stagedMutation, cb func(error)) {
-	if mutation.OpType != StagedMutationInsert && mutation.OpType != StagedMutationReplace {
+	if mutation.OpType != StagedMutationInsert {
 		cb(ErrUhOh)
 		return
 	}
