@@ -99,6 +99,10 @@ func (t *transactionAttempt) checkDone() error {
 	return nil
 }
 
+func hasExpired(expiryTime time.Time) bool {
+	return time.Now().After(expiryTime)
+}
+
 func (t *transactionAttempt) checkExpired(stage string, id []byte, cb func(error)) {
 	t.hooks.HasExpiredClientSideHook(stage, id, func(expired bool, err error) {
 		if err != nil {
@@ -109,7 +113,7 @@ func (t *transactionAttempt) checkExpired(stage string, id []byte, cb func(error
 			cb(ErrAttemptExpired)
 			return
 		}
-		if time.Now().After(t.expiryTime) {
+		if hasExpired(t.expiryTime) {
 			cb(ErrAttemptExpired)
 			return
 		}

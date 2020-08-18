@@ -22,6 +22,7 @@ type Attempt struct {
 	// Internal: This should never be used and is not supported.
 	Internal struct {
 		NoRollback bool
+		Expired    bool
 	}
 }
 
