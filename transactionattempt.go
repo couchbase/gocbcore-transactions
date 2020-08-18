@@ -83,6 +83,11 @@ func (t *transactionAttempt) GetMutations() []StagedMutation {
 	return mutations
 }
 
+func (t *transactionAttempt) setAttemptDetail(shouldRetry, shouldNotRollback bool) {
+	t.shouldRetry = shouldRetry
+	t.shouldNotRollback = shouldNotRollback
+}
+
 func (t *transactionAttempt) checkDone() error {
 	t.lock.Lock()
 	defer t.lock.Unlock()
@@ -166,9 +171,9 @@ func (t *transactionAttempt) confirmATRPending(
 		if err != nil {
 			err = t.classifyError(err)
 			if errors.Is(err, ErrHard) {
-				t.shouldNotRollback = true
+				t.setAttemptDetail(false, true)
 			} else if errors.Is(err, ErrTransient) {
-				t.shouldRetry = true
+				t.setAttemptDetail(true, false)
 			} else if errors.Is(err, ErrAmbiguous) {
 				// need to retry
 			} else if errors.Is(err, ErrPathAlreadyExists) {
@@ -201,9 +206,9 @@ func (t *transactionAttempt) confirmATRPending(
 			if err != nil {
 				err = t.classifyError(err)
 				if errors.Is(err, ErrHard) {
-					t.shouldNotRollback = true
+					t.setAttemptDetail(false, true)
 				} else if errors.Is(err, ErrTransient) {
-					t.shouldRetry = true
+					t.setAttemptDetail(true, false)
 				}
 				t.lock.Lock()
 				t.txnAtrSection.Done()
@@ -220,9 +225,9 @@ func (t *transactionAttempt) confirmATRPending(
 				if err != nil {
 					err = t.classifyError(err)
 					if errors.Is(err, ErrHard) {
-						t.shouldNotRollback = true
+						t.setAttemptDetail(false, true)
 					} else if errors.Is(err, ErrTransient) {
-						t.shouldRetry = true
+						t.setAttemptDetail(true, false)
 					}
 					cb(err)
 					return
@@ -234,9 +239,9 @@ func (t *transactionAttempt) confirmATRPending(
 		if err != nil {
 			err = t.classifyError(err)
 			if errors.Is(err, ErrHard) {
-				t.shouldNotRollback = true
+				t.setAttemptDetail(false, true)
 			} else if errors.Is(err, ErrTransient) {
-				t.shouldRetry = true
+				t.setAttemptDetail(true, false)
 			}
 			t.lock.Lock()
 			t.txnAtrSection.Done()
@@ -259,9 +264,9 @@ func (t *transactionAttempt) setATRCommitted(
 
 		err = t.classifyError(err)
 		if errors.Is(err, ErrHard) {
-			t.shouldNotRollback = true
+			t.setAttemptDetail(false, true)
 		} else if errors.Is(err, ErrTransient) {
-			t.shouldRetry = true
+			t.setAttemptDetail(true, false)
 		}
 
 		cb(err)
@@ -672,11 +677,9 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 			if err != nil {
 				err = t.classifyError(err)
 				if errors.Is(err, ErrHard) {
-					t.lock.Lock()
-					t.state = AttemptStateCompleted
-					t.lock.Unlock()
+					t.setAttemptDetail(false, true)
 				} else if errors.Is(err, ErrTransient) {
-					t.shouldRetry = true
+					t.setAttemptDetail(true, false)
 				}
 				cb(nil, err)
 				return
@@ -699,9 +702,11 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 					if err != nil {
 						err = t.classifyError(err)
 						if errors.Is(err, ErrHard) {
-							t.shouldNotRollback = true
+							t.setAttemptDetail(false, true)
 						} else if errors.Is(err, ErrTransient) {
-							t.shouldRetry = true
+							t.setAttemptDetail(true, false)
+						} else if errors.Is(err, ErrAtrNotFound) {
+							err = ErrOther
 						}
 						cb(nil, err)
 						return
@@ -789,12 +794,12 @@ func (t *transactionAttempt) Insert(opts InsertOptions, cb StoreCallback) error 
 			err = t.classifyError(err)
 
 			if errors.Is(err, ErrHard) {
-				t.shouldNotRollback = true
+				t.setAttemptDetail(false, true)
 			} else if errors.Is(err, ErrTransient) {
-				t.shouldRetry = true
+				t.setAttemptDetail(true, false)
 			} else if errors.Is(err, ErrAttemptExpired) {
 				if t.expiryOvertimeMode {
-					t.shouldNotRollback = true
+					t.setAttemptDetail(false, true)
 				} else {
 					t.expiryOvertimeMode = true
 				}
@@ -811,11 +816,11 @@ func (t *transactionAttempt) Insert(opts InsertOptions, cb StoreCallback) error 
 					if err != nil {
 						err = t.classifyError(err)
 						if errors.Is(err, ErrDocNotFound) {
-							t.shouldRetry = true
+							t.setAttemptDetail(true, false)
 						} else if errors.Is(err, ErrPathNotFound) {
-							t.shouldRetry = true
+							t.setAttemptDetail(true, false)
 						} else if errors.Is(err, ErrTransient) {
-							t.shouldRetry = true
+							t.setAttemptDetail(true, false)
 						}
 
 						cb(nil, err)
@@ -1064,11 +1069,11 @@ func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) erro
 				if err != nil {
 					err = t.classifyError(err)
 					if errors.Is(err, ErrDocNotFound) || errors.Is(err, ErrCasMismatch) || errors.Is(err, ErrDocAlreadyExists) {
-						t.shouldRetry = true
+						t.setAttemptDetail(true, false)
 					} else if errors.Is(err, ErrTransient) || errors.Is(err, ErrAmbiguous) {
-						t.shouldRetry = true
+						t.setAttemptDetail(true, false)
 					} else if errors.Is(err, ErrHard) {
-						t.shouldNotRollback = true
+						t.setAttemptDetail(false, true)
 					}
 
 					cb(nil, err)
@@ -1252,11 +1257,11 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 				if err != nil {
 					err = t.classifyError(err)
 					if errors.Is(err, ErrDocNotFound) || errors.Is(err, ErrCasMismatch) || errors.Is(err, ErrDocAlreadyExists) {
-						t.shouldRetry = true
+						t.setAttemptDetail(true, false)
 					} else if errors.Is(err, ErrTransient) || errors.Is(err, ErrAmbiguous) {
-						t.shouldRetry = true
+						t.setAttemptDetail(true, false)
 					} else if errors.Is(err, ErrHard) {
-						t.shouldNotRollback = true
+						t.setAttemptDetail(false, true)
 					}
 
 					cb(nil, err)
@@ -1621,7 +1626,7 @@ func (t *transactionAttempt) abort(
 			err = t.classifyError(err)
 
 			if t.expiryOvertimeMode {
-				t.shouldNotRollback = true
+				t.setAttemptDetail(false, true)
 				cb(err)
 				return
 			}
@@ -1635,15 +1640,15 @@ func (t *transactionAttempt) abort(
 				})
 				return
 			} else if errors.Is(err, ErrPathNotFound) {
-				t.shouldNotRollback = true
+				t.setAttemptDetail(false, true)
 				err = ErrAtrEntryNotFound
 			} else if errors.Is(err, ErrDocNotFound) {
-				t.shouldNotRollback = true
+				t.setAttemptDetail(false, true)
 				err = ErrAtrNotFound
 			} else if errors.Is(err, ErrAtrFull) {
-				t.shouldNotRollback = true
+				t.setAttemptDetail(false, true)
 			} else if errors.Is(err, ErrHard) {
-				t.shouldNotRollback = true
+				t.setAttemptDetail(false, true)
 			} else {
 				time.AfterFunc(3*time.Millisecond, func() {
 					t.abort(handler)
@@ -1812,108 +1817,189 @@ func (t *transactionAttempt) setATRAborted(
 }
 
 func (t *transactionAttempt) rollbackInsMutation(mutation stagedMutation, cb func(error)) {
+	var handler func(error)
+	handler = func(err error) {
+		if err != nil {
+			err = t.classifyError(err)
+			if t.expiryOvertimeMode {
+				cb(err)
+				return
+			}
+
+			if errors.Is(err, ErrAttemptExpired) {
+				t.expiryOvertimeMode = true
+			} else if errors.Is(err, ErrDocNotFound) || errors.Is(err, ErrPathNotFound) {
+				cb(nil)
+				return
+			} else if errors.Is(err, ErrCasMismatch) || errors.Is(err, ErrDocAlreadyExists) {
+				t.setAttemptDetail(false, true)
+				cb(err)
+				return
+			} else if errors.Is(err, ErrHard) {
+				t.setAttemptDetail(false, true)
+				cb(err)
+				return
+			}
+
+			time.AfterFunc(3*time.Millisecond, func() {
+				t.rollbackInsMutation(mutation, handler)
+			})
+			return
+		}
+
+		cb(nil)
+	}
 	if mutation.OpType != StagedMutationInsert {
 		cb(ErrUhOh)
 		return
 	}
 
-	t.hooks.BeforeRollbackDeleteInserted(mutation.Key, func(err error) {
-		if err != nil {
-			cb(err)
+	t.checkExpired(hookRollbackDoc, mutation.Key, func(err error) {
+		if err != nil && !t.expiryOvertimeMode {
+			handler(err)
 			return
 		}
-
-		_, err = mutation.Agent.MutateIn(gocbcore.MutateInOptions{
-			ScopeName:      mutation.ScopeName,
-			CollectionName: mutation.CollectionName,
-			Key:            mutation.Key,
-			Cas:            mutation.Cas,
-			Flags:          memd.SubdocDocFlagAccessDeleted,
-			Ops: []gocbcore.SubDocOp{
-				{
-					Op:    memd.SubDocOpDictSet,
-					Path:  "txn",
-					Flags: memd.SubdocFlagXattrPath,
-					Value: []byte{110, 117, 108, 108}, // null
-				},
-				{
-					Op:    memd.SubDocOpDelete,
-					Path:  "txn",
-					Flags: memd.SubdocFlagXattrPath,
-				},
-			},
-		}, func(result *gocbcore.MutateInResult, err error) {
+		t.hooks.BeforeRollbackDeleteInserted(mutation.Key, func(err error) {
 			if err != nil {
-				cb(err)
+				handler(err)
 				return
 			}
 
-			t.hooks.AfterRollbackDeleteInserted(mutation.Key, func(err error) {
+			_, err = mutation.Agent.MutateIn(gocbcore.MutateInOptions{
+				ScopeName:      mutation.ScopeName,
+				CollectionName: mutation.CollectionName,
+				Key:            mutation.Key,
+				Cas:            mutation.Cas,
+				Flags:          memd.SubdocDocFlagAccessDeleted,
+				Ops: []gocbcore.SubDocOp{
+					{
+						Op:    memd.SubDocOpDictSet,
+						Path:  "txn",
+						Flags: memd.SubdocFlagXattrPath,
+						Value: []byte{110, 117, 108, 108}, // null
+					},
+					{
+						Op:    memd.SubDocOpDelete,
+						Path:  "txn",
+						Flags: memd.SubdocFlagXattrPath,
+					},
+				},
+			}, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
-					cb(err)
+					handler(err)
 					return
 				}
 
-				cb(nil)
+				t.hooks.AfterRollbackDeleteInserted(mutation.Key, func(err error) {
+					if err != nil {
+						cb(err)
+						return
+					}
+
+					handler(nil)
+				})
 			})
+			if err != nil {
+				handler(err)
+				return
+			}
 		})
-		if err != nil {
-			cb(err)
-			return
-		}
 	})
 }
 
 func (t *transactionAttempt) rollbackRepRemMutation(mutation stagedMutation, cb func(error)) {
+	var handler func(error)
+	handler = func(err error) {
+		if err != nil {
+			err = t.classifyError(err)
+			if errors.Is(err, ErrAttemptExpired) {
+				if t.expiryOvertimeMode {
+					cb(err)
+					return
+				} else {
+					t.expiryOvertimeMode = true
+				}
+			} else if errors.Is(err, ErrPathNotFound) {
+				cb(nil)
+				return
+			} else if errors.Is(err, ErrDocNotFound) {
+				t.setAttemptDetail(false, true)
+				cb(err)
+				return
+			} else if errors.Is(err, ErrCasMismatch) || errors.Is(err, ErrDocAlreadyExists) {
+				t.setAttemptDetail(false, true)
+				cb(err)
+				return
+			} else if errors.Is(err, ErrHard) {
+				t.setAttemptDetail(false, true)
+				cb(err)
+				return
+			}
+
+			time.AfterFunc(3*time.Millisecond, func() {
+				t.rollbackInsMutation(mutation, handler)
+			})
+			return
+		}
+
+		cb(nil)
+	}
+
 	if mutation.OpType != StagedMutationRemove && mutation.OpType != StagedMutationReplace {
 		cb(ErrUhOh)
 		return
 	}
 
-	t.hooks.BeforeDocRolledBack(mutation.Key, func(err error) {
-		if err != nil {
-			cb(err)
+	t.checkExpired(hookRollbackDoc, mutation.Key, func(err error) {
+		if err != nil && !t.expiryOvertimeMode {
+			handler(err)
 			return
 		}
-
-		_, err = mutation.Agent.MutateIn(gocbcore.MutateInOptions{
-			ScopeName:      mutation.ScopeName,
-			CollectionName: mutation.CollectionName,
-			Key:            mutation.Key,
-			Cas:            mutation.Cas,
-			Flags:          memd.SubdocDocFlagAccessDeleted,
-			Ops: []gocbcore.SubDocOp{
-				{
-					Op:    memd.SubDocOpDictSet,
-					Path:  "txn",
-					Flags: memd.SubdocFlagXattrPath,
-					Value: []byte{110, 117, 108, 108}, // null
-				},
-				{
-					Op:    memd.SubDocOpDelete,
-					Path:  "txn",
-					Flags: memd.SubdocFlagXattrPath,
-				},
-			},
-		}, func(result *gocbcore.MutateInResult, err error) {
+		t.hooks.BeforeDocRolledBack(mutation.Key, func(err error) {
 			if err != nil {
-				cb(err)
+				handler(err)
 				return
 			}
 
-			t.hooks.AfterRollbackReplaceOrRemove(mutation.Key, func(err error) {
+			_, err = mutation.Agent.MutateIn(gocbcore.MutateInOptions{
+				ScopeName:      mutation.ScopeName,
+				CollectionName: mutation.CollectionName,
+				Key:            mutation.Key,
+				Cas:            mutation.Cas,
+				Flags:          memd.SubdocDocFlagAccessDeleted,
+				Ops: []gocbcore.SubDocOp{
+					{
+						Op:    memd.SubDocOpDictSet,
+						Path:  "txn",
+						Flags: memd.SubdocFlagXattrPath,
+						Value: []byte{110, 117, 108, 108}, // null
+					},
+					{
+						Op:    memd.SubDocOpDelete,
+						Path:  "txn",
+						Flags: memd.SubdocFlagXattrPath,
+					},
+				},
+			}, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
-					cb(err)
+					handler(err)
 					return
 				}
 
-				cb(nil)
+				t.hooks.AfterRollbackReplaceOrRemove(mutation.Key, func(err error) {
+					if err != nil {
+						handler(err)
+						return
+					}
+
+					handler(nil)
+				})
 			})
+			if err != nil {
+				handler(err)
+				return
+			}
 		})
-		if err != nil {
-			cb(err)
-			return
-		}
 	})
 }
 
@@ -2029,11 +2115,10 @@ func (t *transactionAttempt) Rollback(cb RollbackCallback) error {
 		}
 
 		// TODO(brett19): Use atomic counters instead of a goroutine here
+		// TODO: This is running the unstages sequentially because of testing, in future we will optimise this
 		go func() {
-			numMutations := len(t.stagedMutations)
-			waitCh := make(chan error, numMutations)
-
 			for _, mutation := range t.stagedMutations {
+				waitCh := make(chan error, 1)
 				if mutation.OpType == StagedMutationInsert {
 					t.rollbackInsMutation(*mutation, func(err error) {
 						waitCh <- err
@@ -2044,13 +2129,14 @@ func (t *transactionAttempt) Rollback(cb RollbackCallback) error {
 					})
 				} else {
 					// TODO(brett19): Pretty sure I can do better than this
-					waitCh <- ErrUhOh
+					waitCh <- err
 				}
-			}
 
-			for i := 0; i < numMutations; i++ {
-				// TODO(brett19): Handle errors here better
-				<-waitCh
+				err := <-waitCh
+				if err != nil {
+					cb(err)
+					return
+				}
 			}
 
 			t.setATRRolledBack(func(err error) {
