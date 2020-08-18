@@ -256,9 +256,24 @@ func (t *transactionAttempt) confirmATRPending(
 func (t *transactionAttempt) setATRCommitted(
 	cb func(error),
 ) error {
+	errHandler := func(err error) {
+		if err == nil {
+			cb(nil)
+		}
+
+		err = t.classifyError(err)
+		if errors.Is(err, ErrHard) {
+			t.shouldNotRollback = true
+		} else if errors.Is(err, ErrTransient) {
+			t.shouldRetry = true
+		}
+
+		cb(err)
+	}
+
 	t.hooks.BeforeATRCommit(func(err error) {
 		if err != nil {
-			cb(err)
+			errHandler(err)
 			return
 		}
 
@@ -267,7 +282,7 @@ func (t *transactionAttempt) setATRCommitted(
 			t.lock.Unlock()
 
 			t.txnAtrSection.Wait(func() {
-				cb(ErrOther)
+				errHandler(ErrOther)
 			})
 
 			return
@@ -344,13 +359,10 @@ func (t *transactionAttempt) setATRCommitted(
 			if err != nil {
 				t.lock.Lock()
 
-				// TODO(brett19): Do other things to cancel it here....
-				t.state = AttemptStateAborted
-
 				t.txnAtrSection.Done()
 				t.lock.Unlock()
 
-				cb(err)
+				errHandler(err)
 				return
 			}
 
@@ -360,7 +372,7 @@ func (t *transactionAttempt) setATRCommitted(
 
 			t.hooks.AfterATRCommit(func(err error) {
 				if err != nil {
-					cb(err)
+					errHandler(err)
 					return
 				}
 
@@ -372,7 +384,7 @@ func (t *transactionAttempt) setATRCommitted(
 			t.txnAtrSection.Done()
 			t.lock.Unlock()
 
-			cb(err)
+			errHandler(err)
 		}
 	})
 	return nil
@@ -525,11 +537,6 @@ func (t *transactionAttempt) getFullDoc(opts GetOptions, deadline time.Time,
 				return
 			}
 
-			if result.Internal.IsDeleted {
-				cb(nil, ErrDocNotFound)
-				return
-			}
-
 			var meta *docMeta
 			// TODO(brett19): Don't ignore the error here
 			json.Unmarshal(result.Ops[0].Value, &meta)
@@ -540,11 +547,24 @@ func (t *transactionAttempt) getFullDoc(opts GetOptions, deadline time.Time,
 				// TODO(brett19): Don't ignore the error here
 				json.Unmarshal(result.Ops[1].Value, &txnMetaVal)
 				txnMeta = &txnMetaVal
+
+				cb(&getDoc{
+					Body:    result.Ops[2].Value,
+					TxnMeta: txnMeta,
+					DocMeta: meta,
+					Cas:     result.Cas,
+				}, nil)
+
+				return
+			}
+
+			if result.Internal.IsDeleted {
+				cb(nil, ErrDocNotFound)
+				return
 			}
 
 			cb(&getDoc{
 				Body:    result.Ops[2].Value,
-				TxnMeta: txnMeta,
 				DocMeta: meta,
 				Cas:     result.Cas,
 			}, nil)
@@ -690,12 +710,13 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 						cb(nil, err)
 						return
 					}
-					if doc.TxnMeta.Operation.Type == jsonMutationRemove {
-						cb(nil, ErrDocNotFound)
-						return
-					}
 
-					if state == jsonAtrStateCommitted {
+					if state == jsonAtrStateCommitted || state == jsonAtrStateCompleted {
+						if doc.TxnMeta.Operation.Type == jsonMutationRemove {
+							cb(nil, ErrDocNotFound)
+							return
+						}
+
 						// TODO(brett19): Discuss virtual CAS with Graham
 						cb(&GetResult{
 							agent:          opts.Agent,
@@ -705,16 +726,22 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 							Value:          doc.TxnMeta.Operation.Staged,
 							Cas:            doc.Cas,
 						}, nil)
-					} else {
-						cb(&GetResult{
-							agent:          opts.Agent,
-							scopeName:      opts.ScopeName,
-							collectionName: opts.CollectionName,
-							key:            opts.Key,
-							Value:          doc.Body,
-							Cas:            doc.Cas,
-						}, nil)
+						return
 					}
+
+					if doc.TxnMeta.Operation.Type == jsonMutationInsert {
+						cb(nil, ErrDocNotFound)
+						return
+					}
+
+					cb(&GetResult{
+						agent:          opts.Agent,
+						scopeName:      opts.ScopeName,
+						collectionName: opts.CollectionName,
+						key:            opts.Key,
+						Value:          doc.Body,
+						Cas:            doc.Cas,
+					}, nil)
 				})
 				return
 			}
@@ -1206,118 +1233,39 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 		collectionName := opts.Document.collectionName
 		key := opts.Document.key
 
+		t.lock.Lock()
+
+		_, existingMutation := t.getStagedMutationLocked(agent.BucketName(), opts.Document.scopeName, opts.Document.collectionName,
+			opts.Document.key)
+		if existingMutation != nil && existingMutation.OpType == StagedMutationInsert {
+			t.lock.Unlock()
+			cb(nil, ErrOther)
+			return
+		}
+		t.lock.Unlock()
+
 		err = t.confirmATRPending(agent, scopeName, collectionName, key, func(err error) {
 			if err != nil {
 				cb(nil, err)
 				return
 			}
 
-			t.hooks.BeforeStagedRemove(key, func(err error) {
+			t.remove(opts.Document, func(res *GetResult, err error) {
 				if err != nil {
+					err = t.classifyError(err)
+					if errors.Is(err, ErrDocNotFound) || errors.Is(err, ErrCasMismatch) || errors.Is(err, ErrDocAlreadyExists) {
+						t.shouldRetry = true
+					} else if errors.Is(err, ErrTransient) || errors.Is(err, ErrAmbiguous) {
+						t.shouldRetry = true
+					} else if errors.Is(err, ErrHard) {
+						t.shouldNotRollback = true
+					}
+
 					cb(nil, err)
 					return
 				}
 
-				stagedInfo := &stagedMutation{
-					OpType:         StagedMutationRemove,
-					Agent:          agent,
-					ScopeName:      scopeName,
-					CollectionName: collectionName,
-					Key:            key,
-					IsTombstone:    true,
-				}
-
-				var txnMeta jsonTxnXattr
-				txnMeta.ID.Transaction = t.transactionID
-				txnMeta.ID.Attempt = t.id
-				txnMeta.ATR.CollectionName = t.atrCollName()
-				txnMeta.ATR.BucketName = t.atrAgent.BucketName()
-				txnMeta.ATR.DocID = string(t.atrKey)
-				txnMeta.Operation.Type = jsonMutationRemove
-
-				restore := struct {
-					OriginalCAS string
-					ExpiryTime  uint
-					RevID       string
-				}{
-					OriginalCAS: fmt.Sprintf("%d", opts.Document.Cas),
-					ExpiryTime:  opts.Document.expiry,
-					RevID:       opts.Document.revid,
-				}
-				txnMeta.Restore = (*struct {
-					OriginalCAS string `json:"CAS,omitempty"`
-					ExpiryTime  uint   `json:"exptime"`
-					RevID       string `json:"revid,omitempty"`
-				})(&restore)
-
-				txnMetaBytes, _ := json.Marshal(txnMeta)
-				// TODO(brett19): Don't ignore the error here.
-
-				var duraTimeout time.Duration
-				var deadline time.Time
-				if t.keyValueTimeout > 0 {
-					deadline = time.Now().Add(t.keyValueTimeout)
-					duraTimeout = t.keyValueTimeout * 10 / 9
-				}
-
-				flags := memd.SubdocDocFlagNone
-				if opts.Document.deleted {
-					flags = memd.SubdocDocFlagAccessDeleted
-				}
-
-				_, err = stagedInfo.Agent.MutateIn(gocbcore.MutateInOptions{
-					ScopeName:      stagedInfo.ScopeName,
-					CollectionName: stagedInfo.CollectionName,
-					Key:            stagedInfo.Key,
-					Cas:            opts.Document.Cas,
-					Ops: []gocbcore.SubDocOp{
-						{
-							Op:    memd.SubDocOpDictAdd,
-							Path:  "txn",
-							Flags: memd.SubdocFlagMkDirP | memd.SubdocFlagXattrPath,
-							Value: txnMetaBytes,
-						},
-						{
-							Op:    memd.SubDocOpDictAdd,
-							Path:  "txn.op.crc32",
-							Flags: memd.SubdocFlagMkDirP | memd.SubdocFlagXattrPath | memd.SubdocFlagExpandMacros,
-							Value: crc32cMacro,
-						},
-					},
-					Flags:                  flags,
-					DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
-					DurabilityLevelTimeout: duraTimeout,
-					Deadline:               deadline,
-				}, func(result *gocbcore.MutateInResult, err error) {
-					if err != nil {
-						cb(nil, err)
-						return
-					}
-
-					t.hooks.AfterStagedRemoveComplete(key, func(err error) {
-						if err != nil {
-							cb(nil, err)
-							return
-						}
-
-						t.lock.Lock()
-						stagedInfo.Cas = result.Cas
-						t.stagedMutations = append(t.stagedMutations, stagedInfo)
-						t.lock.Unlock()
-
-						cb(&GetResult{
-							agent:          stagedInfo.Agent,
-							scopeName:      stagedInfo.ScopeName,
-							collectionName: stagedInfo.CollectionName,
-							key:            stagedInfo.Key,
-							Value:          stagedInfo.Staged,
-							Cas:            result.Cas,
-						}, err)
-					})
-				})
-				if err != nil {
-					cb(nil, err)
-				}
+				cb(res, nil)
 			})
 		})
 		if err != nil {
@@ -1327,6 +1275,116 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 	})
 
 	return nil
+}
+
+func (t *transactionAttempt) remove(doc *GetResult, cb StoreCallback) {
+	t.hooks.BeforeStagedRemove(doc.key, func(err error) {
+		if err != nil {
+			cb(nil, err)
+			return
+		}
+
+		stagedInfo := &stagedMutation{
+			OpType:         StagedMutationRemove,
+			Agent:          doc.agent,
+			ScopeName:      doc.scopeName,
+			CollectionName: doc.collectionName,
+			Key:            doc.key,
+			IsTombstone:    true,
+		}
+
+		var txnMeta jsonTxnXattr
+		txnMeta.ID.Transaction = t.transactionID
+		txnMeta.ID.Attempt = t.id
+		txnMeta.ATR.CollectionName = t.atrCollName()
+		txnMeta.ATR.BucketName = t.atrAgent.BucketName()
+		txnMeta.ATR.DocID = string(t.atrKey)
+		txnMeta.Operation.Type = jsonMutationRemove
+
+		restore := struct {
+			OriginalCAS string
+			ExpiryTime  uint
+			RevID       string
+		}{
+			OriginalCAS: fmt.Sprintf("%d", doc.Cas),
+			ExpiryTime:  doc.expiry,
+			RevID:       doc.revid,
+		}
+		txnMeta.Restore = (*struct {
+			OriginalCAS string `json:"CAS,omitempty"`
+			ExpiryTime  uint   `json:"exptime"`
+			RevID       string `json:"revid,omitempty"`
+		})(&restore)
+
+		txnMetaBytes, _ := json.Marshal(txnMeta)
+		// TODO(brett19): Don't ignore the error here.
+
+		var duraTimeout time.Duration
+		var deadline time.Time
+		if t.keyValueTimeout > 0 {
+			deadline = time.Now().Add(t.keyValueTimeout)
+			duraTimeout = t.keyValueTimeout * 10 / 9
+		}
+
+		flags := memd.SubdocDocFlagNone
+		if doc.deleted {
+			flags = memd.SubdocDocFlagAccessDeleted
+		}
+
+		_, err = stagedInfo.Agent.MutateIn(gocbcore.MutateInOptions{
+			ScopeName:      stagedInfo.ScopeName,
+			CollectionName: stagedInfo.CollectionName,
+			Key:            stagedInfo.Key,
+			Cas:            doc.Cas,
+			Ops: []gocbcore.SubDocOp{
+				{
+					Op:    memd.SubDocOpDictSet,
+					Path:  "txn",
+					Flags: memd.SubdocFlagMkDirP | memd.SubdocFlagXattrPath,
+					Value: txnMetaBytes,
+				},
+				{
+					Op:    memd.SubDocOpDictSet,
+					Path:  "txn.op.crc32",
+					Flags: memd.SubdocFlagMkDirP | memd.SubdocFlagXattrPath | memd.SubdocFlagExpandMacros,
+					Value: crc32cMacro,
+				},
+			},
+			Flags:                  flags,
+			DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
+			DurabilityLevelTimeout: duraTimeout,
+			Deadline:               deadline,
+		}, func(result *gocbcore.MutateInResult, err error) {
+			if err != nil {
+				cb(nil, err)
+				return
+			}
+
+			t.hooks.AfterStagedRemoveComplete(doc.key, func(err error) {
+				if err != nil {
+					cb(nil, err)
+					return
+				}
+
+				t.lock.Lock()
+				stagedInfo.Cas = result.Cas
+				t.stagedMutations = append(t.stagedMutations, stagedInfo)
+				t.lock.Unlock()
+
+				cb(&GetResult{
+					agent:          stagedInfo.Agent,
+					scopeName:      stagedInfo.ScopeName,
+					collectionName: stagedInfo.CollectionName,
+					key:            stagedInfo.Key,
+					Value:          stagedInfo.Staged,
+					Cas:            result.Cas,
+				}, nil)
+			})
+		})
+		if err != nil {
+			cb(nil, err)
+		}
+	})
 }
 
 func (t *transactionAttempt) unstageRepMutation(mutation stagedMutation, cb func(error)) {
