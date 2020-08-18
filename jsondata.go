@@ -56,6 +56,7 @@ type jsonTxnXattr struct {
 		DocID          string `json:"id,omitempty"`
 		BucketName     string `json:"bkt,omitempty"`
 		CollectionName string `json:"coll,omitempty"`
+		ScopeName      string `json:"scp,omitempty"`
 	} `json:"atr,omitempty"`
 	Operation struct {
 		Type   jsonMutationType `json:"type,omitempty"`

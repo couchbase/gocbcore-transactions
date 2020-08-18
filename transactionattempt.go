@@ -83,10 +83,6 @@ func (t *transactionAttempt) GetMutations() []StagedMutation {
 	return mutations
 }
 
-func (t *transactionAttempt) atrCollName() string {
-	return t.atrScopeName + "." + t.atrCollectionName
-}
-
 func (t *transactionAttempt) checkDone() error {
 	t.lock.Lock()
 	defer t.lock.Unlock()
@@ -952,7 +948,8 @@ func (t *transactionAttempt) insert(opts InsertOptions, cas gocbcore.Cas, cb Sto
 				var txnMeta jsonTxnXattr
 				txnMeta.ID.Transaction = t.transactionID
 				txnMeta.ID.Attempt = t.id
-				txnMeta.ATR.CollectionName = t.atrCollName()
+				txnMeta.ATR.CollectionName = t.atrCollectionName
+				txnMeta.ATR.ScopeName = t.atrScopeName
 				txnMeta.ATR.BucketName = t.atrAgent.BucketName()
 				txnMeta.ATR.DocID = string(t.atrKey)
 				txnMeta.Operation.Type = jsonMutationInsert
@@ -1140,7 +1137,8 @@ func (t *transactionAttempt) doReplace(opts ReplaceOptions, cb func(*stagedMutat
 		var txnMeta jsonTxnXattr
 		txnMeta.ID.Transaction = t.transactionID
 		txnMeta.ID.Attempt = t.id
-		txnMeta.ATR.CollectionName = t.atrCollName()
+		txnMeta.ATR.CollectionName = t.atrCollectionName
+		txnMeta.ATR.ScopeName = t.atrScopeName
 		txnMeta.ATR.BucketName = t.atrAgent.BucketName()
 		txnMeta.ATR.DocID = string(t.atrKey)
 		txnMeta.Operation.Type = jsonMutationReplace
@@ -1296,7 +1294,8 @@ func (t *transactionAttempt) remove(doc *GetResult, cb StoreCallback) {
 		var txnMeta jsonTxnXattr
 		txnMeta.ID.Transaction = t.transactionID
 		txnMeta.ID.Attempt = t.id
-		txnMeta.ATR.CollectionName = t.atrCollName()
+		txnMeta.ATR.CollectionName = t.atrCollectionName
+		txnMeta.ATR.ScopeName = t.atrScopeName
 		txnMeta.ATR.BucketName = t.atrAgent.BucketName()
 		txnMeta.ATR.DocID = string(t.atrKey)
 		txnMeta.Operation.Type = jsonMutationRemove
