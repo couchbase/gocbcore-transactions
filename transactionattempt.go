@@ -1826,7 +1826,8 @@ func (t *transactionAttempt) rollbackInsMutation(mutation stagedMutation, cb fun
 		if err != nil {
 			err = t.classifyError(err)
 			if t.expiryOvertimeMode {
-				cb(err)
+				t.setAttemptDetail(false, true)
+				cb(ErrAttemptExpired)
 				return
 			}
 
@@ -1837,7 +1838,7 @@ func (t *transactionAttempt) rollbackInsMutation(mutation stagedMutation, cb fun
 				return
 			} else if errors.Is(err, ErrCasMismatch) || errors.Is(err, ErrDocAlreadyExists) {
 				t.setAttemptDetail(false, true)
-				cb(err)
+				cb(ErrCasMismatch)
 				return
 			} else if errors.Is(err, ErrHard) {
 				t.setAttemptDetail(false, true)
@@ -1846,7 +1847,7 @@ func (t *transactionAttempt) rollbackInsMutation(mutation stagedMutation, cb fun
 			}
 
 			time.AfterFunc(3*time.Millisecond, func() {
-				t.rollbackInsMutation(mutation, handler)
+				t.rollbackInsMutation(mutation, cb)
 			})
 			return
 		}
@@ -1896,7 +1897,7 @@ func (t *transactionAttempt) rollbackInsMutation(mutation stagedMutation, cb fun
 
 				t.hooks.AfterRollbackDeleteInserted(mutation.Key, func(err error) {
 					if err != nil {
-						cb(err)
+						handler(err)
 						return
 					}
 
@@ -1916,13 +1917,14 @@ func (t *transactionAttempt) rollbackRepRemMutation(mutation stagedMutation, cb 
 	handler = func(err error) {
 		if err != nil {
 			err = t.classifyError(err)
+			if t.expiryOvertimeMode {
+				t.setAttemptDetail(false, true)
+				cb(ErrAttemptExpired)
+				return
+			}
+
 			if errors.Is(err, ErrAttemptExpired) {
-				if t.expiryOvertimeMode {
-					cb(err)
-					return
-				} else {
-					t.expiryOvertimeMode = true
-				}
+				t.expiryOvertimeMode = true
 			} else if errors.Is(err, ErrPathNotFound) {
 				cb(nil)
 				return
@@ -1932,7 +1934,7 @@ func (t *transactionAttempt) rollbackRepRemMutation(mutation stagedMutation, cb 
 				return
 			} else if errors.Is(err, ErrCasMismatch) || errors.Is(err, ErrDocAlreadyExists) {
 				t.setAttemptDetail(false, true)
-				cb(err)
+				cb(ErrCasMismatch)
 				return
 			} else if errors.Is(err, ErrHard) {
 				t.setAttemptDetail(false, true)
@@ -1941,7 +1943,7 @@ func (t *transactionAttempt) rollbackRepRemMutation(mutation stagedMutation, cb 
 			}
 
 			time.AfterFunc(3*time.Millisecond, func() {
-				t.rollbackInsMutation(mutation, handler)
+				t.rollbackRepRemMutation(mutation, cb)
 			})
 			return
 		}
@@ -1970,7 +1972,6 @@ func (t *transactionAttempt) rollbackRepRemMutation(mutation stagedMutation, cb 
 				CollectionName: mutation.CollectionName,
 				Key:            mutation.Key,
 				Cas:            mutation.Cas,
-				Flags:          memd.SubdocDocFlagAccessDeleted,
 				Ops: []gocbcore.SubDocOp{
 					{
 						Op:    memd.SubDocOpDictSet,
