@@ -21,8 +21,11 @@ type Attempt struct {
 
 	// Internal: This should never be used and is not supported.
 	Internal struct {
-		NoRollback bool
-		Expired    bool
+		NoRollback  bool
+		Expired     bool
+		ErrorCause  error
+		ShouldRaise ErrorReason
+		ErrorClass  ErrorClass
 	}
 }
 

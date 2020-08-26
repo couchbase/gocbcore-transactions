@@ -33,13 +33,20 @@ func (t *Transaction) Attempt() Attempt {
 		ID:            t.attempt.id,
 		MutationState: t.attempt.finalMutationTokens,
 		ShouldRetry:   t.attempt.shouldRetry,
+
 		Internal: struct {
-			NoRollback bool
-			Expired    bool
+			NoRollback  bool
+			Expired     bool
+			ErrorCause  error
+			ShouldRaise ErrorReason
+			ErrorClass  ErrorClass
 		}{
 			NoRollback: t.attempt.shouldNotRollback || t.attempt.state == AttemptStateCompleted ||
 				t.attempt.state == AttemptStateRolledBack,
-			Expired: hasExpired(t.expiryTime),
+			Expired:     hasExpired(t.expiryTime),
+			ErrorCause:  t.attempt.errorCause,
+			ShouldRaise: t.attempt.shouldRaise,
+			ErrorClass:  t.attempt.errorClass,
 		},
 	}
 }
