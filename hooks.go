@@ -36,6 +36,7 @@ type TransactionHooks interface {
 	BeforeATRAborted(func(err error))
 	AfterATRAborted(func(err error))
 	AfterATRRolledBack(func(err error))
+	BeforeATRCommitAmbiguityResolution(func(err error))
 	RandomATRIDForVbucket(vbID []byte, cb func(string, error))
 	HasExpiredClientSideHook(stage string, docID []byte, cb func(bool, error))
 }
@@ -207,6 +208,11 @@ func (dh *DefaultHooks) AfterATRAborted(cb func(err error)) {
 
 // AfterATRRolledBack occurs after the ATR transitions to rolled back.
 func (dh *DefaultHooks) AfterATRRolledBack(cb func(err error)) {
+	cb(nil)
+}
+
+// BeforeATRCommitAmbiguityResolution occurs before ATR commit ambiguity resolution.
+func (dh *DefaultHooks) BeforeATRCommitAmbiguityResolution(cb func(err error)) {
 	cb(nil)
 }
 

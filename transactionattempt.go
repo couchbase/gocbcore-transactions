@@ -326,6 +326,107 @@ func (t *transactionAttempt) confirmATRPending(
 	return nil
 }
 
+func (t *transactionAttempt) setATRCommittedAmbiguityResolution(cb func(error)) {
+	handler := func(st jsonAtrState, err error) {
+		t.lock.Lock()
+		t.txnAtrSection.Done()
+		t.lock.Unlock()
+
+		if err != nil {
+			var failErr error
+			ec := t.classifyError(err)
+			switch ec {
+			case ErrorClassFailExpiry:
+				t.expiryOvertimeMode = true
+				failErr = t.createOperationFailedError(false, true, ErrAttemptExpired, ErrorReasonTransactionCommitAmbiguous, ec)
+			case ErrorClassFailHard:
+				failErr = t.createOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec)
+			case ErrorClassFailTransient:
+				time.AfterFunc(3*time.Millisecond, func() {
+					t.setATRCommittedAmbiguityResolution(cb)
+				})
+			case ErrorClassFailOther:
+				time.AfterFunc(3*time.Millisecond, func() {
+					t.setATRCommittedAmbiguityResolution(cb)
+				})
+				return
+			default:
+				failErr = t.createOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec)
+			}
+
+			cb(failErr)
+			return
+		}
+
+		switch st {
+		case jsonAtrStateCommitted:
+			t.lock.Lock()
+			t.state = AttemptStateCommitted
+			t.lock.Unlock()
+			cb(nil)
+		case jsonAtrStatePending:
+			t.setATRCommitted(cb)
+		case jsonAtrStateAborted:
+			cb(t.createOperationFailedError(false, true, nil, ErrorReasonTransactionFailed, ErrorClassFailOther))
+		case jsonAtrStateRolledBack:
+			cb(t.createOperationFailedError(false, true, nil, ErrorReasonTransactionFailed, ErrorClassFailOther))
+		default:
+			cb(t.createOperationFailedError(false, true, ErrIllegalState, ErrorReasonTransactionFailed, ErrorClassFailOther))
+		}
+	}
+
+	t.checkExpired(hookATRCommitAmbiguityResolution, []byte{}, func(err error) {
+		if err != nil {
+			handler("", err)
+			return
+		}
+
+		t.hooks.BeforeATRCommitAmbiguityResolution(func(err error) {
+			if err != nil {
+				handler("", err)
+				return
+			}
+
+			var deadline time.Time
+			if t.keyValueTimeout > 0 {
+				deadline = time.Now().Add(t.keyValueTimeout)
+			}
+
+			_, err = t.atrAgent.LookupIn(gocbcore.LookupInOptions{
+				ScopeName:      t.atrScopeName,
+				CollectionName: t.atrCollectionName,
+				Key:            t.atrKey,
+				Ops: []gocbcore.SubDocOp{
+					{
+						Op:    memd.SubDocOpGet,
+						Path:  "attempts." + t.id + ".st",
+						Flags: memd.SubdocFlagXattrPath,
+					},
+				},
+				Deadline: deadline,
+				Flags:    memd.SubdocDocFlagNone,
+			}, func(result *gocbcore.LookupInResult, err error) {
+				if err != nil {
+					handler("", err)
+					return
+				}
+
+				if result.Ops[0].Err != nil {
+					handler("", result.Ops[0].Err)
+					return
+				}
+
+				var st jsonAtrState
+				// TODO(brett19): Don't ignore the error here
+				json.Unmarshal(result.Ops[0].Value, &st)
+
+				handler(st, nil)
+			})
+
+		})
+	})
+}
+
 func (t *transactionAttempt) setATRCommitted(
 	cb func(error),
 ) error {
@@ -339,9 +440,10 @@ func (t *transactionAttempt) setATRCommitted(
 		ec := t.classifyError(err)
 		switch ec {
 		case ErrorClassFailExpiry:
-			failErr = t.createOperationFailedError(false, true, ErrAttemptExpired, ErrorReasonTransactionCommitAmbiguous, ec)
+			failErr = t.createOperationFailedError(false, false, ErrAttemptExpired, ErrorReasonTransactionExpired, ec)
 		case ErrorClassFailAmbiguous:
-			// TODO
+			t.setATRCommittedAmbiguityResolution(cb)
+			return
 		case ErrorClassFailHard:
 			failErr = t.createOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec)
 		case ErrorClassFailTransient:
@@ -353,7 +455,7 @@ func (t *transactionAttempt) setATRCommitted(
 		cb(failErr)
 	}
 
-	t.hooks.BeforeATRCommit(func(err error) {
+	t.checkExpired(hookATRCommit, []byte{}, func(err error) {
 		if err != nil {
 			handler(err)
 			return
@@ -374,8 +476,6 @@ func (t *transactionAttempt) setATRCommitted(
 		atrScopeName := t.atrScopeName
 		atrKey := t.atrKey
 		atrCollectionName := t.atrCollectionName
-
-		t.state = AttemptStateCommitted
 
 		insMutations := []jsonAtrMutation{}
 		repMutations := []jsonAtrMutation{}
@@ -403,71 +503,85 @@ func (t *transactionAttempt) setATRCommitted(
 		t.txnAtrSection.Add(1)
 		t.lock.Unlock()
 
-		atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag) gocbcore.SubDocOp {
-			bytes, _ := json.Marshal(data)
-
-			return gocbcore.SubDocOp{
-				Op:    memd.SubDocOpDictSet,
-				Flags: memd.SubdocFlagMkDirP | flags,
-				Path:  "attempts." + t.id + "." + fieldName,
-				Value: bytes,
-			}
-		}
-
-		var duraTimeout time.Duration
-		var deadline time.Time
-		if t.keyValueTimeout > 0 {
-			deadline = time.Now().Add(t.keyValueTimeout)
-			duraTimeout = t.keyValueTimeout * 10 / 9
-		}
-
-		_, err = atrAgent.MutateIn(gocbcore.MutateInOptions{
-			ScopeName:      atrScopeName,
-			CollectionName: atrCollectionName,
-			Key:            atrKey,
-			Ops: []gocbcore.SubDocOp{
-				atrFieldOp("st", jsonAtrStateCommitted, memd.SubdocFlagXattrPath),
-				atrFieldOp("tsc", "${Mutation.CAS}", memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros),
-				atrFieldOp("p", 0, memd.SubdocFlagXattrPath),
-				atrFieldOp("ins", insMutations, memd.SubdocFlagXattrPath),
-				atrFieldOp("rep", repMutations, memd.SubdocFlagXattrPath),
-				atrFieldOp("rem", remMutations, memd.SubdocFlagXattrPath),
-			},
-			DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
-			DurabilityLevelTimeout: duraTimeout,
-			Flags:                  memd.SubdocDocFlagNone,
-			Deadline:               deadline,
-		}, func(result *gocbcore.MutateInResult, err error) {
+		t.hooks.BeforeATRCommit(func(err error) {
 			if err != nil {
 				t.lock.Lock()
-
 				t.txnAtrSection.Done()
 				t.lock.Unlock()
-
 				handler(err)
 				return
 			}
 
-			t.lock.Lock()
-			t.txnAtrSection.Done()
-			t.lock.Unlock()
+			atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag) gocbcore.SubDocOp {
+				bytes, _ := json.Marshal(data)
 
-			t.hooks.AfterATRCommit(func(err error) {
+				return gocbcore.SubDocOp{
+					Op:    memd.SubDocOpDictSet,
+					Flags: memd.SubdocFlagMkDirP | flags,
+					Path:  "attempts." + t.id + "." + fieldName,
+					Value: bytes,
+				}
+			}
+
+			var duraTimeout time.Duration
+			var deadline time.Time
+			if t.keyValueTimeout > 0 {
+				deadline = time.Now().Add(t.keyValueTimeout)
+				duraTimeout = t.keyValueTimeout * 10 / 9
+			}
+
+			_, err = atrAgent.MutateIn(gocbcore.MutateInOptions{
+				ScopeName:      atrScopeName,
+				CollectionName: atrCollectionName,
+				Key:            atrKey,
+				Ops: []gocbcore.SubDocOp{
+					atrFieldOp("st", jsonAtrStateCommitted, memd.SubdocFlagXattrPath),
+					atrFieldOp("tsc", "${Mutation.CAS}", memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros),
+					atrFieldOp("p", 0, memd.SubdocFlagXattrPath),
+					atrFieldOp("ins", insMutations, memd.SubdocFlagXattrPath),
+					atrFieldOp("rep", repMutations, memd.SubdocFlagXattrPath),
+					atrFieldOp("rem", remMutations, memd.SubdocFlagXattrPath),
+				},
+				DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
+				DurabilityLevelTimeout: duraTimeout,
+				Flags:                  memd.SubdocDocFlagNone,
+				Deadline:               deadline,
+			}, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
+					t.lock.Lock()
+					t.txnAtrSection.Done()
+					t.lock.Unlock()
+
 					handler(err)
 					return
 				}
 
-				handler(nil)
-			})
-		})
-		if err != nil {
-			t.lock.Lock()
-			t.txnAtrSection.Done()
-			t.lock.Unlock()
+				t.hooks.AfterATRCommit(func(err error) {
+					if err != nil {
+						t.lock.Lock()
+						t.txnAtrSection.Done()
+						t.lock.Unlock()
 
-			handler(err)
-		}
+						handler(err)
+						return
+					}
+
+					t.lock.Lock()
+					t.state = AttemptStateCommitted
+					t.txnAtrSection.Done()
+					t.lock.Unlock()
+
+					handler(nil)
+				})
+			})
+			if err != nil {
+				t.lock.Lock()
+				t.txnAtrSection.Done()
+				t.lock.Unlock()
+
+				handler(err)
+			}
+		})
 	})
 	return nil
 }
@@ -491,64 +605,95 @@ func (t *transactionAttempt) setATRCompleted(
 		cb(nil)
 	}
 
-	t.hooks.BeforeATRComplete(func(err error) {
+	t.checkExpired(hookATRComplete, []byte{}, func(err error) {
 		if err != nil {
 			handler(err)
 			return
 		}
 
-		t.lock.Lock()
-		if t.state != AttemptStateCommitted {
+		t.hooks.BeforeATRComplete(func(err error) {
+			if err != nil {
+				handler(err)
+				return
+			}
+
+			t.lock.Lock()
+			if t.state != AttemptStateCommitted {
+				t.lock.Unlock()
+
+				t.txnAtrSection.Wait(func() {
+					handler(nil)
+				})
+
+				return
+			}
+
+			atrAgent := t.atrAgent
+			atrScopeName := t.atrScopeName
+			atrKey := t.atrKey
+			atrCollectionName := t.atrCollectionName
+
+			t.txnAtrSection.Add(1)
 			t.lock.Unlock()
 
-			t.txnAtrSection.Wait(func() {
-				handler(nil)
-			})
+			atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag) gocbcore.SubDocOp {
+				bytes, _ := json.Marshal(data)
 
-			return
-		}
-
-		atrAgent := t.atrAgent
-		atrScopeName := t.atrScopeName
-		atrKey := t.atrKey
-		atrCollectionName := t.atrCollectionName
-
-		t.state = AttemptStateCompleted
-
-		t.txnAtrSection.Add(1)
-		t.lock.Unlock()
-
-		atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag) gocbcore.SubDocOp {
-			bytes, _ := json.Marshal(data)
-
-			return gocbcore.SubDocOp{
-				Op:    memd.SubDocOpDictSet,
-				Flags: memd.SubdocFlagMkDirP | flags,
-				Path:  "attempts." + t.id + "." + fieldName,
-				Value: bytes,
+				return gocbcore.SubDocOp{
+					Op:    memd.SubDocOpDictSet,
+					Flags: memd.SubdocFlagMkDirP | flags,
+					Path:  "attempts." + t.id + "." + fieldName,
+					Value: bytes,
+				}
 			}
-		}
 
-		var duraTimeout time.Duration
-		var deadline time.Time
-		if t.keyValueTimeout > 0 {
-			deadline = time.Now().Add(t.keyValueTimeout)
-			duraTimeout = t.keyValueTimeout * 10 / 9
-		}
+			var duraTimeout time.Duration
+			var deadline time.Time
+			if t.keyValueTimeout > 0 {
+				deadline = time.Now().Add(t.keyValueTimeout)
+				duraTimeout = t.keyValueTimeout * 10 / 9
+			}
 
-		_, err = atrAgent.MutateIn(gocbcore.MutateInOptions{
-			ScopeName:      atrScopeName,
-			CollectionName: atrCollectionName,
-			Key:            atrKey,
-			Ops: []gocbcore.SubDocOp{
-				atrFieldOp("st", jsonAtrStateCompleted, memd.SubdocFlagXattrPath),
-				atrFieldOp("tsco", "${Mutation.CAS}", memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros),
-			},
-			DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
-			DurabilityLevelTimeout: duraTimeout,
-			Deadline:               deadline,
-			Flags:                  memd.SubdocDocFlagNone,
-		}, func(result *gocbcore.MutateInResult, err error) {
+			_, err = atrAgent.MutateIn(gocbcore.MutateInOptions{
+				ScopeName:      atrScopeName,
+				CollectionName: atrCollectionName,
+				Key:            atrKey,
+				Ops: []gocbcore.SubDocOp{
+					atrFieldOp("st", jsonAtrStateCompleted, memd.SubdocFlagXattrPath),
+					atrFieldOp("tsco", "${Mutation.CAS}", memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros),
+				},
+				DurabilityLevel:        memd.DurabilityLevel(t.durabilityLevel),
+				DurabilityLevelTimeout: duraTimeout,
+				Deadline:               deadline,
+				Flags:                  memd.SubdocDocFlagNone,
+			}, func(result *gocbcore.MutateInResult, err error) {
+				if err != nil {
+					t.lock.Lock()
+					t.txnAtrSection.Done()
+					t.lock.Unlock()
+
+					handler(err)
+					return
+				}
+
+				t.hooks.AfterATRComplete(func(err error) {
+					if err != nil {
+						t.lock.Lock()
+						t.txnAtrSection.Done()
+						t.lock.Unlock()
+
+						handler(err)
+						return
+					}
+
+					t.lock.Lock()
+					t.state = AttemptStateCompleted
+					t.txnAtrSection.Done()
+					t.lock.Unlock()
+
+					handler(nil)
+				})
+			})
 			if err != nil {
 				t.lock.Lock()
 				t.txnAtrSection.Done()
@@ -557,28 +702,7 @@ func (t *transactionAttempt) setATRCompleted(
 				handler(err)
 				return
 			}
-
-			t.lock.Lock()
-			t.txnAtrSection.Done()
-			t.lock.Unlock()
-
-			t.hooks.AfterATRComplete(func(err error) {
-				if err != nil {
-					handler(err)
-					return
-				}
-
-				handler(nil)
-			})
 		})
-		if err != nil {
-			t.lock.Lock()
-			t.txnAtrSection.Done()
-			t.lock.Unlock()
-
-			handler(err)
-			return
-		}
 	})
 
 	return nil

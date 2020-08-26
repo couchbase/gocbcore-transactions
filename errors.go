@@ -41,6 +41,9 @@ var (
 
 	// ErrTransactionOperationFailed is used for when a transaction enters an illegal state.
 	ErrIllegalState = errors.New("illegal state")
+
+	// ErrTransactionAbortedExternally indicates the transaction was aborted externally.
+	ErrTransactionAbortedExternally = errors.New("transaction aborted externally")
 )
 
 // ErrTransactionOperationFailed is used when a transaction operation fails.
