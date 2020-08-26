@@ -17,15 +17,9 @@ type Attempt struct {
 	ID            string
 	MutationState []MutationToken
 
-	ShouldRetry bool
-
 	// Internal: This should never be used and is not supported.
 	Internal struct {
-		NoRollback  bool
-		Expired     bool
-		ErrorCause  error
-		ShouldRaise ErrorReason
-		ErrorClass  ErrorClass
+		Expired bool
 	}
 }
 

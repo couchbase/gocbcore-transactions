@@ -32,21 +32,11 @@ func (t *Transaction) Attempt() Attempt {
 		State:         t.attempt.state,
 		ID:            t.attempt.id,
 		MutationState: t.attempt.finalMutationTokens,
-		ShouldRetry:   t.attempt.shouldRetry,
 
 		Internal: struct {
-			NoRollback  bool
-			Expired     bool
-			ErrorCause  error
-			ShouldRaise ErrorReason
-			ErrorClass  ErrorClass
+			Expired bool
 		}{
-			NoRollback: t.attempt.shouldNotRollback || t.attempt.state == AttemptStateCompleted ||
-				t.attempt.state == AttemptStateRolledBack,
-			Expired:     hasExpired(t.expiryTime),
-			ErrorCause:  t.attempt.errorCause,
-			ShouldRaise: t.attempt.shouldRaise,
-			ErrorClass:  t.attempt.errorClass,
+			Expired: hasExpired(t.expiryTime),
 		},
 	}
 }
@@ -54,12 +44,6 @@ func (t *Transaction) Attempt() Attempt {
 // NewAttempt begins a new attempt with this transaction.
 func (t *Transaction) NewAttempt() error {
 	attemptUUID := uuid.New().String()
-
-	if t.attempt != nil {
-		if !t.attempt.shouldRetry {
-			return ErrUhOh
-		}
-	}
 
 	t.attempt = &transactionAttempt{
 		expiryTime:      t.expiryTime,

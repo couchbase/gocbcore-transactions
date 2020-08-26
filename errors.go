@@ -36,12 +36,50 @@ var (
 	// ErrUhOh is used for now to describe errors I yet know how to categorize.
 	ErrUhOh = errors.New("uh oh")
 
-	// ErrTransactionOperationFailed is used for when a transaction operation fails.
-	ErrTransactionOperationFailed = errors.New("transaction operation failed")
-
 	// ErrDocAlreadyInTransaction indicates that a document is already in a transaction.
 	ErrDocAlreadyInTransaction = errors.New("doc already in transaction")
 
 	// ErrTransactionOperationFailed is used for when a transaction enters an illegal state.
 	ErrIllegalState = errors.New("illegal state")
 )
+
+// ErrTransactionOperationFailed is used when a transaction operation fails.
+// Internal: This should never be used and is not supported.
+type TransactionOperationFailedError struct {
+	shouldRetry       bool
+	shouldNotRollback bool
+	errorCause        error
+	shouldRaise       ErrorReason
+	errorClass        ErrorClass
+}
+
+func (tfe TransactionOperationFailedError) Error() string {
+	if tfe.errorCause == nil {
+		return "transaction operation failed"
+	}
+	return "transaction operation failed | " + tfe.errorCause.Error()
+}
+
+func (tfe TransactionOperationFailedError) Unwrap() error {
+	return tfe.errorCause
+}
+
+// Retry signals whether a new attempt should be made at rollback.
+func (tfe TransactionOperationFailedError) Retry() bool {
+	return tfe.shouldRetry
+}
+
+// Rollback signals whether the attempt should be auto-rolled back.
+func (tfe TransactionOperationFailedError) Rollback() bool {
+	return !tfe.shouldNotRollback
+}
+
+// ToRaise signals which error type should be raised to the application.
+func (tfe TransactionOperationFailedError) ToRaise() ErrorReason {
+	return tfe.shouldRaise
+}
+
+// ErrorClass is the class of error which caused this error.
+func (tfe TransactionOperationFailedError) ErrorClass() ErrorClass {
+	return tfe.errorClass
+}
