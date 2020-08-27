@@ -12,9 +12,10 @@ import (
 // Transaction represents a single active transaction, it can be used to
 // stage mutations and finally commit them.
 type Transaction struct {
-	expiryTime      time.Time
-	keyValueTimeout time.Duration
-	durabilityLevel DurabilityLevel
+	expiryTime       time.Time
+	keyValueTimeout  time.Duration
+	kvDurableTimeout time.Duration
+	durabilityLevel  DurabilityLevel
 
 	transactionID string
 	attempt       *transactionAttempt

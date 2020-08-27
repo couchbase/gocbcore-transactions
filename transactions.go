@@ -21,6 +21,7 @@ func Init(config *Config) (*Transactions, error) {
 		ExpirationTime:        10000 * time.Millisecond,
 		DurabilityLevel:       DurabilityLevelMajority,
 		KeyValueTimeout:       2500 * time.Millisecond,
+		KvDurableTimeout:      2500 * time.Millisecond,
 		CleanupWindow:         60000 * time.Millisecond,
 		CleanupClientAttempts: true,
 		CleanupLostAttempts:   true,
@@ -35,6 +36,9 @@ func Init(config *Config) (*Transactions, error) {
 	}
 	if config.KeyValueTimeout == 0 {
 		config.KeyValueTimeout = defaultConfig.KeyValueTimeout
+	}
+	if config.KvDurableTimeout == 0 {
+		config.KvDurableTimeout = defaultConfig.KvDurableTimeout
 	}
 	if config.CleanupWindow == 0 {
 		config.CleanupWindow = defaultConfig.CleanupWindow
@@ -62,6 +66,7 @@ func (t *Transactions) BeginTransaction(perConfig *PerTransactionConfig) (*Trans
 	expirationTime := t.config.ExpirationTime
 	durabilityLevel := t.config.DurabilityLevel
 	keyValueTimeout := t.config.KeyValueTimeout
+	kvDurableTimeout := t.config.KvDurableTimeout
 
 	if perConfig != nil {
 		if perConfig.ExpirationTime != 0 {
@@ -73,14 +78,18 @@ func (t *Transactions) BeginTransaction(perConfig *PerTransactionConfig) (*Trans
 		if perConfig.KeyValueTimeout != 0 {
 			keyValueTimeout = perConfig.KeyValueTimeout
 		}
+		if perConfig.KvDurableTimeout != 0 {
+			kvDurableTimeout = perConfig.KvDurableTimeout
+		}
 	}
 
 	return &Transaction{
-		expiryTime:      time.Now().Add(expirationTime),
-		durabilityLevel: durabilityLevel,
-		transactionID:   transactionUUID,
-		keyValueTimeout: keyValueTimeout,
-		hooks:           t.config.Internal.Hooks,
+		expiryTime:       time.Now().Add(expirationTime),
+		durabilityLevel:  durabilityLevel,
+		transactionID:    transactionUUID,
+		keyValueTimeout:  keyValueTimeout,
+		kvDurableTimeout: kvDurableTimeout,
+		hooks:            t.config.Internal.Hooks,
 	}, nil
 }
 
