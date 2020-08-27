@@ -136,10 +136,7 @@ func (t *TransactionsInternal) CreateGetResult(opts CreateGetResultOptions) *Get
 		scopeName:      opts.ScopeName,
 		collectionName: opts.CollectionName,
 		key:            opts.Key,
-		meta: MutableMeta{
-			revID:  "",
-			expiry: 0,
-		},
+
 		Value: nil,
 		Cas:   opts.Cas,
 	}
