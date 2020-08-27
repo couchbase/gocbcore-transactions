@@ -2,26 +2,27 @@ package transactions
 
 import (
 	"time"
-
-	"github.com/couchbase/gocbcore/v9/memd"
 )
 
 // DurabilityLevel specifies the durability level to use for a mutation.
 type DurabilityLevel int
 
 const (
+	// DurabilityLevelUnset indicates to use the default level.
+	DurabilityLevelUnset = DurabilityLevel(0)
+
 	// DurabilityLevelNone indicates that no durability is needed.
-	DurabilityLevelNone = DurabilityLevel(0)
+	DurabilityLevelNone = DurabilityLevel(1)
 
 	// DurabilityLevelMajority indicates the operation must be replicated to the majority.
-	DurabilityLevelMajority = DurabilityLevel(memd.DurabilityLevelMajority)
+	DurabilityLevelMajority = DurabilityLevel(2)
 
 	// DurabilityLevelMajorityAndPersistToActive indicates the operation must be replicated
 	// to the majority and persisted to the active server.
-	DurabilityLevelMajorityAndPersistToActive = DurabilityLevel(memd.DurabilityLevelMajorityAndPersistOnMaster)
+	DurabilityLevelMajorityAndPersistToActive = DurabilityLevel(3)
 
 	// DurabilityLevelPersistToMajority indicates the operation must be persisted to the active server.
-	DurabilityLevelPersistToMajority = DurabilityLevel(memd.DurabilityLevelPersistToMajority)
+	DurabilityLevelPersistToMajority = DurabilityLevel(4)
 )
 
 // Config specifies various tunable options related to transactions.
@@ -59,7 +60,14 @@ type Config struct {
 
 //PerTransactionConfig specifies options which can be overriden on a per transaction basis.
 type PerTransactionConfig struct {
+	// ExpirationTime sets the maximum time that this transaction will
+	// run for, before expiring.
+	ExpirationTime time.Duration
+
 	// DurabilityLevel specifies the durability level that should be used
 	// for all write operations performed by this transaction.
 	DurabilityLevel DurabilityLevel
+
+	// KeyValueTimeout specifies the default timeout used for all KV writes.
+	KeyValueTimeout time.Duration
 }

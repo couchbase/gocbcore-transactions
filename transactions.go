@@ -59,16 +59,27 @@ func (t *Transactions) Config() Config {
 func (t *Transactions) BeginTransaction(perConfig *PerTransactionConfig) (*Transaction, error) {
 	transactionUUID := uuid.New().String()
 
+	expirationTime := t.config.ExpirationTime
 	durabilityLevel := t.config.DurabilityLevel
+	keyValueTimeout := t.config.KeyValueTimeout
+
 	if perConfig != nil {
-		durabilityLevel = perConfig.DurabilityLevel
+		if perConfig.ExpirationTime != 0 {
+			expirationTime = perConfig.ExpirationTime
+		}
+		if perConfig.DurabilityLevel != DurabilityLevelUnset {
+			durabilityLevel = perConfig.DurabilityLevel
+		}
+		if perConfig.KeyValueTimeout != 0 {
+			keyValueTimeout = perConfig.KeyValueTimeout
+		}
 	}
 
 	return &Transaction{
-		expiryTime:      time.Now().Add(t.config.ExpirationTime),
+		expiryTime:      time.Now().Add(expirationTime),
 		durabilityLevel: durabilityLevel,
 		transactionID:   transactionUUID,
-		keyValueTimeout: t.config.KeyValueTimeout,
+		keyValueTimeout: keyValueTimeout,
 		hooks:           t.config.Internal.Hooks,
 	}, nil
 }
@@ -116,9 +127,11 @@ func (t *TransactionsInternal) CreateGetResult(opts CreateGetResultOptions) *Get
 		scopeName:      opts.ScopeName,
 		collectionName: opts.CollectionName,
 		key:            opts.Key,
-		revid:          "",
-		expiry:         0,
-		Value:          nil,
-		Cas:            opts.Cas,
+		meta: MutableMeta{
+			revID:  "",
+			expiry: 0,
+		},
+		Value: nil,
+		Cas:   opts.Cas,
 	}
 }
