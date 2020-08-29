@@ -50,7 +50,7 @@ const (
 	// ErrorReasonTransactionExpired indicates the transaction should be failed because it expired.
 	ErrorReasonTransactionExpired
 
-	// ErrorReasonTransactionExpired indicates the transaction should be failed and the commit was ambiguous.
+	// ErrorReasonTransactionCommitAmbiguous indicates the transaction should be failed and the commit was ambiguous.
 	ErrorReasonTransactionCommitAmbiguous
 
 	// ErrorReasonTransactionFailedPostCommit indicates the transaction should be failed because it failed post commit.
@@ -826,15 +826,15 @@ func (t *transactionAttempt) getFullDoc(opts GetOptions, deadline time.Time,
 	})
 }
 
-func (t *transactionAttempt) getTxnState(opts GetOptions, deadline time.Time, doc *getDoc, cb func(jsonAtrState, error)) {
+func (t *transactionAttempt) getTxnState(opts GetOptions, deadline time.Time, xattr *jsonTxnXattr, cb func(jsonAtrState, error)) {
 	_, err := opts.Agent.LookupIn(gocbcore.LookupInOptions{
 		ScopeName:      opts.ScopeName,
 		CollectionName: opts.CollectionName,
-		Key:            []byte(doc.TxnMeta.ATR.DocID),
+		Key:            []byte(xattr.ATR.DocID),
 		Ops: []gocbcore.SubDocOp{
 			{
 				Op:    memd.SubDocOpGet,
-				Path:  "attempts." + doc.TxnMeta.ID.Attempt + ".st",
+				Path:  "attempts." + xattr.ID.Attempt + ".st",
 				Flags: memd.SubdocFlagXattrPath,
 			},
 		},
@@ -905,7 +905,9 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 					key:            existingMutation.Key,
 					Value:          existingMutation.Staged,
 					Cas:            existingMutation.Cas,
-					deleted:        existingMutation.IsTombstone,
+					meta: MutableItemMeta{
+						Deleted: existingMutation.IsTombstone,
+					},
 				}
 
 				t.lock.Unlock()
@@ -955,11 +957,17 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 						key:            opts.Key,
 						Value:          doc.TxnMeta.Operation.Staged,
 						Cas:            doc.Cas,
+						meta: MutableItemMeta{
+							RevID:   doc.DocMeta.RevID,
+							Expiry:  doc.DocMeta.Expiration,
+							Deleted: false,
+							TxnMeta: doc.TxnMeta,
+						},
 					}, nil)
 					return
 				}
 
-				t.getTxnState(opts, deadline, doc, func(state jsonAtrState, err error) {
+				t.getTxnState(opts, deadline, doc.TxnMeta, func(state jsonAtrState, err error) {
 					if err != nil {
 						ec := t.classifyError(err)
 						if errors.Is(err, ErrAtrNotFound) {
@@ -998,6 +1006,12 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 							key:            opts.Key,
 							Value:          doc.TxnMeta.Operation.Staged,
 							Cas:            doc.Cas,
+							meta: MutableItemMeta{
+								RevID:   doc.DocMeta.RevID,
+								Expiry:  doc.DocMeta.Expiration,
+								Deleted: false,
+								TxnMeta: doc.TxnMeta,
+							},
 						}, nil)
 						return
 					}
@@ -1015,6 +1029,12 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 						key:            opts.Key,
 						Value:          doc.Body,
 						Cas:            doc.Cas,
+						meta: MutableItemMeta{
+							RevID:   doc.DocMeta.RevID,
+							Expiry:  doc.DocMeta.Expiration,
+							Deleted: false,
+							TxnMeta: nil,
+						},
 					}, nil)
 				})
 				return
@@ -1027,8 +1047,12 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 				key:            opts.Key,
 				Value:          doc.Body,
 				Cas:            doc.Cas,
-				revid:          doc.DocMeta.RevID,
-				expiry:         doc.DocMeta.Expiration,
+				meta: MutableItemMeta{
+					RevID:   doc.DocMeta.RevID,
+					Expiry:  doc.DocMeta.Expiration,
+					Deleted: false,
+					TxnMeta: nil,
+				},
 			}, nil)
 		})
 	})
@@ -1416,7 +1440,9 @@ func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) erro
 					key:            stagedInfo.Key,
 					Value:          stagedInfo.Staged,
 					Cas:            stagedInfo.Cas,
-					deleted:        stagedInfo.IsTombstone,
+					meta: MutableItemMeta{
+						Deleted: stagedInfo.IsTombstone,
+					},
 				}, nil)
 			})
 		})
@@ -1429,12 +1455,42 @@ func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) erro
 	return nil
 }
 
+func (t *transactionAttempt) writeWriteConflictPoll(opts GetOptions, xattr *jsonTxnXattr, cb func(error)) {
+	deadline := time.Now().Add(1 * time.Second)
+
+	var onePoll func()
+	onePoll = func() {
+		if !time.Now().Before(deadline) {
+			// If the deadline expired, lets just immediately return.
+			cb(nil)
+			return
+		}
+
+		t.getTxnState(opts, deadline, xattr, func(state jsonAtrState, err error) {
+			if err != nil {
+				cb(err)
+				return
+			}
+
+			if state == jsonAtrStateCommitted || state == jsonAtrStateCompleted ||
+				state == jsonAtrStateAborted || state == jsonAtrStateRolledBack {
+				// If we have progressed enough to continue, let's do that.
+				cb(nil)
+				return
+			}
+
+			time.AfterFunc(100*time.Millisecond, onePoll)
+		})
+	}
+	onePoll()
+}
+
 func (t *transactionAttempt) doReplace(opts ReplaceOptions, cb func(*stagedMutation, error)) {
 	agent := opts.Document.agent
 	scopeName := opts.Document.scopeName
 	collectionName := opts.Document.collectionName
 	key := opts.Document.key
-	deleted := opts.Document.deleted
+	deleted := opts.Document.meta.Deleted
 
 	t.hooks.BeforeStagedReplace(key, func(err error) {
 		if err != nil {
@@ -1467,8 +1523,8 @@ func (t *transactionAttempt) doReplace(opts ReplaceOptions, cb func(*stagedMutat
 			RevID       string
 		}{
 			OriginalCAS: fmt.Sprintf("%d", opts.Document.Cas),
-			ExpiryTime:  opts.Document.expiry,
-			RevID:       opts.Document.revid,
+			ExpiryTime:  opts.Document.meta.Expiry,
+			RevID:       opts.Document.meta.RevID,
 		}
 		txnMeta.Restore = (*struct {
 			OriginalCAS string `json:"CAS,omitempty"`
@@ -1516,6 +1572,59 @@ func (t *transactionAttempt) doReplace(opts ReplaceOptions, cb func(*stagedMutat
 			Deadline:               deadline,
 		}, func(result *gocbcore.MutateInResult, err error) {
 			if err != nil {
+				var sdErr gocbcore.SubDocumentError
+				if errors.As(err, &sdErr) {
+					if errors.Is(sdErr.InnerError, gocbcore.ErrPathExists) {
+						_, err = stagedInfo.Agent.LookupIn(gocbcore.LookupInOptions{
+							ScopeName:      stagedInfo.ScopeName,
+							CollectionName: stagedInfo.CollectionName,
+							Key:            stagedInfo.Key,
+							Ops: []gocbcore.SubDocOp{
+								{
+									Op:    memd.SubDocOpGet,
+									Path:  "txn",
+									Flags: memd.SubdocFlagXattrPath,
+								},
+							},
+							Deadline: deadline,
+							Flags:    memd.SubdocDocFlagAccessDeleted,
+						}, func(result *gocbcore.LookupInResult, err error) {
+							if err != nil {
+								cb(nil, err)
+								return
+							}
+
+							var txnMeta *jsonTxnXattr
+							if result.Ops[0].Err == nil {
+								var txnMetaVal jsonTxnXattr
+								// TODO(brett19): Don't ignore the error here
+								json.Unmarshal(result.Ops[0].Value, &txnMetaVal)
+								txnMeta = &txnMetaVal
+							}
+
+							if txnMeta == nil {
+								// There is no longer any txn meta-data, this means the write-write conflict
+								// is resolved and we can throw a write-write conflict to retry immediately.
+								cb(nil, t.createOperationFailedError(true, false, sdErr.InnerError, ErrorReasonTransactionFailed, ErrorClassFailWriteWriteConflict))
+								return
+							}
+
+							t.writeWriteConflictPoll(GetOptions{
+								Agent:          opts.Document.agent,
+								ScopeName:      opts.Document.scopeName,
+								CollectionName: opts.Document.collectionName,
+								Key:            opts.Document.key,
+							}, txnMeta, func(err error) {
+								// We have either resolved the write-write conflict, or we have elapsed our
+								// maximal waiting period, let's send the error to retry.
+								cb(nil, t.createOperationFailedError(true, false, sdErr.InnerError, ErrorReasonTransactionFailed, ErrorClassFailWriteWriteConflict))
+							})
+							return
+						})
+						return
+					}
+				}
+
 				cb(nil, err)
 				return
 			}
@@ -1640,8 +1749,8 @@ func (t *transactionAttempt) remove(doc *GetResult, cb StoreCallback) {
 			RevID       string
 		}{
 			OriginalCAS: fmt.Sprintf("%d", doc.Cas),
-			ExpiryTime:  doc.expiry,
-			RevID:       doc.revid,
+			ExpiryTime:  doc.meta.Expiry,
+			RevID:       doc.meta.RevID,
 		}
 		txnMeta.Restore = (*struct {
 			OriginalCAS string `json:"CAS,omitempty"`
@@ -1660,7 +1769,7 @@ func (t *transactionAttempt) remove(doc *GetResult, cb StoreCallback) {
 		}
 
 		flags := memd.SubdocDocFlagNone
-		if doc.deleted {
+		if doc.meta.Deleted {
 			flags = memd.SubdocDocFlagAccessDeleted
 		}
 

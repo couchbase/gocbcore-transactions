@@ -75,15 +75,22 @@ type GetOptions struct {
 	Key            []byte
 }
 
+// MutableItemMeta represents all the meta-data for a fetched
+// item.  Most of this is used for later mutation operations.
+type MutableItemMeta struct {
+	RevID   string        `json:"revid,omitempty"`
+	Expiry  uint          `json:"expiry,omitempty"`
+	Deleted bool          `json:"deleted,omitempty"`
+	TxnMeta *jsonTxnXattr `json:"txn,omitempty"`
+}
+
 // GetResult represents the result of a Get or GetOptional operation.
 type GetResult struct {
 	agent          *gocbcore.Agent
 	scopeName      string
 	collectionName string
 	key            []byte
-	revid          string
-	expiry         uint
-	deleted        bool
+	meta           MutableItemMeta
 
 	Value []byte
 	Cas   gocbcore.Cas

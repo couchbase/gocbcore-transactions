@@ -126,6 +126,7 @@ type CreateGetResultOptions struct {
 	CollectionName string
 	Key            []byte
 	Cas            gocbcore.Cas
+	Meta           MutableItemMeta
 }
 
 // CreateGetResult creates a false GetResult which can be used with Replace/Remove operations
@@ -136,6 +137,7 @@ func (t *TransactionsInternal) CreateGetResult(opts CreateGetResultOptions) *Get
 		scopeName:      opts.ScopeName,
 		collectionName: opts.CollectionName,
 		key:            opts.Key,
+		meta:           opts.Meta,
 
 		Value: nil,
 		Cas:   opts.Cas,
