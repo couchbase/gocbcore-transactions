@@ -905,7 +905,7 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 					key:            existingMutation.Key,
 					Value:          existingMutation.Staged,
 					Cas:            existingMutation.Cas,
-					meta: MutableItemMeta{
+					Meta: MutableItemMeta{
 						Deleted: existingMutation.IsTombstone,
 					},
 				}
@@ -957,7 +957,7 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 						key:            opts.Key,
 						Value:          doc.TxnMeta.Operation.Staged,
 						Cas:            doc.Cas,
-						meta: MutableItemMeta{
+						Meta: MutableItemMeta{
 							RevID:   doc.DocMeta.RevID,
 							Expiry:  doc.DocMeta.Expiration,
 							Deleted: false,
@@ -1006,7 +1006,7 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 							key:            opts.Key,
 							Value:          doc.TxnMeta.Operation.Staged,
 							Cas:            doc.Cas,
-							meta: MutableItemMeta{
+							Meta: MutableItemMeta{
 								RevID:   doc.DocMeta.RevID,
 								Expiry:  doc.DocMeta.Expiration,
 								Deleted: false,
@@ -1029,7 +1029,7 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 						key:            opts.Key,
 						Value:          doc.Body,
 						Cas:            doc.Cas,
-						meta: MutableItemMeta{
+						Meta: MutableItemMeta{
 							RevID:   doc.DocMeta.RevID,
 							Expiry:  doc.DocMeta.Expiration,
 							Deleted: false,
@@ -1047,7 +1047,7 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 				key:            opts.Key,
 				Value:          doc.Body,
 				Cas:            doc.Cas,
-				meta: MutableItemMeta{
+				Meta: MutableItemMeta{
 					RevID:   doc.DocMeta.RevID,
 					Expiry:  doc.DocMeta.Expiration,
 					Deleted: false,
@@ -1440,7 +1440,7 @@ func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) erro
 					key:            stagedInfo.Key,
 					Value:          stagedInfo.Staged,
 					Cas:            stagedInfo.Cas,
-					meta: MutableItemMeta{
+					Meta: MutableItemMeta{
 						Deleted: stagedInfo.IsTombstone,
 					},
 				}, nil)
@@ -1490,7 +1490,7 @@ func (t *transactionAttempt) doReplace(opts ReplaceOptions, cb func(*stagedMutat
 	scopeName := opts.Document.scopeName
 	collectionName := opts.Document.collectionName
 	key := opts.Document.key
-	deleted := opts.Document.meta.Deleted
+	deleted := opts.Document.Meta.Deleted
 
 	t.hooks.BeforeStagedReplace(key, func(err error) {
 		if err != nil {
@@ -1523,8 +1523,8 @@ func (t *transactionAttempt) doReplace(opts ReplaceOptions, cb func(*stagedMutat
 			RevID       string
 		}{
 			OriginalCAS: fmt.Sprintf("%d", opts.Document.Cas),
-			ExpiryTime:  opts.Document.meta.Expiry,
-			RevID:       opts.Document.meta.RevID,
+			ExpiryTime:  opts.Document.Meta.Expiry,
+			RevID:       opts.Document.Meta.RevID,
 		}
 		txnMeta.Restore = (*struct {
 			OriginalCAS string `json:"CAS,omitempty"`
@@ -1749,8 +1749,8 @@ func (t *transactionAttempt) remove(doc *GetResult, cb StoreCallback) {
 			RevID       string
 		}{
 			OriginalCAS: fmt.Sprintf("%d", doc.Cas),
-			ExpiryTime:  doc.meta.Expiry,
-			RevID:       doc.meta.RevID,
+			ExpiryTime:  doc.Meta.Expiry,
+			RevID:       doc.Meta.RevID,
 		}
 		txnMeta.Restore = (*struct {
 			OriginalCAS string `json:"CAS,omitempty"`
@@ -1769,7 +1769,7 @@ func (t *transactionAttempt) remove(doc *GetResult, cb StoreCallback) {
 		}
 
 		flags := memd.SubdocDocFlagNone
-		if doc.meta.Deleted {
+		if doc.Meta.Deleted {
 			flags = memd.SubdocDocFlagAccessDeleted
 		}
 

@@ -90,8 +90,8 @@ type GetResult struct {
 	scopeName      string
 	collectionName string
 	key            []byte
-	meta           MutableItemMeta
 
+	Meta  MutableItemMeta
 	Value []byte
 	Cas   gocbcore.Cas
 }

@@ -137,7 +137,7 @@ func (t *TransactionsInternal) CreateGetResult(opts CreateGetResultOptions) *Get
 		scopeName:      opts.ScopeName,
 		collectionName: opts.CollectionName,
 		key:            opts.Key,
-		meta:           opts.Meta,
+		Meta:           opts.Meta,
 
 		Value: nil,
 		Cas:   opts.Cas,
