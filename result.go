@@ -13,9 +13,13 @@ type MutationToken struct {
 // Attempt represents a singular attempt at executing a transaction.  A
 // transaction may require multiple attempts before being successful.
 type Attempt struct {
-	State         AttemptState
-	ID            string
-	MutationState []MutationToken
+	State             AttemptState
+	ID                string
+	MutationState     []MutationToken
+	AtrID             []byte
+	AtrBucketName     string
+	AtrScopeName      string
+	AtrCollectionName string
 
 	// Internal: This should never be used and is not supported.
 	Internal struct {

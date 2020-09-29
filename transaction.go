@@ -29,10 +29,18 @@ func (t *Transaction) ID() string {
 
 // Attempt returns meta-data about the current attempt to complete the transaction.
 func (t *Transaction) Attempt() Attempt {
+	var bucketName string
+	if t.attempt.atrAgent != nil {
+		bucketName = t.attempt.atrAgent.BucketName()
+	}
 	return Attempt{
-		State:         t.attempt.state,
-		ID:            t.attempt.id,
-		MutationState: t.attempt.finalMutationTokens,
+		State:             t.attempt.state,
+		ID:                t.attempt.id,
+		MutationState:     t.attempt.finalMutationTokens,
+		AtrID:             t.attempt.atrKey,
+		AtrBucketName:     bucketName,
+		AtrScopeName:      t.attempt.atrScopeName,
+		AtrCollectionName: t.attempt.atrCollectionName,
 
 		Internal: struct {
 			Expired bool
