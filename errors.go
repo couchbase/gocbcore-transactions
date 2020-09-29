@@ -44,6 +44,9 @@ var (
 
 	// ErrTransactionAbortedExternally indicates the transaction was aborted externally.
 	ErrTransactionAbortedExternally = errors.New("transaction aborted externally")
+
+	// ErrPreviousOperationFailed indicates a previous operation in the transaction failed.
+	ErrPreviousOperationFailed = errors.New("previous operation failed")
 )
 
 // ErrTransactionOperationFailed is used when a transaction operation fails.
