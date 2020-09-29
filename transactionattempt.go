@@ -1947,7 +1947,13 @@ func (t *transactionAttempt) unstageRepMutation(mutation stagedMutation, casZero
 					})
 					t.lock.Unlock()
 
-					handler(nil)
+					t.hooks.AfterDocCommitted(mutation.Key, func(err error) {
+						if err != nil {
+							handler(err)
+							return
+						}
+						handler(nil)
+					})
 				})
 			})
 			if err != nil {
@@ -2041,7 +2047,13 @@ func (t *transactionAttempt) unstageInsMutation(mutation stagedMutation, ambigui
 					})
 					t.lock.Unlock()
 
-					handler(nil)
+					t.hooks.AfterDocCommitted(mutation.Key, func(err error) {
+						if err != nil {
+							handler(err)
+							return
+						}
+						handler(nil)
+					})
 				})
 			})
 			if err != nil {
