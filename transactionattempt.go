@@ -888,13 +888,7 @@ func (t *transactionAttempt) getTxnState(opts GetOptions, deadline time.Time, xa
 		var txnState jsonAtrState
 		json.Unmarshal(result.Ops[0].Value, &txnState)
 
-		t.hooks.AfterGetComplete(opts.Key, func(err error) {
-			if err != nil {
-				cb("", err)
-				return
-			}
-			cb(txnState, nil)
-		})
+		cb(txnState, nil)
 	})
 	if err != nil {
 		cb("", err)
@@ -903,6 +897,22 @@ func (t *transactionAttempt) getTxnState(opts GetOptions, deadline time.Time, xa
 }
 
 func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
+	return t.get(opts, func(result *GetResult, err error) {
+		if err != nil {
+			cb(nil, err)
+			return
+		}
+		t.hooks.AfterGetComplete(opts.Key, func(err error) {
+			if err != nil {
+				cb(nil, err)
+				return
+			}
+			cb(result, nil)
+		})
+	})
+}
+
+func (t *transactionAttempt) get(opts GetOptions, cb GetCallback) error {
 	if err := t.checkDone(); err != nil {
 		ec := t.classifyError(err)
 		return t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec)
