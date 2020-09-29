@@ -1998,7 +1998,7 @@ func (t *transactionAttempt) unstageInsMutation(mutation stagedMutation, ambigui
 
 	t.hooks.BeforeDocCommitted(mutation.Key, func(err error) {
 		if err != nil {
-			cb(err)
+			handler(err)
 			return
 		}
 
