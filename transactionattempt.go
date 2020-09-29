@@ -143,7 +143,7 @@ func (t *transactionAttempt) GetMutations() []StagedMutation {
 }
 
 func (t *transactionAttempt) createAndStashOperationFailedError(shouldRetry, shouldNotRollback bool, cause error,
-	raise ErrorReason, class ErrorClass) error {
+	raise ErrorReason, class ErrorClass, skipStash bool) error {
 	err := &TransactionOperationFailedError{
 		shouldRetry:       shouldRetry,
 		shouldNotRollback: shouldNotRollback,
@@ -152,9 +152,11 @@ func (t *transactionAttempt) createAndStashOperationFailedError(shouldRetry, sho
 		errorClass:        class,
 	}
 
-	t.lock.Lock()
-	t.previousErrors = append(t.previousErrors, err)
-	t.lock.Unlock()
+	if !skipStash {
+		t.lock.Lock()
+		t.previousErrors = append(t.previousErrors, err)
+		t.lock.Unlock()
+	}
 
 	return err
 }
@@ -222,8 +224,7 @@ func (t *transactionAttempt) confirmATRPending(
 		}
 		ec := t.classifyError(err)
 		if t.expiryOvertimeMode {
-			cb(t.createAndStashOperationFailedError(false, true, ErrAttemptExpired,
-				ErrorReasonTransactionExpired, ErrorClassFailExpiry))
+			cb(t.createAndStashOperationFailedError(false, true, ErrAttemptExpired, ErrorReasonTransactionExpired, ErrorClassFailExpiry, false))
 			return
 		}
 
@@ -231,18 +232,18 @@ func (t *transactionAttempt) confirmATRPending(
 		switch ec {
 		case ErrorClassFailExpiry:
 			t.expiryOvertimeMode = true
-			failErr = t.createAndStashOperationFailedError(false, false, ErrAttemptExpired, ErrorReasonTransactionExpired, ec)
+			failErr = t.createAndStashOperationFailedError(false, false, ErrAttemptExpired, ErrorReasonTransactionExpired, ec, false)
 		case ErrorClassFailATRFull:
-			failErr = t.createAndStashOperationFailedError(false, false, ErrAtrFull, ErrorReasonTransactionFailed, ec)
+			failErr = t.createAndStashOperationFailedError(false, false, ErrAtrFull, ErrorReasonTransactionFailed, ec, false)
 		case ErrorClassFailAmbiguous:
 			time.AfterFunc(3*time.Millisecond, func() {
 				t.confirmATRPending(agent, scopeName, collectionName, firstKey, cb)
 			})
 			return
 		case ErrorClassFailHard:
-			failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec)
+			failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, false)
 		case ErrorClassFailTransient:
-			failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec)
+			failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
 		case ErrorClassFailPathAlreadyExists:
 			t.lock.Lock()
 			t.state = AttemptStatePending
@@ -250,7 +251,7 @@ func (t *transactionAttempt) confirmATRPending(
 			cb(nil)
 			return
 		default:
-			failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec)
+			failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, false)
 		}
 
 		cb(failErr)
@@ -385,9 +386,9 @@ func (t *transactionAttempt) setATRCommittedAmbiguityResolution(cb func(error)) 
 			switch ec {
 			case ErrorClassFailExpiry:
 				t.expiryOvertimeMode = true
-				failErr = t.createAndStashOperationFailedError(false, true, ErrAttemptExpired, ErrorReasonTransactionCommitAmbiguous, ec)
+				failErr = t.createAndStashOperationFailedError(false, true, ErrAttemptExpired, ErrorReasonTransactionCommitAmbiguous, ec, false)
 			case ErrorClassFailHard:
-				failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec)
+				failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec, false)
 			case ErrorClassFailTransient:
 				time.AfterFunc(3*time.Millisecond, func() {
 					t.setATRCommittedAmbiguityResolution(cb)
@@ -399,7 +400,7 @@ func (t *transactionAttempt) setATRCommittedAmbiguityResolution(cb func(error)) 
 				})
 				return
 			default:
-				failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec)
+				failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec, false)
 			}
 
 			t.lock.Lock()
@@ -423,17 +424,17 @@ func (t *transactionAttempt) setATRCommittedAmbiguityResolution(cb func(error)) 
 			t.lock.Lock()
 			t.txnAtrSection.Done()
 			t.lock.Unlock()
-			cb(t.createAndStashOperationFailedError(false, true, nil, ErrorReasonTransactionFailed, ErrorClassFailOther))
+			cb(t.createAndStashOperationFailedError(false, true, nil, ErrorReasonTransactionFailed, ErrorClassFailOther, false))
 		case jsonAtrStateRolledBack:
 			t.lock.Lock()
 			t.txnAtrSection.Done()
 			t.lock.Unlock()
-			cb(t.createAndStashOperationFailedError(false, true, nil, ErrorReasonTransactionFailed, ErrorClassFailOther))
+			cb(t.createAndStashOperationFailedError(false, true, nil, ErrorReasonTransactionFailed, ErrorClassFailOther, false))
 		default:
 			t.lock.Lock()
 			t.txnAtrSection.Done()
 			t.lock.Unlock()
-			cb(t.createAndStashOperationFailedError(false, true, ErrIllegalState, ErrorReasonTransactionFailed, ErrorClassFailOther))
+			cb(t.createAndStashOperationFailedError(false, true, ErrIllegalState, ErrorReasonTransactionFailed, ErrorClassFailOther, false))
 		}
 	}
 
@@ -502,16 +503,16 @@ func (t *transactionAttempt) setATRCommitted(
 		ec := t.classifyError(err)
 		switch ec {
 		case ErrorClassFailExpiry:
-			failErr = t.createAndStashOperationFailedError(false, false, ErrAttemptExpired, ErrorReasonTransactionExpired, ec)
+			failErr = t.createAndStashOperationFailedError(false, false, ErrAttemptExpired, ErrorReasonTransactionExpired, ec, true)
 		case ErrorClassFailAmbiguous:
 			t.setATRCommittedAmbiguityResolution(cb)
 			return
 		case ErrorClassFailHard:
-			failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec)
+			failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec, true)
 		case ErrorClassFailTransient:
-			failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec)
+			failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, true)
 		default:
-			failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec)
+			failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, true)
 		}
 
 		t.lock.Lock()
@@ -532,7 +533,7 @@ func (t *transactionAttempt) setATRCommitted(
 			t.lock.Unlock()
 
 			t.txnAtrSection.Wait(func() {
-				cb(t.createAndStashOperationFailedError(false, true, nil, ErrorReasonTransactionFailed, ErrorClassFailOther))
+				cb(t.createAndStashOperationFailedError(false, true, nil, ErrorReasonTransactionFailed, ErrorClassFailOther, true))
 			})
 
 			return
@@ -649,7 +650,7 @@ func (t *transactionAttempt) setATRCompleted(
 		ec := t.classifyError(err)
 		switch ec {
 		case ErrorClassFailHard:
-			cb(t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec))
+			cb(t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec, true))
 			return
 		}
 
@@ -915,13 +916,13 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 func (t *transactionAttempt) get(opts GetOptions, cb GetCallback) error {
 	if err := t.checkDone(); err != nil {
 		ec := t.classifyError(err)
-		return t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec)
+		return t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec, false)
 	}
 
 	t.checkExpired(hookGet, opts.Key, func(err error) {
 		if err != nil {
 			t.expiryOvertimeMode = true
-			cb(nil, t.createAndStashOperationFailedError(false, false, ErrAttemptExpired, ErrorReasonTransactionExpired, ErrorClassFailExpiry))
+			cb(nil, t.createAndStashOperationFailedError(false, false, ErrAttemptExpired, ErrorReasonTransactionExpired, ErrorClassFailExpiry, false))
 			return
 		}
 
@@ -948,8 +949,7 @@ func (t *transactionAttempt) get(opts GetOptions, cb GetCallback) error {
 			} else if existingMutation.OpType == StagedMutationRemove {
 				t.lock.Unlock()
 
-				cb(nil, t.createAndStashOperationFailedError(false, false, gocbcore.ErrDocumentNotFound,
-					ErrorReasonTransactionFailed, ErrorClassFailDocNotFound))
+				cb(nil, t.createAndStashOperationFailedError(false, false, gocbcore.ErrDocumentNotFound, ErrorReasonTransactionFailed, ErrorClassFailDocNotFound, false))
 				return
 			}
 		}
@@ -967,13 +967,17 @@ func (t *transactionAttempt) get(opts GetOptions, cb GetCallback) error {
 				ec := t.classifyError(err)
 				switch ec {
 				case ErrorClassFailDocNotFound:
-					failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec)
+					failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed,
+						ec, true)
 				case ErrorClassFailHard:
-					failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec)
+					failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed,
+						ec, true)
 				case ErrorClassFailTransient:
-					failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec)
+					failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed,
+						ec, true)
 				default:
-					failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec)
+					failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed,
+						ec, true)
 				}
 
 				cb(nil, failErr)
@@ -1003,8 +1007,7 @@ func (t *transactionAttempt) get(opts GetOptions, cb GetCallback) error {
 					if err != nil {
 						ec := t.classifyError(err)
 						if errors.Is(err, ErrAtrNotFound) {
-							cb(nil, t.createAndStashOperationFailedError(false, false, err,
-								ErrorReasonTransactionFailed, ec))
+							cb(nil, t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, false))
 							return
 						} else if errors.Is(err, ErrAtrEntryNotFound) {
 							// TODO
@@ -1012,11 +1015,11 @@ func (t *transactionAttempt) get(opts GetOptions, cb GetCallback) error {
 						var failErr error
 						switch ec {
 						case ErrorClassFailHard:
-							failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec)
+							failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec, false)
 						case ErrorClassFailTransient:
-							failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec)
+							failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
 						default:
-							failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec)
+							failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, false)
 						}
 						cb(nil, failErr)
 						return
@@ -1025,8 +1028,7 @@ func (t *transactionAttempt) get(opts GetOptions, cb GetCallback) error {
 					if state == jsonAtrStateCommitted || state == jsonAtrStateCompleted {
 						if doc.TxnMeta.Operation.Type == jsonMutationRemove {
 
-							cb(nil, t.createAndStashOperationFailedError(false, false,
-								gocbcore.ErrDocumentNotFound, ErrorReasonTransactionFailed, ErrorClassFailDocNotFound))
+							cb(nil, t.createAndStashOperationFailedError(false, false, gocbcore.ErrDocumentNotFound, ErrorReasonTransactionFailed, ErrorClassFailDocNotFound, false))
 							return
 						}
 
@@ -1049,8 +1051,7 @@ func (t *transactionAttempt) get(opts GetOptions, cb GetCallback) error {
 					}
 
 					if doc.TxnMeta.Operation.Type == jsonMutationInsert {
-						cb(nil, t.createAndStashOperationFailedError(false, false, gocbcore.ErrDocumentNotFound,
-							ErrorReasonTransactionFailed, ErrorClassFailDocNotFound))
+						cb(nil, t.createAndStashOperationFailedError(false, false, gocbcore.ErrDocumentNotFound, ErrorReasonTransactionFailed, ErrorClassFailDocNotFound, false))
 						return
 					}
 
@@ -1202,21 +1203,18 @@ func (t *transactionAttempt) insert(opts InsertOptions, cas gocbcore.Cas, cb Sto
 			var failErr error
 			ec := t.classifyError(err)
 			if errors.Is(err, gocbcore.ErrFeatureNotAvailable) {
-				cb(nil, t.createAndStashOperationFailedError(false, false, err,
-					ErrorReasonTransactionFailed, ec))
+				cb(nil, t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, false))
 				return
 			}
 			if t.expiryOvertimeMode {
-				cb(nil, t.createAndStashOperationFailedError(false, true, ErrAttemptExpired,
-					ErrorReasonTransactionExpired, ErrorClassFailExpiry))
+				cb(nil, t.createAndStashOperationFailedError(false, true, ErrAttemptExpired, ErrorReasonTransactionExpired, ErrorClassFailExpiry, false))
 				return
 			}
 
 			switch ec {
 			case ErrorClassFailExpiry:
 				t.expiryOvertimeMode = true
-				failErr = t.createAndStashOperationFailedError(false, false, ErrAttemptExpired,
-					ErrorReasonTransactionExpired, ec)
+				failErr = t.createAndStashOperationFailedError(false, false, ErrAttemptExpired, ErrorReasonTransactionExpired, ec, false)
 			case ErrorClassFailAmbiguous:
 				time.AfterFunc(3*time.Millisecond, func() {
 					err := t.insert(opts, 0, cb)
@@ -1226,9 +1224,9 @@ func (t *transactionAttempt) insert(opts InsertOptions, cas gocbcore.Cas, cb Sto
 				})
 				return
 			case ErrorClassFailTransient:
-				failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec)
+				failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
 			case ErrorClassFailHard:
-				failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec)
+				failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec, false)
 			case ErrorClassFailDocAlreadyExists:
 				fallthrough
 			case ErrorClassFailCasMismatch:
@@ -1238,13 +1236,13 @@ func (t *transactionAttempt) insert(opts InsertOptions, cas gocbcore.Cas, cb Sto
 						ec := t.classifyError(err)
 						switch ec {
 						case ErrorClassFailDocNotFound:
-							failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec)
+							failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
 						case ErrorClassFailPathNotFound:
-							failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec)
+							failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
 						case ErrorClassFailTransient:
-							failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec)
+							failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
 						default:
-							failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec)
+							failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, false)
 						}
 
 						cb(nil, failErr)
@@ -1259,7 +1257,7 @@ func (t *transactionAttempt) insert(opts InsertOptions, cas gocbcore.Cas, cb Sto
 
 				return
 			default:
-				failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec)
+				failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, false)
 			}
 
 			cb(nil, failErr)
@@ -1271,7 +1269,7 @@ func (t *transactionAttempt) insert(opts InsertOptions, cas gocbcore.Cas, cb Sto
 
 	if err := t.checkDone(); err != nil {
 		ec := t.classifyError(err)
-		return t.createAndStashOperationFailedError(false, false, ErrAttemptExpired, ErrorReasonTransactionExpired, ec)
+		return t.createAndStashOperationFailedError(false, false, ErrAttemptExpired, ErrorReasonTransactionExpired, ec, false)
 	}
 
 	if err := t.checkError(); err != nil {
@@ -1403,7 +1401,7 @@ func (t *transactionAttempt) insert(opts InsertOptions, cas gocbcore.Cas, cb Sto
 func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) error {
 	if err := t.checkDone(); err != nil {
 		ec := t.classifyError(err)
-		return t.createAndStashOperationFailedError(false, false, ErrAttemptExpired, ErrorReasonTransactionExpired, ec)
+		return t.createAndStashOperationFailedError(false, false, ErrAttemptExpired, ErrorReasonTransactionExpired, ec, false)
 	}
 
 	if err := t.checkError(); err != nil {
@@ -1413,8 +1411,7 @@ func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) erro
 	t.checkExpired(hookReplace, opts.Document.key, func(err error) {
 		if err != nil {
 			t.expiryOvertimeMode = true
-			cb(nil, t.createAndStashOperationFailedError(false, false, ErrAttemptExpired,
-				ErrorReasonTransactionExpired, ErrorClassFailExpiry))
+			cb(nil, t.createAndStashOperationFailedError(false, false, ErrAttemptExpired, ErrorReasonTransactionExpired, ErrorClassFailExpiry, false))
 			return
 		}
 
@@ -1436,21 +1433,21 @@ func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) erro
 					switch ec {
 					case ErrorClassFailExpiry:
 						t.expiryOvertimeMode = true
-						failErr = t.createAndStashOperationFailedError(false, false, ErrAttemptExpired, ErrorReasonTransactionExpired, ec)
+						failErr = t.createAndStashOperationFailedError(false, false, ErrAttemptExpired, ErrorReasonTransactionExpired, ec, false)
 					case ErrorClassFailDocNotFound:
-						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec)
+						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
 					case ErrorClassFailDocAlreadyExists:
-						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ErrorClassFailCasMismatch)
+						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ErrorClassFailCasMismatch, false)
 					case ErrorClassFailCasMismatch:
-						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec)
+						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
 					case ErrorClassFailTransient:
-						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec)
+						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
 					case ErrorClassFailAmbiguous:
-						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec)
+						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
 					case ErrorClassFailHard:
-						failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec)
+						failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec, false)
 					default:
-						failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec)
+						failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, false)
 					}
 
 					cb(nil, failErr)
@@ -1645,7 +1642,7 @@ func (t *transactionAttempt) doReplace(opts ReplaceOptions, cb func(*stagedMutat
 							if txnMeta == nil {
 								// There is no longer any txn meta-data, this means the write-write conflict
 								// is resolved and we can throw a write-write conflict to retry immediately.
-								cb(nil, t.createAndStashOperationFailedError(true, false, sdErr.InnerError, ErrorReasonTransactionFailed, ErrorClassFailWriteWriteConflict))
+								cb(nil, t.createAndStashOperationFailedError(true, false, sdErr.InnerError, ErrorReasonTransactionFailed, ErrorClassFailWriteWriteConflict, false))
 								return
 							}
 
@@ -1657,7 +1654,7 @@ func (t *transactionAttempt) doReplace(opts ReplaceOptions, cb func(*stagedMutat
 							}, txnMeta, func(err error) {
 								// We have either resolved the write-write conflict, or we have elapsed our
 								// maximal waiting period, let's send the error to retry.
-								cb(nil, t.createAndStashOperationFailedError(true, false, sdErr.InnerError, ErrorReasonTransactionFailed, ErrorClassFailWriteWriteConflict))
+								cb(nil, t.createAndStashOperationFailedError(true, false, sdErr.InnerError, ErrorReasonTransactionFailed, ErrorClassFailWriteWriteConflict, false))
 							})
 							return
 						})
@@ -1685,7 +1682,7 @@ func (t *transactionAttempt) doReplace(opts ReplaceOptions, cb func(*stagedMutat
 func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error {
 	if err := t.checkDone(); err != nil {
 		ec := t.classifyError(err)
-		return t.createAndStashOperationFailedError(false, false, ErrAttemptExpired, ErrorReasonTransactionExpired, ec)
+		return t.createAndStashOperationFailedError(false, false, ErrAttemptExpired, ErrorReasonTransactionExpired, ec, false)
 	}
 
 	if err := t.checkError(); err != nil {
@@ -1695,8 +1692,7 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 	t.checkExpired(hookRemove, opts.Document.key, func(err error) {
 		if err != nil {
 			t.expiryOvertimeMode = true
-			cb(nil, t.createAndStashOperationFailedError(false, false, ErrAttemptExpired,
-				ErrorReasonTransactionExpired, ErrorClassFailExpiry))
+			cb(nil, t.createAndStashOperationFailedError(false, false, ErrAttemptExpired, ErrorReasonTransactionExpired, ErrorClassFailExpiry, false))
 			return
 		}
 
@@ -1711,7 +1707,7 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 			opts.Document.key)
 		if existingMutation != nil && existingMutation.OpType == StagedMutationInsert {
 			t.lock.Unlock()
-			cb(nil, t.createAndStashOperationFailedError(false, false, ErrIllegalState, ErrorReasonTransactionFailed, ErrorClassFailOther))
+			cb(nil, t.createAndStashOperationFailedError(false, false, ErrIllegalState, ErrorReasonTransactionFailed, ErrorClassFailOther, false))
 			return
 		}
 		t.lock.Unlock()
@@ -1729,21 +1725,21 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 					switch ec {
 					case ErrorClassFailExpiry:
 						t.expiryOvertimeMode = true
-						failErr = t.createAndStashOperationFailedError(false, false, ErrAttemptExpired, ErrorReasonTransactionExpired, ec)
+						failErr = t.createAndStashOperationFailedError(false, false, ErrAttemptExpired, ErrorReasonTransactionExpired, ec, false)
 					case ErrorClassFailDocNotFound:
-						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec)
+						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
 					case ErrorClassFailCasMismatch:
-						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec)
+						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
 					case ErrorClassFailDocAlreadyExists:
-						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ErrorClassFailCasMismatch)
+						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ErrorClassFailCasMismatch, false)
 					case ErrorClassFailTransient:
-						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec)
+						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
 					case ErrorClassFailAmbiguous:
-						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec)
+						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
 					case ErrorClassFailHard:
-						failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec)
+						failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec, false)
 					default:
-						failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec)
+						failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, false)
 					}
 
 					cb(nil, failErr)
@@ -1883,7 +1879,7 @@ func (t *transactionAttempt) unstageRepMutation(mutation stagedMutation, casZero
 		ec := t.classifyError(err)
 		if t.expiryOvertimeMode {
 			cb(t.createAndStashOperationFailedError(false, true, ErrAttemptExpired,
-				ErrorReasonTransactionFailedPostCommit, ErrorClassFailExpiry))
+				ErrorReasonTransactionFailedPostCommit, ErrorClassFailExpiry, true))
 			return
 		}
 
@@ -1903,14 +1899,17 @@ func (t *transactionAttempt) unstageRepMutation(mutation stagedMutation, casZero
 				})
 				return
 			}
-			failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailedPostCommit, ec)
+			failErr = t.createAndStashOperationFailedError(false, true, err,
+				ErrorReasonTransactionFailedPostCommit, ec, true)
 		case ErrorClassFailDocNotFound:
 			t.unstageInsMutation(mutation, ambiguityResolution, cb)
 			return
 		case ErrorClassFailHard:
-			failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec)
+			failErr = t.createAndStashOperationFailedError(false, true, err,
+				ErrorReasonTransactionFailed, ec, true)
 		default:
-			failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailedPostCommit, ec)
+			failErr = t.createAndStashOperationFailedError(false, true, err,
+				ErrorReasonTransactionFailedPostCommit, ec, true)
 		}
 
 		cb(failErr)
@@ -2017,8 +2016,8 @@ func (t *transactionAttempt) unstageInsMutation(mutation stagedMutation, ambigui
 
 		ec := t.classifyError(err)
 		if t.expiryOvertimeMode {
-			cb(t.createAndStashOperationFailedError(false, true, ErrAttemptExpired,
-				ErrorReasonTransactionFailedPostCommit, ErrorClassFailExpiry))
+			cb(t.createAndStashOperationFailedError(false, true, ErrAttemptExpired, ErrorReasonTransactionFailedPostCommit,
+				ErrorClassFailExpiry, true))
 			return
 		}
 
@@ -2036,11 +2035,14 @@ func (t *transactionAttempt) unstageInsMutation(mutation stagedMutation, ambigui
 				})
 				return
 			}
-			failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailedPostCommit, ec)
+			failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailedPostCommit,
+				ec, true)
 		case ErrorClassFailHard:
-			failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec)
+			failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed,
+				ec, true)
 		default:
-			failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailedPostCommit, ec)
+			failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailedPostCommit,
+				ec, true)
 		}
 
 		cb(failErr)
@@ -2123,7 +2125,7 @@ func (t *transactionAttempt) unstageRemMutation(mutation stagedMutation, cb func
 		ec := t.classifyError(err)
 		if t.expiryOvertimeMode {
 			cb(t.createAndStashOperationFailedError(false, true, ErrAttemptExpired,
-				ErrorReasonTransactionFailedPostCommit, ErrorClassFailExpiry))
+				ErrorReasonTransactionFailedPostCommit, ErrorClassFailExpiry, true))
 			return
 		}
 
@@ -2135,11 +2137,14 @@ func (t *transactionAttempt) unstageRemMutation(mutation stagedMutation, cb func
 			})
 			return
 		case ErrorClassFailDocNotFound:
-			failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailedPostCommit, ec)
+			failErr = t.createAndStashOperationFailedError(false, true, err,
+				ErrorReasonTransactionFailedPostCommit, ec, true)
 		case ErrorClassFailHard:
-			failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec)
+			failErr = t.createAndStashOperationFailedError(false, true, err,
+				ErrorReasonTransactionFailed, ec, true)
 		default:
-			failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailedPostCommit, ec)
+			failErr = t.createAndStashOperationFailedError(false, true, err,
+				ErrorReasonTransactionFailedPostCommit, ec, true)
 		}
 
 		cb(failErr)
@@ -2311,7 +2316,7 @@ func (t *transactionAttempt) abort(
 
 			if t.expiryOvertimeMode {
 				cb(t.createAndStashOperationFailedError(false, true, ErrAttemptExpired,
-					ErrorReasonTransactionExpired, ErrorClassFailExpiry))
+					ErrorReasonTransactionExpired, ErrorClassFailExpiry, true))
 				return
 			}
 
@@ -2324,13 +2329,17 @@ func (t *transactionAttempt) abort(
 				})
 				return
 			case ErrorClassFailPathNotFound:
-				failErr = t.createAndStashOperationFailedError(false, true, ErrAtrEntryNotFound, ErrorReasonTransactionFailed, ec)
+				failErr = t.createAndStashOperationFailedError(false, true, ErrAtrEntryNotFound,
+					ErrorReasonTransactionFailed, ec, true)
 			case ErrorClassFailDocNotFound:
-				failErr = t.createAndStashOperationFailedError(false, true, ErrAtrNotFound, ErrorReasonTransactionFailed, ec)
+				failErr = t.createAndStashOperationFailedError(false, true, ErrAtrNotFound,
+					ErrorReasonTransactionFailed, ec, true)
 			case ErrorClassFailATRFull:
-				failErr = t.createAndStashOperationFailedError(false, true, ErrAtrFull, ErrorReasonTransactionFailed, ec)
+				failErr = t.createAndStashOperationFailedError(false, true, ErrAtrFull,
+					ErrorReasonTransactionFailed, ec, true)
 			case ErrorClassFailHard:
-				failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec)
+				failErr = t.createAndStashOperationFailedError(false, true, err,
+					ErrorReasonTransactionFailed, ec, true)
 			default:
 				time.AfterFunc(3*time.Millisecond, func() {
 					t.abort(cb)
@@ -2480,7 +2489,7 @@ func (t *transactionAttempt) rollbackInsMutation(mutation stagedMutation, cb fun
 			ec := t.classifyError(err)
 			if t.expiryOvertimeMode {
 				cb(t.createAndStashOperationFailedError(false, true, ErrAttemptExpired,
-					ErrorReasonTransactionExpired, ErrorClassFailExpiry))
+					ErrorReasonTransactionExpired, ErrorClassFailExpiry, true))
 				return
 			}
 
@@ -2494,14 +2503,16 @@ func (t *transactionAttempt) rollbackInsMutation(mutation stagedMutation, cb fun
 				cb(nil)
 				return
 			case ErrorClassFailCasMismatch:
-				cb(t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec))
+				cb(t.createAndStashOperationFailedError(false, true, err,
+					ErrorReasonTransactionFailed, ec, true))
 				return
 			case ErrorClassFailDocAlreadyExists:
-				cb(t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed,
-					ErrorClassFailCasMismatch))
+				cb(t.createAndStashOperationFailedError(false, true, err,
+					ErrorReasonTransactionFailed, ErrorClassFailCasMismatch, true))
 				return
 			case ErrorClassFailHard:
-				cb(t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec))
+				cb(t.createAndStashOperationFailedError(false, true, err,
+					ErrorReasonTransactionFailed, ec, true))
 				return
 			}
 
@@ -2578,7 +2589,7 @@ func (t *transactionAttempt) rollbackRepRemMutation(mutation stagedMutation, cb 
 			ec := t.classifyError(err)
 			if t.expiryOvertimeMode {
 				cb(t.createAndStashOperationFailedError(false, true, ErrAttemptExpired,
-					ErrorReasonTransactionExpired, ErrorClassFailExpiry))
+					ErrorReasonTransactionExpired, ErrorClassFailExpiry, true))
 				return
 			}
 
@@ -2589,17 +2600,20 @@ func (t *transactionAttempt) rollbackRepRemMutation(mutation stagedMutation, cb 
 				cb(nil)
 				return
 			case ErrorClassFailDocNotFound:
-				cb(t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec))
+				cb(t.createAndStashOperationFailedError(false, true, err,
+					ErrorReasonTransactionFailed, ec, true))
 				return
 			case ErrorClassFailCasMismatch:
-				cb(t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec))
+				cb(t.createAndStashOperationFailedError(false, true, err,
+					ErrorReasonTransactionFailed, ec, true))
 				return
 			case ErrorClassFailDocAlreadyExists:
-				cb(t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed,
-					ErrorClassFailCasMismatch))
+				cb(t.createAndStashOperationFailedError(false, true, err,
+					ErrorReasonTransactionFailed, ErrorClassFailCasMismatch, true))
 				return
 			case ErrorClassFailHard:
-				cb(t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec))
+				cb(t.createAndStashOperationFailedError(false, true, err,
+					ErrorReasonTransactionFailed, ec, true))
 				return
 			}
 
@@ -2678,7 +2692,7 @@ func (t *transactionAttempt) setATRRolledBack(
 
 			if t.expiryOvertimeMode {
 				cb(t.createAndStashOperationFailedError(false, true, ErrAttemptExpired,
-					ErrorReasonTransactionExpired, ErrorClassFailExpiry))
+					ErrorReasonTransactionExpired, ErrorClassFailExpiry, true))
 				return
 			}
 
@@ -2691,13 +2705,17 @@ func (t *transactionAttempt) setATRRolledBack(
 				})
 				return
 			case ErrorClassFailPathNotFound:
-				failErr = t.createAndStashOperationFailedError(false, true, ErrAtrEntryNotFound, ErrorReasonTransactionFailed, ec)
+				failErr = t.createAndStashOperationFailedError(false, true, ErrAtrEntryNotFound,
+					ErrorReasonTransactionFailed, ec, true)
 			case ErrorClassFailDocNotFound:
-				failErr = t.createAndStashOperationFailedError(false, true, ErrAtrNotFound, ErrorReasonTransactionFailed, ec)
+				failErr = t.createAndStashOperationFailedError(false, true, ErrAtrNotFound,
+					ErrorReasonTransactionFailed, ec, true)
 			case ErrorClassFailATRFull:
-				failErr = t.createAndStashOperationFailedError(false, true, ErrAtrFull, ErrorReasonTransactionFailed, ec)
+				failErr = t.createAndStashOperationFailedError(false, true, ErrAtrFull,
+					ErrorReasonTransactionFailed, ec, true)
 			case ErrorClassFailHard:
-				failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec)
+				failErr = t.createAndStashOperationFailedError(false, true, err,
+					ErrorReasonTransactionFailed, ec, true)
 			default:
 				time.AfterFunc(3*time.Millisecond, func() {
 					t.setATRRolledBack(cb)
@@ -2826,7 +2844,7 @@ func (t *transactionAttempt) Rollback(cb RollbackCallback) error {
 
 			t.txnAtrSection.Wait(func() {
 				cb(t.createAndStashOperationFailedError(false, true, nil,
-					ErrorReasonTransactionFailed, ErrorClassFailOther))
+					ErrorReasonTransactionFailed, ErrorClassFailOther, true))
 			})
 
 			return
