@@ -3,9 +3,10 @@ package transactions
 import (
 	"encoding/json"
 	"errors"
+	"time"
+
 	"github.com/couchbase/gocbcore/v9"
 	"github.com/couchbase/gocbcore/v9/memd"
-	"time"
 )
 
 func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
@@ -181,7 +182,7 @@ func (t *transactionAttempt) get(opts GetOptions, cb GetCallback) error {
 							RevID:   doc.DocMeta.RevID,
 							Expiry:  doc.DocMeta.Expiration,
 							Deleted: false,
-							TxnMeta: nil,
+							TxnMeta: doc.TxnMeta,
 						},
 					}, nil)
 				})
