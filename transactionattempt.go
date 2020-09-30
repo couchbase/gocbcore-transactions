@@ -401,7 +401,7 @@ func (t *transactionAttempt) writeWriteConflictPoll(res *GetResult, cb func(erro
 	onePoll = func() {
 		if !time.Now().Before(deadline) {
 			// If the deadline expired, lets just immediately return.
-			cb(nil)
+			cb(ErrWriteWriteConflict)
 			return
 		}
 
