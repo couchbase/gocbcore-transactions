@@ -2,11 +2,11 @@ package transactions
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
+	"time"
+
 	"github.com/couchbase/gocbcore/v9"
 	"github.com/couchbase/gocbcore/v9/memd"
-	"time"
 )
 
 func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) error {
@@ -37,61 +37,68 @@ func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) erro
 				return
 			}
 
-			t.doReplace(opts, func(stagedInfo *stagedMutation, err error) {
+			t.writeWriteConflictPoll(opts.Document, func(err error) {
 				if err != nil {
-					var failErr error
-					ec := t.classifyError(err)
-					switch ec {
-					case ErrorClassFailExpiry:
-						t.expiryOvertimeMode = true
-						failErr = t.createAndStashOperationFailedError(false, false, ErrAttemptExpired, ErrorReasonTransactionExpired, ec, false)
-					case ErrorClassFailDocNotFound:
-						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
-					case ErrorClassFailDocAlreadyExists:
-						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ErrorClassFailCasMismatch, false)
-					case ErrorClassFailCasMismatch:
-						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
-					case ErrorClassFailTransient:
-						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
-					case ErrorClassFailAmbiguous:
-						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
-					case ErrorClassFailHard:
-						failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec, false)
-					default:
-						failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, false)
-					}
-
-					cb(nil, failErr)
+					cb(nil, err)
 					return
 				}
-				t.lock.Lock()
 
-				idx, existingMutation := t.getStagedMutationLocked(agent.BucketName(), opts.Document.scopeName, opts.Document.collectionName,
-					opts.Document.key)
-				if existingMutation == nil {
-					t.stagedMutations = append(t.stagedMutations, stagedInfo)
-				} else {
-					if existingMutation.OpType == StagedMutationReplace {
-						t.stagedMutations[idx] = stagedInfo
-					} else if existingMutation.OpType == StagedMutationInsert {
-						stagedInfo.OpType = StagedMutationInsert
-						t.stagedMutations = append(t.stagedMutations[:idx+copy(t.stagedMutations[idx:], t.stagedMutations[idx+1:])], stagedInfo)
+				t.doReplace(opts, func(stagedInfo *stagedMutation, err error) {
+					if err != nil {
+						var failErr error
+						ec := t.classifyError(err)
+						switch ec {
+						case ErrorClassFailExpiry:
+							t.expiryOvertimeMode = true
+							failErr = t.createAndStashOperationFailedError(false, false, ErrAttemptExpired, ErrorReasonTransactionExpired, ec, false)
+						case ErrorClassFailDocNotFound:
+							failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
+						case ErrorClassFailDocAlreadyExists:
+							failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ErrorClassFailCasMismatch, false)
+						case ErrorClassFailCasMismatch:
+							failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
+						case ErrorClassFailTransient:
+							failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
+						case ErrorClassFailAmbiguous:
+							failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
+						case ErrorClassFailHard:
+							failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec, false)
+						default:
+							failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, false)
+						}
+
+						cb(nil, failErr)
+						return
 					}
+					t.lock.Lock()
 
-				}
-				t.lock.Unlock()
+					idx, existingMutation := t.getStagedMutationLocked(agent.BucketName(), opts.Document.scopeName, opts.Document.collectionName,
+						opts.Document.key)
+					if existingMutation == nil {
+						t.stagedMutations = append(t.stagedMutations, stagedInfo)
+					} else {
+						if existingMutation.OpType == StagedMutationReplace {
+							t.stagedMutations[idx] = stagedInfo
+						} else if existingMutation.OpType == StagedMutationInsert {
+							stagedInfo.OpType = StagedMutationInsert
+							t.stagedMutations = append(t.stagedMutations[:idx+copy(t.stagedMutations[idx:], t.stagedMutations[idx+1:])], stagedInfo)
+						}
 
-				cb(&GetResult{
-					agent:          stagedInfo.Agent,
-					scopeName:      stagedInfo.ScopeName,
-					collectionName: stagedInfo.CollectionName,
-					key:            stagedInfo.Key,
-					Value:          stagedInfo.Staged,
-					Cas:            stagedInfo.Cas,
-					Meta: MutableItemMeta{
-						Deleted: stagedInfo.IsTombstone,
-					},
-				}, nil)
+					}
+					t.lock.Unlock()
+
+					cb(&GetResult{
+						agent:          stagedInfo.Agent,
+						scopeName:      stagedInfo.ScopeName,
+						collectionName: stagedInfo.CollectionName,
+						key:            stagedInfo.Key,
+						Value:          stagedInfo.Staged,
+						Cas:            stagedInfo.Cas,
+						Meta: MutableItemMeta{
+							Deleted: stagedInfo.IsTombstone,
+						},
+					}, nil)
+				})
 			})
 		})
 		if err != nil {
@@ -190,59 +197,6 @@ func (t *transactionAttempt) doReplace(opts ReplaceOptions, cb func(*stagedMutat
 			Deadline:               deadline,
 		}, func(result *gocbcore.MutateInResult, err error) {
 			if err != nil {
-				var sdErr gocbcore.SubDocumentError
-				if errors.As(err, &sdErr) {
-					if errors.Is(sdErr.InnerError, gocbcore.ErrPathExists) {
-						_, err = stagedInfo.Agent.LookupIn(gocbcore.LookupInOptions{
-							ScopeName:      stagedInfo.ScopeName,
-							CollectionName: stagedInfo.CollectionName,
-							Key:            stagedInfo.Key,
-							Ops: []gocbcore.SubDocOp{
-								{
-									Op:    memd.SubDocOpGet,
-									Path:  "txn",
-									Flags: memd.SubdocFlagXattrPath,
-								},
-							},
-							Deadline: deadline,
-							Flags:    memd.SubdocDocFlagAccessDeleted,
-						}, func(result *gocbcore.LookupInResult, err error) {
-							if err != nil {
-								cb(nil, err)
-								return
-							}
-
-							var txnMeta *jsonTxnXattr
-							if result.Ops[0].Err == nil {
-								var txnMetaVal jsonTxnXattr
-								// TODO(brett19): Don't ignore the error here
-								json.Unmarshal(result.Ops[0].Value, &txnMetaVal)
-								txnMeta = &txnMetaVal
-							}
-
-							if txnMeta == nil {
-								// There is no longer any txn meta-data, this means the write-write conflict
-								// is resolved and we can throw a write-write conflict to retry immediately.
-								cb(nil, t.createAndStashOperationFailedError(true, false, sdErr.InnerError, ErrorReasonTransactionFailed, ErrorClassFailWriteWriteConflict, false))
-								return
-							}
-
-							t.writeWriteConflictPoll(GetOptions{
-								Agent:          opts.Document.agent,
-								ScopeName:      opts.Document.scopeName,
-								CollectionName: opts.Document.collectionName,
-								Key:            opts.Document.key,
-							}, txnMeta, func(err error) {
-								// We have either resolved the write-write conflict, or we have elapsed our
-								// maximal waiting period, let's send the error to retry.
-								cb(nil, t.createAndStashOperationFailedError(true, false, sdErr.InnerError, ErrorReasonTransactionFailed, ErrorClassFailWriteWriteConflict, false))
-							})
-							return
-						})
-						return
-					}
-				}
-
 				cb(nil, err)
 				return
 			}

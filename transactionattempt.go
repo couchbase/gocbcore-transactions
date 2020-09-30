@@ -381,7 +381,20 @@ func (t *transactionAttempt) classifyError(err error) ErrorClass {
 	return ec
 }
 
-func (t *transactionAttempt) writeWriteConflictPoll(opts GetOptions, xattr *jsonTxnXattr, cb func(error)) {
+func (t *transactionAttempt) writeWriteConflictPoll(res *GetResult, cb func(error)) {
+	if res.Meta.TxnMeta == nil {
+		// There is no write-write conflict.
+		cb(nil)
+		return
+	}
+
+	if res.Meta.TxnMeta.ID.Transaction == t.transactionID {
+		// The transaction matches our transaction.  We can safely overwrite the existing
+		// data in the txn meta and continue.
+		cb(nil)
+		return
+	}
+
 	deadline := time.Now().Add(1 * time.Second)
 
 	var onePoll func()
@@ -392,20 +405,35 @@ func (t *transactionAttempt) writeWriteConflictPoll(opts GetOptions, xattr *json
 			return
 		}
 
-		t.getTxnState(opts, deadline, xattr, func(state jsonAtrState, err error) {
+		t.hooks.BeforeCheckATREntryForBlockingDoc([]byte(res.Meta.TxnMeta.ATR.DocID), func(err error) {
 			if err != nil {
 				cb(err)
 				return
 			}
 
-			if state == jsonAtrStateCommitted || state == jsonAtrStateCompleted ||
-				state == jsonAtrStateAborted || state == jsonAtrStateRolledBack {
-				// If we have progressed enough to continue, let's do that.
-				cb(nil)
-				return
-			}
+			t.getTxnState(GetOptions{
+				Agent:          res.agent,
+				ScopeName:      res.Meta.TxnMeta.ATR.ScopeName,
+				CollectionName: res.Meta.TxnMeta.ATR.CollectionName,
+				Key:            []byte(res.Meta.TxnMeta.ATR.DocID),
+			}, deadline, res.Meta.TxnMeta, func(state jsonAtrState, err error) {
+				if err == ErrAtrEntryNotFound {
+					// The ATR isn't there anymore, which counts as it being completed.
+					cb(nil)
+					return
+				} else if err != nil {
+					cb(err)
+					return
+				}
 
-			time.AfterFunc(100*time.Millisecond, onePoll)
+				if state == jsonAtrStateCommitted || state == jsonAtrStateRolledBack {
+					// If we have progressed enough to continue, let's do that.
+					cb(nil)
+					return
+				}
+
+				time.AfterFunc(200*time.Millisecond, onePoll)
+			})
 		})
 	}
 	onePoll()
