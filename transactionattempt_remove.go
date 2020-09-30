@@ -11,7 +11,7 @@ import (
 func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error {
 	if err := t.checkDone(); err != nil {
 		ec := t.classifyError(err)
-		return t.createAndStashOperationFailedError(false, false, ErrAttemptExpired, ErrorReasonTransactionExpired, ec, false)
+		return t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec, false)
 	}
 
 	if err := t.checkError(); err != nil {

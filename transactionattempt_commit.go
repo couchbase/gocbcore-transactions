@@ -382,63 +382,80 @@ func (t *transactionAttempt) Commit(cb CommitCallback) error {
 			return
 		}
 
-		// TODO(brett19): Move the wait logic from setATRCommitted to here
-		t.setATRCommitted(func(err error) {
+		t.checkExpired(hookBeforeCommit, []byte{}, func(err error) {
 			if err != nil {
-				cb(err)
+				t.expiryOvertimeMode = true
+				ec := t.classifyError(err)
+				cb(t.createAndStashOperationFailedError(false, false, ErrAttemptExpired,
+					ErrorReasonTransactionExpired, ec, true))
 				return
 			}
 
-			// TODO(brett19): Use atomic counters instead of a goroutine here
-			go func() {
-				numMutations := len(t.stagedMutations)
-				waitCh := make(chan error, numMutations)
+			if err := t.checkDone(); err != nil {
+				ec := t.classifyError(err)
+				cb(t.createAndStashOperationFailedError(false, true, err,
+					ErrorReasonTransactionFailed, ec, false))
+				return
+			}
 
-				// Unlike the RFC we do insert and replace separately. We have a bug in gocbcore where subdocs
-				// will raise doc exists rather than a cas mismatch so we need to do these ops separately to tell
-				// how to handle that error.
-				for _, mutation := range t.stagedMutations {
-					if mutation.OpType == StagedMutationInsert {
-						t.unstageInsMutation(*mutation, false, func(err error) {
-							waitCh <- err
-						})
-					} else if mutation.OpType == StagedMutationReplace {
-						t.unstageRepMutation(*mutation, false, false, func(err error) {
-							waitCh <- err
-						})
-					} else if mutation.OpType == StagedMutationRemove {
-						t.unstageRemMutation(*mutation, func(err error) {
-							waitCh <- err
-						})
-					} else {
-						// TODO(brett19): Pretty sure I can do better than this
-						waitCh <- ErrUhOh
-					}
-				}
-
-				var mutErr error
-				for i := 0; i < numMutations; i++ {
-					// TODO(brett19): Handle errors here better
-					err := <-waitCh
-					if mutErr == nil && err != nil {
-						mutErr = err
-					}
-				}
-				if mutErr != nil {
-					// The unstage operations themselves will handle enhancing the error.
+			// TODO(brett19): Move the wait logic from setATRCommitted to here
+			t.setATRCommitted(func(err error) {
+				if err != nil {
 					cb(err)
 					return
 				}
 
-				t.setATRCompleted(func(err error) {
-					if err != nil {
+				// TODO(brett19): Use atomic counters instead of a goroutine here
+				go func() {
+					numMutations := len(t.stagedMutations)
+					waitCh := make(chan error, numMutations)
+
+					// Unlike the RFC we do insert and replace separately. We have a bug in gocbcore where subdocs
+					// will raise doc exists rather than a cas mismatch so we need to do these ops separately to tell
+					// how to handle that error.
+					for _, mutation := range t.stagedMutations {
+						if mutation.OpType == StagedMutationInsert {
+							t.unstageInsMutation(*mutation, false, func(err error) {
+								waitCh <- err
+							})
+						} else if mutation.OpType == StagedMutationReplace {
+							t.unstageRepMutation(*mutation, false, false, func(err error) {
+								waitCh <- err
+							})
+						} else if mutation.OpType == StagedMutationRemove {
+							t.unstageRemMutation(*mutation, func(err error) {
+								waitCh <- err
+							})
+						} else {
+							// TODO(brett19): Pretty sure I can do better than this
+							waitCh <- ErrUhOh
+						}
+					}
+
+					var mutErr error
+					for i := 0; i < numMutations; i++ {
+						// TODO(brett19): Handle errors here better
+						err := <-waitCh
+						if mutErr == nil && err != nil {
+							mutErr = err
+						}
+					}
+					if mutErr != nil {
+						// The unstage operations themselves will handle enhancing the error.
 						cb(err)
 						return
 					}
 
-					cb(nil)
-				})
-			}()
+					t.setATRCompleted(func(err error) {
+						if err != nil {
+							cb(err)
+							return
+						}
+
+						cb(nil)
+					})
+				}()
+			})
 		})
 	})
 	return nil
