@@ -27,13 +27,17 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 func (t *transactionAttempt) get(opts GetOptions, cb GetCallback) error {
 	if err := t.checkDone(); err != nil {
 		ec := t.classifyError(err)
-		return t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec, false)
+		return t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec, true)
+	}
+
+	if err := t.checkError(); err != nil {
+		return err
 	}
 
 	t.checkExpired(hookGet, opts.Key, func(err error) {
 		if err != nil {
 			t.expiryOvertimeMode = true
-			cb(nil, t.createAndStashOperationFailedError(false, false, ErrAttemptExpired, ErrorReasonTransactionExpired, ErrorClassFailExpiry, false))
+			cb(nil, t.createAndStashOperationFailedError(false, false, ErrAttemptExpired, ErrorReasonTransactionExpired, ErrorClassFailExpiry, true))
 			return
 		}
 
@@ -60,7 +64,7 @@ func (t *transactionAttempt) get(opts GetOptions, cb GetCallback) error {
 			} else if existingMutation.OpType == StagedMutationRemove {
 				t.lock.Unlock()
 
-				cb(nil, t.createAndStashOperationFailedError(false, false, gocbcore.ErrDocumentNotFound, ErrorReasonTransactionFailed, ErrorClassFailDocNotFound, false))
+				cb(nil, t.createAndStashOperationFailedError(false, false, gocbcore.ErrDocumentNotFound, ErrorReasonTransactionFailed, ErrorClassFailDocNotFound, true))
 				return
 			}
 		}
