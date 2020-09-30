@@ -39,7 +39,9 @@ func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) erro
 
 			t.writeWriteConflictPoll(opts.Document, func(err error) {
 				if err != nil {
-					cb(nil, err)
+					ec := t.classifyError(err)
+					cb(nil, t.createAndStashOperationFailedError(true, false, err,
+						ErrorReasonTransactionFailed, ec, false))
 					return
 				}
 

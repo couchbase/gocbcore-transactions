@@ -353,7 +353,7 @@ func (t *transactionAttempt) getTxnState(opts GetOptions, deadline time.Time, xa
 
 func (t *transactionAttempt) classifyError(err error) ErrorClass {
 	ec := ErrorClassFailOther
-	if errors.Is(err, ErrDocAlreadyInTransaction) {
+	if errors.Is(err, ErrDocAlreadyInTransaction) || errors.Is(err, ErrWriteWriteConflict) {
 		ec = ErrorClassFailWriteWriteConflict
 	} else if errors.Is(err, gocbcore.ErrDocumentNotFound) {
 		ec = ErrorClassFailDocNotFound
