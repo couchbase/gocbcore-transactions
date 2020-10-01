@@ -427,6 +427,7 @@ func (t *transactionAttempt) writeWriteConflictPoll(res *GetResult, cb func(erro
 
 		t.checkExpired("", res.key, func(err error) {
 			if err != nil {
+				t.expiryOvertimeMode = true
 				handler(err)
 				return
 			}
