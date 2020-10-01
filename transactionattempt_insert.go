@@ -45,7 +45,7 @@ func (t *transactionAttempt) insert(opts InsertOptions, cas gocbcore.Cas, cb Sto
 			case ErrorClassFailDocAlreadyExists:
 				fallthrough
 			case ErrorClassFailCasMismatch:
-				t.getForInsert(opts, func(result gocbcore.Cas, err error) {
+				t.getForInsert(opts, func(result *GetResult, err error) {
 					if err != nil {
 						var failErr error
 						ec := t.classifyError(err)
@@ -64,10 +64,17 @@ func (t *transactionAttempt) insert(opts InsertOptions, cas gocbcore.Cas, cb Sto
 						return
 					}
 
-					err = t.insert(opts, result, cb)
-					if err != nil {
-						cb(nil, err)
-					}
+					t.writeWriteConflictPoll(result, func(err error) {
+						if err != nil {
+							cb(nil, err)
+							return
+						}
+
+						err = t.insert(opts, result.Cas, cb)
+						if err != nil {
+							cb(nil, err)
+						}
+					})
 				})
 
 				return
@@ -213,10 +220,10 @@ func (t *transactionAttempt) insert(opts InsertOptions, cas gocbcore.Cas, cb Sto
 	return nil
 }
 
-func (t *transactionAttempt) getForInsert(opts InsertOptions, cb func(gocbcore.Cas, error)) {
+func (t *transactionAttempt) getForInsert(opts InsertOptions, cb func(*GetResult, error)) {
 	t.hooks.BeforeGetDocInExistsDuringStagedInsert(opts.Key, func(err error) {
 		if err != nil {
-			cb(0, err)
+			cb(nil, err)
 			return
 		}
 
@@ -250,7 +257,7 @@ func (t *transactionAttempt) getForInsert(opts InsertOptions, cb func(gocbcore.C
 			Flags:    memd.SubdocDocFlagAccessDeleted,
 		}, func(result *gocbcore.LookupInResult, err error) {
 			if err != nil {
-				cb(0, err)
+				cb(nil, err)
 				return
 			}
 
@@ -262,23 +269,47 @@ func (t *transactionAttempt) getForInsert(opts InsertOptions, cb func(gocbcore.C
 				txnMeta = &txnMetaVal
 			}
 
+			var val []byte
+			if result.Ops[2].Err == nil {
+				val = result.Ops[2].Value
+			}
 			if txnMeta == nil {
 				// This doc isn't in a transaction
 				if result.Internal.IsDeleted {
-					cb(result.Cas, nil)
+					cb(&GetResult{
+						agent:          opts.Agent,
+						scopeName:      opts.ScopeName,
+						collectionName: opts.CollectionName,
+						key:            opts.Key,
+						Meta: MutableItemMeta{
+							TxnMeta: txnMeta,
+						},
+						Value: val,
+						Cas:   result.Cas,
+					}, nil)
 					return
 				}
 
-				cb(0, gocbcore.ErrDocumentExists)
+				cb(nil, gocbcore.ErrDocumentExists)
 				return
 			}
 
-			// TODO: checkwritewrite here
-			cb(result.Cas, nil)
+			cb(&GetResult{
+				agent:          opts.Agent,
+				scopeName:      opts.ScopeName,
+				collectionName: opts.CollectionName,
+				key:            opts.Key,
+				Meta: MutableItemMeta{
+					TxnMeta: txnMeta,
+				},
+				Value: val,
+				Cas:   result.Cas,
+			}, nil)
+
 			return
 		})
 		if err != nil {
-			cb(0, err)
+			cb(nil, err)
 			return
 		}
 	})
