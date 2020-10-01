@@ -382,16 +382,36 @@ func (t *transactionAttempt) classifyError(err error) ErrorClass {
 }
 
 func (t *transactionAttempt) writeWriteConflictPoll(res *GetResult, cb func(error)) {
+	handler := func(err error) {
+		if err != nil {
+			ec := t.classifyError(err)
+
+			switch ec {
+			case ErrorClassFailExpiry:
+				cb(t.createAndStashOperationFailedError(false, false, err,
+					ErrorReasonTransactionExpired, ec, true))
+				return
+			default:
+			}
+
+			cb(t.createAndStashOperationFailedError(true, false, err,
+				ErrorReasonTransactionFailed, ErrorClassFailWriteWriteConflict, true))
+			return
+		}
+
+		cb(nil)
+	}
+
 	if res.Meta.TxnMeta == nil {
 		// There is no write-write conflict.
-		cb(nil)
+		handler(nil)
 		return
 	}
 
 	if res.Meta.TxnMeta.ID.Transaction == t.transactionID {
 		// The transaction matches our transaction.  We can safely overwrite the existing
 		// data in the txn meta and continue.
-		cb(nil)
+		handler(nil)
 		return
 	}
 
@@ -401,39 +421,47 @@ func (t *transactionAttempt) writeWriteConflictPoll(res *GetResult, cb func(erro
 	onePoll = func() {
 		if !time.Now().Before(deadline) {
 			// If the deadline expired, lets just immediately return.
-			cb(ErrWriteWriteConflict)
+			handler(ErrWriteWriteConflict)
 			return
 		}
 
-		t.hooks.BeforeCheckATREntryForBlockingDoc([]byte(res.Meta.TxnMeta.ATR.DocID), func(err error) {
+		t.checkExpired("", res.key, func(err error) {
 			if err != nil {
-				cb(err)
+				handler(err)
 				return
 			}
 
-			t.getTxnState(GetOptions{
-				Agent:          res.agent,
-				ScopeName:      res.Meta.TxnMeta.ATR.ScopeName,
-				CollectionName: res.Meta.TxnMeta.ATR.CollectionName,
-				Key:            []byte(res.Meta.TxnMeta.ATR.DocID),
-			}, deadline, res.Meta.TxnMeta, func(state jsonAtrState, err error) {
-				if err == ErrAtrEntryNotFound {
-					// The ATR isn't there anymore, which counts as it being completed.
-					cb(nil)
-					return
-				} else if err != nil {
-					cb(err)
+			t.hooks.BeforeCheckATREntryForBlockingDoc([]byte(res.Meta.TxnMeta.ATR.DocID), func(err error) {
+				if err != nil {
+					handler(err)
 					return
 				}
 
-				if state == jsonAtrStateCommitted || state == jsonAtrStateRolledBack {
-					// If we have progressed enough to continue, let's do that.
-					cb(nil)
-					return
-				}
+				t.getTxnState(GetOptions{
+					Agent:          res.agent,
+					ScopeName:      res.Meta.TxnMeta.ATR.ScopeName,
+					CollectionName: res.Meta.TxnMeta.ATR.CollectionName,
+					Key:            []byte(res.Meta.TxnMeta.ATR.DocID),
+				}, deadline, res.Meta.TxnMeta, func(state jsonAtrState, err error) {
+					if err == ErrAtrEntryNotFound {
+						// The ATR isn't there anymore, which counts as it being completed.
+						handler(nil)
+						return
+					} else if err != nil {
+						handler(err)
+						return
+					}
 
-				time.AfterFunc(200*time.Millisecond, onePoll)
+					if state == jsonAtrStateCommitted || state == jsonAtrStateRolledBack {
+						// If we have progressed enough to continue, let's do that.
+						handler(nil)
+						return
+					}
+
+					time.AfterFunc(200*time.Millisecond, onePoll)
+				})
 			})
+
 		})
 	}
 	onePoll()

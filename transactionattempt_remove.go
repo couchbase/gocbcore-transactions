@@ -43,9 +43,7 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 
 		t.writeWriteConflictPoll(opts.Document, func(err error) {
 			if err != nil {
-				ec := t.classifyError(err)
-				cb(nil, t.createAndStashOperationFailedError(true, false, err,
-					ErrorReasonTransactionFailed, ec, true))
+				cb(nil, err)
 				return
 			}
 			err = t.confirmATRPending(agent, scopeName, collectionName, key, func(err error) {
