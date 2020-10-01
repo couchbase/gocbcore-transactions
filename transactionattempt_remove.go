@@ -41,47 +41,55 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 		}
 		t.lock.Unlock()
 
-		err = t.confirmATRPending(agent, scopeName, collectionName, key, func(err error) {
+		t.writeWriteConflictPoll(opts.Document, func(err error) {
+			if err != nil {
+				ec := t.classifyError(err)
+				cb(nil, t.createAndStashOperationFailedError(true, false, err,
+					ErrorReasonTransactionFailed, ec, true))
+				return
+			}
+			err = t.confirmATRPending(agent, scopeName, collectionName, key, func(err error) {
+				if err != nil {
+					cb(nil, err)
+					return
+				}
+
+				t.remove(opts.Document, func(res *GetResult, err error) {
+					if err != nil {
+						var failErr error
+						ec := t.classifyError(err)
+						switch ec {
+						case ErrorClassFailExpiry:
+							t.expiryOvertimeMode = true
+							failErr = t.createAndStashOperationFailedError(false, false, ErrAttemptExpired, ErrorReasonTransactionExpired, ec, false)
+						case ErrorClassFailDocNotFound:
+							failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
+						case ErrorClassFailCasMismatch:
+							failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
+						case ErrorClassFailDocAlreadyExists:
+							failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ErrorClassFailCasMismatch, false)
+						case ErrorClassFailTransient:
+							failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
+						case ErrorClassFailAmbiguous:
+							failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
+						case ErrorClassFailHard:
+							failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec, false)
+						default:
+							failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, false)
+						}
+
+						cb(nil, failErr)
+						return
+					}
+
+					cb(res, nil)
+				})
+			})
 			if err != nil {
 				cb(nil, err)
 				return
 			}
-
-			t.remove(opts.Document, func(res *GetResult, err error) {
-				if err != nil {
-					var failErr error
-					ec := t.classifyError(err)
-					switch ec {
-					case ErrorClassFailExpiry:
-						t.expiryOvertimeMode = true
-						failErr = t.createAndStashOperationFailedError(false, false, ErrAttemptExpired, ErrorReasonTransactionExpired, ec, false)
-					case ErrorClassFailDocNotFound:
-						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
-					case ErrorClassFailCasMismatch:
-						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
-					case ErrorClassFailDocAlreadyExists:
-						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ErrorClassFailCasMismatch, false)
-					case ErrorClassFailTransient:
-						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
-					case ErrorClassFailAmbiguous:
-						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
-					case ErrorClassFailHard:
-						failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec, false)
-					default:
-						failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, false)
-					}
-
-					cb(nil, failErr)
-					return
-				}
-
-				cb(res, nil)
-			})
 		})
-		if err != nil {
-			cb(nil, err)
-			return
-		}
 	})
 
 	return nil
