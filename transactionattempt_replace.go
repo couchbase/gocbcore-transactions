@@ -31,13 +31,13 @@ func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) erro
 		collectionName := opts.Document.collectionName
 		key := opts.Document.key
 
-		err = t.confirmATRPending(agent, scopeName, collectionName, key, func(err error) {
+		t.writeWriteConflictPoll(opts.Document, func(err error) {
 			if err != nil {
 				cb(nil, err)
 				return
 			}
 
-			t.writeWriteConflictPoll(opts.Document, func(err error) {
+			err = t.confirmATRPending(agent, scopeName, collectionName, key, func(err error) {
 				if err != nil {
 					cb(nil, err)
 					return
