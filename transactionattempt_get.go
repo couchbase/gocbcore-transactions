@@ -10,7 +10,7 @@ import (
 )
 
 func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
-	return t.get(opts, func(result *GetResult, err error) {
+	return t.get(opts, "", func(result *GetResult, err error) {
 		if err != nil {
 			cb(nil, err)
 			return
@@ -25,7 +25,7 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 	})
 }
 
-func (t *transactionAttempt) get(opts GetOptions, cb GetCallback) error {
+func (t *transactionAttempt) get(opts GetOptions, resolvingATREntry string, cb GetCallback) error {
 	if err := t.checkDone(); err != nil {
 		ec := t.classifyError(err)
 		return t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec, true)
@@ -100,8 +100,84 @@ func (t *transactionAttempt) get(opts GetOptions, cb GetCallback) error {
 				return
 			}
 
-			if doc.TxnMeta != nil {
-				if doc.TxnMeta.ID.Attempt == t.id {
+			// Doc not involved in another transaction.
+			if doc.TxnMeta == nil {
+				if doc.Deleted {
+					cb(nil, t.createAndStashOperationFailedError(false, false, gocbcore.ErrDocumentNotFound, ErrorReasonTransactionFailed, ErrorClassFailDocNotFound, false))
+					return
+				}
+
+				cb(&GetResult{
+					agent:          opts.Agent,
+					scopeName:      opts.ScopeName,
+					collectionName: opts.CollectionName,
+					key:            opts.Key,
+					Value:          doc.Body,
+					Cas:            doc.Cas,
+					Meta: MutableItemMeta{
+						RevID:   doc.DocMeta.RevID,
+						Expiry:  doc.DocMeta.Expiration,
+						Deleted: false,
+						TxnMeta: nil,
+					},
+				}, nil)
+				return
+			}
+
+			if doc.TxnMeta.ID.Attempt == resolvingATREntry {
+				if doc.Deleted {
+					cb(nil, t.createAndStashOperationFailedError(false, false, gocbcore.ErrDocumentNotFound, ErrorReasonTransactionFailed, ErrorClassFailDocNotFound, false))
+					return
+				}
+
+				cb(&GetResult{
+					agent:          opts.Agent,
+					scopeName:      opts.ScopeName,
+					collectionName: opts.CollectionName,
+					key:            opts.Key,
+					Value:          doc.Body,
+					Cas:            doc.Cas,
+					Meta: MutableItemMeta{
+						RevID:   doc.DocMeta.RevID,
+						Expiry:  doc.DocMeta.Expiration,
+						Deleted: false,
+						TxnMeta: doc.TxnMeta,
+					},
+				}, nil)
+				return
+			}
+
+			t.getTxnState(opts, deadline, doc.TxnMeta, func(state jsonAtrState, err error) {
+				if err != nil {
+					ec := t.classifyError(err)
+					if errors.Is(err, ErrAtrNotFound) {
+						cb(nil, t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, false))
+						return
+					} else if errors.Is(err, ErrAtrEntryNotFound) {
+						t.get(opts, doc.TxnMeta.ID.Attempt, cb)
+						return
+					}
+					var failErr error
+					switch ec {
+					case ErrorClassFailHard:
+						failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec, false)
+					case ErrorClassFailTransient:
+						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
+					default:
+						failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, false)
+					}
+					cb(nil, failErr)
+					return
+				}
+
+				if state == jsonAtrStateCommitted || state == jsonAtrStateCompleted {
+					if doc.TxnMeta.Operation.Type == jsonMutationRemove {
+
+						cb(nil, t.createAndStashOperationFailedError(false, false, gocbcore.ErrDocumentNotFound, ErrorReasonTransactionFailed, ErrorClassFailDocNotFound, false))
+						return
+					}
+
+					// TODO(brett19): Discuss virtual CAS with Graham
 					cb(&GetResult{
 						agent:          opts.Agent,
 						scopeName:      opts.ScopeName,
@@ -119,90 +195,26 @@ func (t *transactionAttempt) get(opts GetOptions, cb GetCallback) error {
 					return
 				}
 
-				t.getTxnState(opts, deadline, doc.TxnMeta, func(state jsonAtrState, err error) {
-					if err != nil {
-						ec := t.classifyError(err)
-						if errors.Is(err, ErrAtrNotFound) {
-							cb(nil, t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, false))
-							return
-						} else if errors.Is(err, ErrAtrEntryNotFound) {
-							// TODO
-						}
-						var failErr error
-						switch ec {
-						case ErrorClassFailHard:
-							failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec, false)
-						case ErrorClassFailTransient:
-							failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
-						default:
-							failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, false)
-						}
-						cb(nil, failErr)
-						return
-					}
+				if doc.Deleted {
+					cb(nil, t.createAndStashOperationFailedError(false, false, gocbcore.ErrDocumentNotFound, ErrorReasonTransactionFailed, ErrorClassFailDocNotFound, false))
+					return
+				}
 
-					if state == jsonAtrStateCommitted || state == jsonAtrStateCompleted {
-						if doc.TxnMeta.Operation.Type == jsonMutationRemove {
-
-							cb(nil, t.createAndStashOperationFailedError(false, false, gocbcore.ErrDocumentNotFound, ErrorReasonTransactionFailed, ErrorClassFailDocNotFound, false))
-							return
-						}
-
-						// TODO(brett19): Discuss virtual CAS with Graham
-						cb(&GetResult{
-							agent:          opts.Agent,
-							scopeName:      opts.ScopeName,
-							collectionName: opts.CollectionName,
-							key:            opts.Key,
-							Value:          doc.TxnMeta.Operation.Staged,
-							Cas:            doc.Cas,
-							Meta: MutableItemMeta{
-								RevID:   doc.DocMeta.RevID,
-								Expiry:  doc.DocMeta.Expiration,
-								Deleted: false,
-								TxnMeta: doc.TxnMeta,
-							},
-						}, nil)
-						return
-					}
-
-					if doc.Deleted {
-						cb(nil, t.createAndStashOperationFailedError(false, false, gocbcore.ErrDocumentNotFound, ErrorReasonTransactionFailed, ErrorClassFailDocNotFound, false))
-						return
-					}
-
-					cb(&GetResult{
-						agent:          opts.Agent,
-						scopeName:      opts.ScopeName,
-						collectionName: opts.CollectionName,
-						key:            opts.Key,
-						Value:          doc.Body,
-						Cas:            doc.Cas,
-						Meta: MutableItemMeta{
-							RevID:   doc.DocMeta.RevID,
-							Expiry:  doc.DocMeta.Expiration,
-							Deleted: false,
-							TxnMeta: doc.TxnMeta,
-						},
-					}, nil)
-				})
-				return
-			}
-
-			cb(&GetResult{
-				agent:          opts.Agent,
-				scopeName:      opts.ScopeName,
-				collectionName: opts.CollectionName,
-				key:            opts.Key,
-				Value:          doc.Body,
-				Cas:            doc.Cas,
-				Meta: MutableItemMeta{
-					RevID:   doc.DocMeta.RevID,
-					Expiry:  doc.DocMeta.Expiration,
-					Deleted: false,
-					TxnMeta: nil,
-				},
-			}, nil)
+				cb(&GetResult{
+					agent:          opts.Agent,
+					scopeName:      opts.ScopeName,
+					collectionName: opts.CollectionName,
+					key:            opts.Key,
+					Value:          doc.Body,
+					Cas:            doc.Cas,
+					Meta: MutableItemMeta{
+						RevID:   doc.DocMeta.RevID,
+						Expiry:  doc.DocMeta.Expiration,
+						Deleted: false,
+						TxnMeta: doc.TxnMeta,
+					},
+				}, nil)
+			})
 		})
 	})
 
