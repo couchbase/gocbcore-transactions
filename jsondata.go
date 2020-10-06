@@ -80,4 +80,5 @@ type getDoc struct {
 	TxnMeta *jsonTxnXattr
 	DocMeta *docMeta
 	Cas     gocbcore.Cas
+	Deleted bool
 }

@@ -166,7 +166,7 @@ func (t *transactionAttempt) get(opts GetOptions, cb GetCallback) error {
 						return
 					}
 
-					if doc.TxnMeta.Operation.Type == jsonMutationInsert {
+					if doc.Deleted {
 						cb(nil, t.createAndStashOperationFailedError(false, false, gocbcore.ErrDocumentNotFound, ErrorReasonTransactionFailed, ErrorClassFailDocNotFound, false))
 						return
 					}
@@ -262,6 +262,7 @@ func (t *transactionAttempt) getFullDoc(opts GetOptions, deadline time.Time,
 					TxnMeta: txnMeta,
 					DocMeta: meta,
 					Cas:     result.Cas,
+					Deleted: result.Internal.IsDeleted,
 				}, nil)
 
 				return
