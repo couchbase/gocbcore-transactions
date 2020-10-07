@@ -128,7 +128,7 @@ func (t *transactionAttempt) confirmATRPending(
 	collectionName string,
 	firstKey []byte,
 	cb func(error),
-) error {
+) {
 	handler := func(err error) {
 		if err == nil {
 			cb(nil)
@@ -177,7 +177,7 @@ func (t *transactionAttempt) confirmATRPending(
 			handler(nil)
 		})
 
-		return nil
+		return
 	}
 
 	atrID := int(cbcVbMap(firstKey, 1024))
@@ -190,17 +190,6 @@ func (t *transactionAttempt) confirmATRPending(
 
 	t.txnAtrSection.Add(1)
 	t.lock.Unlock()
-
-	atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag) gocbcore.SubDocOp {
-		bytes, _ := json.Marshal(data)
-
-		return gocbcore.SubDocOp{
-			Op:    memd.SubDocOpDictAdd,
-			Flags: memd.SubdocFlagMkDirP | flags,
-			Path:  "attempts." + t.id + "." + fieldName,
-			Value: bytes,
-		}
-	}
 
 	t.checkExpired(hookATRPending, []byte{}, func(err error) {
 		if err != nil {
@@ -227,7 +216,23 @@ func (t *transactionAttempt) confirmATRPending(
 				duraTimeout = t.keyValueTimeout * 10 / 9
 			}
 
-			_, err = agent.MutateIn(gocbcore.MutateInOptions{
+			var marshalErr error
+			atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag) gocbcore.SubDocOp {
+				b, err := json.Marshal(data)
+				if err != nil {
+					marshalErr = err
+					return gocbcore.SubDocOp{}
+				}
+
+				return gocbcore.SubDocOp{
+					Op:    memd.SubDocOpDictAdd,
+					Flags: memd.SubdocFlagMkDirP | flags,
+					Path:  "attempts." + t.id + "." + fieldName,
+					Value: b,
+				}
+			}
+
+			opts := gocbcore.MutateInOptions{
 				ScopeName:      scopeName,
 				CollectionName: collectionName,
 				Key:            atrKey,
@@ -241,7 +246,17 @@ func (t *transactionAttempt) confirmATRPending(
 				DurabilityLevelTimeout: duraTimeout,
 				Deadline:               deadline,
 				Flags:                  memd.SubdocDocFlagMkDoc,
-			}, func(result *gocbcore.MutateInResult, err error) {
+			}
+
+			if marshalErr != nil {
+				t.lock.Lock()
+				t.txnAtrSection.Done()
+				t.lock.Unlock()
+				handler(err)
+				return
+			}
+
+			_, err = agent.MutateIn(opts, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
 					t.lock.Lock()
 					t.txnAtrSection.Done()
@@ -287,7 +302,7 @@ func (t *transactionAttempt) confirmATRPending(
 		})
 	})
 
-	return nil
+	return
 }
 
 func (t *transactionAttempt) getStagedMutationLocked(bucketName, scopeName, collectionName string, key []byte) (int, *stagedMutation) {
@@ -339,9 +354,10 @@ func (t *transactionAttempt) getTxnState(opts GetOptions, deadline time.Time, xa
 			return
 		}
 
-		// TODO(brett19): Don't ignore the error here.
 		var txnState jsonAtrState
-		json.Unmarshal(result.Ops[0].Value, &txnState)
+		if err := json.Unmarshal(result.Ops[0].Value, &txnState); err != nil {
+			cb("", err)
+		}
 
 		cb(txnState, nil)
 	})

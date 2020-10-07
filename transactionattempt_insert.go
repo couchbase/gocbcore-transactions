@@ -104,7 +104,7 @@ func (t *transactionAttempt) insert(opts InsertOptions, cas gocbcore.Cas, cb Sto
 			return
 		}
 
-		err = t.confirmATRPending(opts.Agent, opts.ScopeName, opts.CollectionName, opts.Key, func(err error) {
+		t.confirmATRPending(opts.Agent, opts.ScopeName, opts.CollectionName, opts.Key, func(err error) {
 			if err != nil {
 				// We've already classified the error so just hit the callback.
 				cb(nil, err)
@@ -137,8 +137,11 @@ func (t *transactionAttempt) insert(opts InsertOptions, cas gocbcore.Cas, cb Sto
 				txnMeta.Operation.Type = jsonMutationInsert
 				txnMeta.Operation.Staged = stagedInfo.Staged
 
-				txnMetaBytes, _ := json.Marshal(txnMeta)
-				// TODO(brett19): Don't ignore the error here.
+				txnMetaBytes, err := json.Marshal(txnMeta)
+				if err != nil {
+					handler(nil, err)
+					return
+				}
 
 				var duraTimeout time.Duration
 				var deadline time.Time
@@ -211,10 +214,6 @@ func (t *transactionAttempt) insert(opts InsertOptions, cas gocbcore.Cas, cb Sto
 				}
 			})
 		})
-		if err != nil {
-			handler(nil, err)
-			return
-		}
 	})
 
 	return nil
@@ -264,15 +263,18 @@ func (t *transactionAttempt) getForInsert(opts InsertOptions, cb func(*GetResult
 			var txnMeta *jsonTxnXattr
 			if result.Ops[1].Err == nil {
 				var txnMetaVal jsonTxnXattr
-				// TODO(brett19): Don't ignore the error here
-				json.Unmarshal(result.Ops[1].Value, &txnMetaVal)
+				if err := json.Unmarshal(result.Ops[1].Value, &txnMetaVal); err != nil {
+					cb(nil, err)
+					return
+				}
 				txnMeta = &txnMetaVal
 			}
 
 			var val []byte
-			if result.Ops[2].Err == nil {
+			if result.Ops[2].Err != nil {
 				val = result.Ops[2].Value
 			}
+
 			if txnMeta == nil {
 				// This doc isn't in a transaction
 				if result.Internal.IsDeleted {

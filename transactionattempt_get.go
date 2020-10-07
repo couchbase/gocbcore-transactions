@@ -154,7 +154,9 @@ func (t *transactionAttempt) get(opts GetOptions, resolvingATREntry string, cb G
 						cb(nil, t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, false))
 						return
 					} else if errors.Is(err, ErrAtrEntryNotFound) {
-						t.get(opts, doc.TxnMeta.ID.Attempt, cb)
+						if err := t.get(opts, doc.TxnMeta.ID.Attempt, cb); err != nil {
+							cb(nil, err)
+						}
 						return
 					}
 					var failErr error
@@ -253,24 +255,45 @@ func (t *transactionAttempt) getFullDoc(opts GetOptions, deadline time.Time,
 			Deadline: deadline,
 			Flags:    memd.SubdocDocFlagAccessDeleted,
 		}, func(result *gocbcore.LookupInResult, err error) {
-			if errors.Is(err, gocbcore.ErrDocumentNotFound) {
+			if err != nil {
 				cb(nil, err)
 				return
 			}
 
+			if len(result.Ops) != 3 {
+				cb(nil, ErrOther)
+				return
+			}
+
+			if result.Ops[0].Err != nil {
+				cb(nil, result.Ops[0].Err)
+				return
+			}
+
+			var docBody []byte
+			if result.Ops[2].Err == nil {
+				docBody = result.Ops[2].Value
+			}
+
 			var meta *docMeta
-			// TODO(brett19): Don't ignore the error here
-			json.Unmarshal(result.Ops[0].Value, &meta)
+			if err := json.Unmarshal(result.Ops[0].Value, &meta); err != nil {
+				cb(nil, err)
+				return
+			}
 
 			var txnMeta *jsonTxnXattr
 			if result.Ops[1].Err == nil {
+				// Doc isn't currently in a txn.
 				var txnMetaVal jsonTxnXattr
-				// TODO(brett19): Don't ignore the error here
-				json.Unmarshal(result.Ops[1].Value, &txnMetaVal)
+				if err := json.Unmarshal(result.Ops[1].Value, &txnMetaVal); err != nil {
+					cb(nil, err)
+					return
+				}
+
 				txnMeta = &txnMetaVal
 
 				cb(&getDoc{
-					Body:    result.Ops[2].Value,
+					Body:    docBody,
 					TxnMeta: txnMeta,
 					DocMeta: meta,
 					Cas:     result.Cas,
@@ -286,7 +309,7 @@ func (t *transactionAttempt) getFullDoc(opts GetOptions, deadline time.Time,
 			}
 
 			cb(&getDoc{
-				Body:    result.Ops[2].Value,
+				Body:    docBody,
 				DocMeta: meta,
 				Cas:     result.Cas,
 			}, nil)

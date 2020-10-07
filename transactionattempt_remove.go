@@ -46,7 +46,8 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 				cb(nil, err)
 				return
 			}
-			err = t.confirmATRPending(agent, scopeName, collectionName, key, func(err error) {
+
+			t.confirmATRPending(agent, scopeName, collectionName, key, func(err error) {
 				if err != nil {
 					cb(nil, err)
 					return
@@ -83,10 +84,6 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 					cb(res, nil)
 				})
 			})
-			if err != nil {
-				cb(nil, err)
-				return
-			}
 		})
 	})
 
@@ -133,8 +130,11 @@ func (t *transactionAttempt) remove(doc *GetResult, cb StoreCallback) {
 			RevID       string `json:"revid,omitempty"`
 		})(&restore)
 
-		txnMetaBytes, _ := json.Marshal(txnMeta)
-		// TODO(brett19): Don't ignore the error here.
+		txnMetaBytes, err := json.Marshal(txnMeta)
+		if err != nil {
+			cb(nil, err)
+			return
+		}
 
 		var duraTimeout time.Duration
 		var deadline time.Time

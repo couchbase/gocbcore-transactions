@@ -72,7 +72,7 @@ func (t *transactionAttempt) abort(
 
 func (t *transactionAttempt) setATRAborted(
 	cb func(error),
-) error {
+) {
 	t.hooks.BeforeATRAborted(func(err error) {
 		if err != nil {
 			cb(err)
@@ -111,8 +111,12 @@ func (t *transactionAttempt) setATRAborted(
 		t.txnAtrSection.Add(1)
 		t.lock.Unlock()
 
+		var marshalErr error
 		atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag) gocbcore.SubDocOp {
-			bytes, _ := json.Marshal(data)
+			bytes, err := json.Marshal(data)
+			if err != nil {
+				marshalErr = err
+			}
 
 			return gocbcore.SubDocOp{
 				Op:    memd.SubDocOpDictSet,
@@ -129,7 +133,7 @@ func (t *transactionAttempt) setATRAborted(
 			duraTimeout = t.keyValueTimeout * 10 / 9
 		}
 
-		_, err = atrAgent.MutateIn(gocbcore.MutateInOptions{
+		opts := gocbcore.MutateInOptions{
 			ScopeName:      atrScopeName,
 			CollectionName: atrCollectionName,
 			Key:            atrKey,
@@ -145,7 +149,14 @@ func (t *transactionAttempt) setATRAborted(
 			DurabilityLevelTimeout: duraTimeout,
 			Flags:                  memd.SubdocDocFlagNone,
 			Deadline:               deadline,
-		}, func(result *gocbcore.MutateInResult, err error) {
+		}
+
+		if marshalErr != nil {
+			cb(err)
+			return
+		}
+
+		_, err = atrAgent.MutateIn(opts, func(result *gocbcore.MutateInResult, err error) {
 			if err != nil {
 				t.lock.Lock()
 				t.txnAtrSection.Done()
@@ -180,7 +191,7 @@ func (t *transactionAttempt) setATRAborted(
 			cb(err)
 		}
 	})
-	return nil
+	return
 }
 
 func (t *transactionAttempt) rollbackInsMutation(mutation stagedMutation, cb func(error)) {
@@ -386,7 +397,7 @@ func (t *transactionAttempt) rollbackRepRemMutation(mutation stagedMutation, cb 
 
 func (t *transactionAttempt) setATRRolledBack(
 	cb func(error),
-) error {
+) {
 	handler := func(err error) {
 		if err != nil {
 			ec := t.classifyError(err)
@@ -461,8 +472,12 @@ func (t *transactionAttempt) setATRRolledBack(
 			t.txnAtrSection.Add(1)
 			t.lock.Unlock()
 
+			var marshalErr error
 			atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag) gocbcore.SubDocOp {
-				bytes, _ := json.Marshal(data)
+				bytes, err := json.Marshal(data)
+				if err != nil {
+					marshalErr = err
+				}
 
 				return gocbcore.SubDocOp{
 					Op:    memd.SubDocOpDictSet,
@@ -479,7 +494,7 @@ func (t *transactionAttempt) setATRRolledBack(
 				duraTimeout = t.keyValueTimeout * 10 / 9
 			}
 
-			_, err = atrAgent.MutateIn(gocbcore.MutateInOptions{
+			opts := gocbcore.MutateInOptions{
 				ScopeName:      atrScopeName,
 				CollectionName: atrCollectionName,
 				Key:            atrKey,
@@ -491,7 +506,14 @@ func (t *transactionAttempt) setATRRolledBack(
 				DurabilityLevelTimeout: duraTimeout,
 				Deadline:               deadline,
 				Flags:                  memd.SubdocDocFlagNone,
-			}, func(result *gocbcore.MutateInResult, err error) {
+			}
+
+			if marshalErr != nil {
+				handler(err)
+				return
+			}
+
+			_, err = atrAgent.MutateIn(opts, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
 					t.lock.Lock()
 					t.txnAtrSection.Done()
@@ -525,7 +547,7 @@ func (t *transactionAttempt) setATRRolledBack(
 		})
 	})
 
-	return nil
+	return
 }
 
 func (t *transactionAttempt) Rollback(cb RollbackCallback) error {

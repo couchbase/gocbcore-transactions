@@ -463,7 +463,7 @@ func (t *transactionAttempt) Commit(cb CommitCallback) error {
 
 func (t *transactionAttempt) setATRCompleted(
 	cb func(error),
-) error {
+) {
 	handler := func(err error) {
 		if err == nil {
 			cb(nil)
@@ -511,8 +511,12 @@ func (t *transactionAttempt) setATRCompleted(
 			t.txnAtrSection.Add(1)
 			t.lock.Unlock()
 
+			var marshalErr error
 			atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag) gocbcore.SubDocOp {
-				bytes, _ := json.Marshal(data)
+				bytes, err := json.Marshal(data)
+				if err != nil {
+					marshalErr = err
+				}
 
 				return gocbcore.SubDocOp{
 					Op:    memd.SubDocOpDictSet,
@@ -529,7 +533,7 @@ func (t *transactionAttempt) setATRCompleted(
 				duraTimeout = t.keyValueTimeout * 10 / 9
 			}
 
-			_, err = atrAgent.MutateIn(gocbcore.MutateInOptions{
+			opts := gocbcore.MutateInOptions{
 				ScopeName:      atrScopeName,
 				CollectionName: atrCollectionName,
 				Key:            atrKey,
@@ -541,7 +545,14 @@ func (t *transactionAttempt) setATRCompleted(
 				DurabilityLevelTimeout: duraTimeout,
 				Deadline:               deadline,
 				Flags:                  memd.SubdocDocFlagNone,
-			}, func(result *gocbcore.MutateInResult, err error) {
+			}
+
+			if marshalErr != nil {
+				handler(marshalErr)
+				return
+			}
+
+			_, err = atrAgent.MutateIn(opts, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
 					t.lock.Lock()
 					t.txnAtrSection.Done()
@@ -580,7 +591,7 @@ func (t *transactionAttempt) setATRCompleted(
 		})
 	})
 
-	return nil
+	return
 }
 
 func (t *transactionAttempt) setATRCommittedAmbiguityResolution(cb func(error)) {
@@ -685,19 +696,23 @@ func (t *transactionAttempt) setATRCommittedAmbiguityResolution(cb func(error)) 
 				}
 
 				var st jsonAtrState
-				// TODO(brett19): Don't ignore the error here
-				json.Unmarshal(result.Ops[0].Value, &st)
+				if err := json.Unmarshal(result.Ops[0].Value, &st); err != nil {
+					handler("", err)
+					return
+				}
 
 				handler(st, nil)
 			})
-
+			if err != nil {
+				handler("", err)
+			}
 		})
 	})
 }
 
 func (t *transactionAttempt) setATRCommitted(
 	cb func(error),
-) error {
+) {
 	handler := func(err error) {
 		if err == nil {
 			cb(nil)
@@ -781,8 +796,12 @@ func (t *transactionAttempt) setATRCommitted(
 				return
 			}
 
+			var marshalErr error
 			atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag) gocbcore.SubDocOp {
-				bytes, _ := json.Marshal(data)
+				bytes, err := json.Marshal(data)
+				if err != nil {
+					marshalErr = err
+				}
 
 				return gocbcore.SubDocOp{
 					Op:    memd.SubDocOpDictSet,
@@ -799,7 +818,7 @@ func (t *transactionAttempt) setATRCommitted(
 				duraTimeout = t.keyValueTimeout * 10 / 9
 			}
 
-			_, err = atrAgent.MutateIn(gocbcore.MutateInOptions{
+			opts := gocbcore.MutateInOptions{
 				ScopeName:      atrScopeName,
 				CollectionName: atrCollectionName,
 				Key:            atrKey,
@@ -815,7 +834,14 @@ func (t *transactionAttempt) setATRCommitted(
 				DurabilityLevelTimeout: duraTimeout,
 				Flags:                  memd.SubdocDocFlagNone,
 				Deadline:               deadline,
-			}, func(result *gocbcore.MutateInResult, err error) {
+			}
+
+			if marshalErr != nil {
+				handler(marshalErr)
+				return
+			}
+
+			_, err = atrAgent.MutateIn(opts, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
 					handler(err)
 					return
@@ -840,5 +866,5 @@ func (t *transactionAttempt) setATRCommitted(
 			}
 		})
 	})
-	return nil
+	return
 }
