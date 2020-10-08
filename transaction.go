@@ -13,6 +13,7 @@ import (
 // stage mutations and finally commit them.
 type Transaction struct {
 	expiryTime       time.Time
+	startTime        time.Time
 	keyValueTimeout  time.Duration
 	kvDurableTimeout time.Duration
 	durabilityLevel  DurabilityLevel
@@ -56,6 +57,7 @@ func (t *Transaction) NewAttempt() error {
 
 	t.attempt = &transactionAttempt{
 		expiryTime:      t.expiryTime,
+		txnStartTime:    t.startTime,
 		keyValueTimeout: t.keyValueTimeout,
 		durabilityLevel: t.durabilityLevel,
 		transactionID:   t.transactionID,

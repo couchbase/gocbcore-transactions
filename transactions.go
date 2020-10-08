@@ -83,8 +83,10 @@ func (t *Transactions) BeginTransaction(perConfig *PerTransactionConfig) (*Trans
 		}
 	}
 
+	now := time.Now()
 	return &Transaction{
-		expiryTime:       time.Now().Add(expirationTime),
+		expiryTime:       now.Add(expirationTime),
+		startTime:        now,
 		durabilityLevel:  durabilityLevel,
 		transactionID:    transactionUUID,
 		keyValueTimeout:  keyValueTimeout,

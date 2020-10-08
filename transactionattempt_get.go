@@ -147,7 +147,7 @@ func (t *transactionAttempt) get(opts GetOptions, resolvingATREntry string, cb G
 				return
 			}
 
-			t.getTxnState(opts, deadline, doc.TxnMeta, func(state jsonAtrState, err error) {
+			t.getTxnState(opts, deadline, doc.TxnMeta, func(attempt *jsonAtrAttempt, err error) {
 				if err != nil {
 					ec := t.classifyError(err)
 					if errors.Is(err, ErrAtrNotFound) {
@@ -172,6 +172,7 @@ func (t *transactionAttempt) get(opts GetOptions, resolvingATREntry string, cb G
 					return
 				}
 
+				state := jsonAtrState(attempt.State)
 				if state == jsonAtrStateCommitted || state == jsonAtrStateCompleted {
 					if doc.TxnMeta.Operation.Type == jsonMutationRemove {
 

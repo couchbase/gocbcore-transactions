@@ -16,6 +16,7 @@ var crc32cMacro = []byte("\"${Mutation.value_crc32c}\"")
 type transactionAttempt struct {
 	// immutable state
 	expiryTime      time.Time
+	txnStartTime    time.Time
 	keyValueTimeout time.Duration
 	durabilityLevel DurabilityLevel
 	transactionID   string
@@ -318,7 +319,7 @@ func (t *transactionAttempt) getStagedMutationLocked(bucketName, scopeName, coll
 	return 0, nil
 }
 
-func (t *transactionAttempt) getTxnState(opts GetOptions, deadline time.Time, xattr *jsonTxnXattr, cb func(jsonAtrState, error)) {
+func (t *transactionAttempt) getTxnState(opts GetOptions, deadline time.Time, xattr *jsonTxnXattr, cb func(*jsonAtrAttempt, error)) {
 	_, err := opts.Agent.LookupIn(gocbcore.LookupInOptions{
 		ScopeName:      opts.ScopeName,
 		CollectionName: opts.CollectionName,
@@ -326,7 +327,7 @@ func (t *transactionAttempt) getTxnState(opts GetOptions, deadline time.Time, xa
 		Ops: []gocbcore.SubDocOp{
 			{
 				Op:    memd.SubDocOpGet,
-				Path:  "attempts." + xattr.ID.Attempt + ".st",
+				Path:  "attempts." + xattr.ID.Attempt,
 				Flags: memd.SubdocFlagXattrPath,
 			},
 		},
@@ -334,11 +335,11 @@ func (t *transactionAttempt) getTxnState(opts GetOptions, deadline time.Time, xa
 	}, func(result *gocbcore.LookupInResult, err error) {
 		if err != nil {
 			if errors.Is(err, gocbcore.ErrDocumentNotFound) {
-				cb("", ErrAtrNotFound)
+				cb(nil, ErrAtrNotFound)
 				return
 			}
 
-			cb("", err)
+			cb(nil, err)
 			return
 		}
 
@@ -346,23 +347,23 @@ func (t *transactionAttempt) getTxnState(opts GetOptions, deadline time.Time, xa
 		if err != nil {
 			if errors.Is(err, gocbcore.ErrPathNotFound) {
 				// TODO(brett19): Discuss with Graham if this is correct.
-				cb("", ErrAtrEntryNotFound)
+				cb(nil, ErrAtrEntryNotFound)
 				return
 			}
 
-			cb("", err)
+			cb(nil, err)
 			return
 		}
 
-		var txnState jsonAtrState
-		if err := json.Unmarshal(result.Ops[0].Value, &txnState); err != nil {
-			cb("", err)
+		var txnAttempt *jsonAtrAttempt
+		if err := json.Unmarshal(result.Ops[0].Value, &txnAttempt); err != nil {
+			cb(nil, err)
 		}
 
-		cb(txnState, nil)
+		cb(txnAttempt, nil)
 	})
 	if err != nil {
-		cb("", err)
+		cb(nil, err)
 		return
 	}
 }
@@ -459,7 +460,7 @@ func (t *transactionAttempt) writeWriteConflictPoll(res *GetResult, cb func(erro
 					ScopeName:      res.Meta.TxnMeta.ATR.ScopeName,
 					CollectionName: res.Meta.TxnMeta.ATR.CollectionName,
 					Key:            []byte(res.Meta.TxnMeta.ATR.DocID),
-				}, deadline, res.Meta.TxnMeta, func(state jsonAtrState, err error) {
+				}, deadline, res.Meta.TxnMeta, func(attempt *jsonAtrAttempt, err error) {
 					if err == ErrAtrEntryNotFound {
 						// The ATR isn't there anymore, which counts as it being completed.
 						handler(nil)
@@ -469,6 +470,13 @@ func (t *transactionAttempt) writeWriteConflictPoll(res *GetResult, cb func(erro
 						return
 					}
 
+					td := time.Duration(attempt.ExpiryTime) * time.Millisecond
+					if t.txnStartTime.Add(td).Before(time.Now()) {
+						handler(nil)
+						return
+					}
+
+					state := jsonAtrState(attempt.State)
 					if state == jsonAtrStateCommitted || state == jsonAtrStateRolledBack {
 						// If we have progressed enough to continue, let's do that.
 						handler(nil)
