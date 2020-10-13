@@ -45,7 +45,7 @@ func (t *transactionAttempt) unstageRepMutation(mutation stagedMutation, casZero
 			return
 		case ErrorClassFailHard:
 			failErr = t.createAndStashOperationFailedError(false, true, err,
-				ErrorReasonTransactionFailed, ec, true)
+				ErrorReasonTransactionFailedPostCommit, ec, true)
 		default:
 			failErr = t.createAndStashOperationFailedError(false, true, err,
 				ErrorReasonTransactionFailedPostCommit, ec, true)
@@ -177,7 +177,7 @@ func (t *transactionAttempt) unstageInsMutation(mutation stagedMutation, ambigui
 			failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailedPostCommit,
 				ec, true)
 		case ErrorClassFailHard:
-			failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed,
+			failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailedPostCommit,
 				ec, true)
 		default:
 			failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailedPostCommit,
@@ -280,7 +280,7 @@ func (t *transactionAttempt) unstageRemMutation(mutation stagedMutation, cb func
 				ErrorReasonTransactionFailedPostCommit, ec, true)
 		case ErrorClassFailHard:
 			failErr = t.createAndStashOperationFailedError(false, true, err,
-				ErrorReasonTransactionFailed, ec, true)
+				ErrorReasonTransactionFailedPostCommit, ec, true)
 		default:
 			failErr = t.createAndStashOperationFailedError(false, true, err,
 				ErrorReasonTransactionFailedPostCommit, ec, true)
@@ -484,7 +484,7 @@ func (t *transactionAttempt) setATRCompleted(
 		ec := t.classifyError(err)
 		switch ec {
 		case ErrorClassFailHard:
-			cb(t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec, true))
+			cb(t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailedPostCommit, ec, true))
 			return
 		}
 
