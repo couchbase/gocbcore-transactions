@@ -2,6 +2,7 @@ package transactions
 
 import (
 	"encoding/json"
+	"errors"
 	"github.com/couchbase/gocbcore/v9"
 	"github.com/couchbase/gocbcore/v9/memd"
 	"time"
@@ -436,13 +437,23 @@ func (t *transactionAttempt) Commit(cb CommitCallback) error {
 					for i := 0; i < numMutations; i++ {
 						// TODO(brett19): Handle errors here better
 						err := <-waitCh
-						if mutErr == nil && err != nil {
-							mutErr = err
+						if err != nil {
+							if mutErr == nil {
+								mutErr = err
+							} else {
+								// If the error isn't a failed post commit then we should use it instead.
+								var tErr *TransactionOperationFailedError
+								if errors.As(err, &tErr) {
+									if tErr.shouldRaise != ErrorReasonTransactionFailedPostCommit {
+										mutErr = err
+									}
+								}
+							}
 						}
 					}
 					if mutErr != nil {
 						// The unstage operations themselves will handle enhancing the error.
-						cb(err)
+						cb(mutErr)
 						return
 					}
 
