@@ -1,6 +1,7 @@
 package transactions
 
 import (
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -25,6 +26,9 @@ func Init(config *Config) (*Transactions, error) {
 		CleanupWindow:         60000 * time.Millisecond,
 		CleanupClientAttempts: true,
 		CleanupLostAttempts:   true,
+		BucketAgentProvider: func(bucketName string) (*gocbcore.Agent, error) {
+			return nil, errors.New("no bucket agent provider was specified")
+		},
 	}
 
 	if config == nil {
@@ -45,6 +49,9 @@ func Init(config *Config) (*Transactions, error) {
 	}
 	if config.Internal.Hooks == nil {
 		config.Internal.Hooks = &DefaultHooks{}
+	}
+	if config.BucketAgentProvider == nil {
+		config.BucketAgentProvider = defaultConfig.BucketAgentProvider
 	}
 
 	return &Transactions{
@@ -72,7 +79,7 @@ func (t *Transactions) BeginTransaction(perConfig *PerTransactionConfig) (*Trans
 		if perConfig.ExpirationTime != 0 {
 			expirationTime = perConfig.ExpirationTime
 		}
-		if perConfig.DurabilityLevel != DurabilityLevelUnset {
+		if perConfig.DurabilityLevel != DurabilityLevelUnknown {
 			durabilityLevel = perConfig.DurabilityLevel
 		}
 		if perConfig.KeyValueTimeout != 0 {
@@ -85,6 +92,7 @@ func (t *Transactions) BeginTransaction(perConfig *PerTransactionConfig) (*Trans
 
 	now := time.Now()
 	return &Transaction{
+		parent:           t,
 		expiryTime:       now.Add(expirationTime),
 		startTime:        now,
 		durabilityLevel:  durabilityLevel,
@@ -97,8 +105,42 @@ func (t *Transactions) BeginTransaction(perConfig *PerTransactionConfig) (*Trans
 
 // ResumeTransactionAttempt allows the resumption of an existing transaction attempt
 // which was previously serialized, potentially by a different transaction client.
-func (t *Transactions) ResumeTransactionAttempt(txnData []byte) (*Transaction, error) {
-	return nil, errors.New("not implemented")
+func (t *Transactions) ResumeTransactionAttempt(txnBytes []byte) (*Transaction, error) {
+	var txnData jsonSerializedAttempt
+	err := json.Unmarshal(txnBytes, &txnData)
+	if err != nil {
+		return nil, err
+	}
+
+	transactionUUID := txnData.ID.Transaction
+
+	durabilityLevel, err := durabilityLevelFromString(txnData.Config.DurabilityLevel)
+	if err != nil {
+		return nil, err
+	}
+
+	expirationTime := time.Duration(txnData.State.TimeLeftMs) * time.Millisecond
+	kvTimeout := time.Duration(txnData.Config.KvTimeoutMs) * time.Millisecond
+	kvDurableTimeout := time.Duration(txnData.Config.KvDurableTimeoutMs) * time.Millisecond
+
+	now := time.Now()
+	txn := &Transaction{
+		parent:           t,
+		expiryTime:       now.Add(expirationTime),
+		startTime:        now,
+		durabilityLevel:  durabilityLevel,
+		transactionID:    transactionUUID,
+		keyValueTimeout:  kvTimeout,
+		kvDurableTimeout: kvDurableTimeout,
+		hooks:            t.config.Internal.Hooks,
+	}
+
+	err = txn.resumeAttempt(&txnData)
+	if err != nil {
+		return nil, err
+	}
+
+	return txn, nil
 }
 
 // Close will shut down this Transactions object, shutting down all

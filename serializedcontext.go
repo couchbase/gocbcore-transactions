@@ -1,18 +1,33 @@
 package transactions
 
-// SerializedContext represents a transaction which has been serialized
-// for resumption at a later point in time.
-type SerializedContext struct {
+type jsonSerializedMutation struct {
+	Bucket     string `json:"bkt"`
+	Scope      string `json:"scp"`
+	Collection string `json:"coll"`
+	ID         string `json:"id"`
+	Cas        string `json:"cas"`
+	Type       string `json:"type"`
 }
 
-// EncodeAsString will encode this SerializedContext to a string which
-// can be decoded later to resume the transaction.
-func (c *SerializedContext) EncodeAsString() string {
-	return ""
-}
-
-// EncodeAsBytes will encode this SerializedContext to a set of bytes which
-// can be decoded later to resume the transaction.
-func (c *SerializedContext) EncodeAsBytes() []byte {
-	return []byte{}
+type jsonSerializedAttempt struct {
+	ID struct {
+		Transaction string `json:"txn"`
+		Attempt     string `json:"atmpt"`
+	} `json:"id"`
+	ATR struct {
+		Bucket     string `json:"bkt"`
+		Scope      string `json:"scp"`
+		Collection string `json:"coll"`
+		ID         string `json:"id"`
+	} `json:"atr"`
+	Config struct {
+		KvTimeoutMs        int    `json:"kvTimeoutMs"`
+		KvDurableTimeoutMs int    `json:"kvDurableTimeoutMs"`
+		DurabilityLevel    string `json:"durabilityLevel"`
+		NumAtrs            int    `json:"numAtrs"`
+	} `json:"config"`
+	State struct {
+		TimeLeftMs int `json:"timeLeftMs"`
+	} `json:"state"`
+	Mutations []jsonSerializedMutation `json:"mutations"`
 }

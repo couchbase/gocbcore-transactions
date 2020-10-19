@@ -2,7 +2,7 @@ package transactions
 
 import (
 	"encoding/json"
-	"errors"
+	"strconv"
 	"time"
 
 	gocbcore "github.com/couchbase/gocbcore/v9"
@@ -12,6 +12,8 @@ import (
 // Transaction represents a single active transaction, it can be used to
 // stage mutations and finally commit them.
 type Transaction struct {
+	parent *Transactions
+
 	expiryTime       time.Time
 	startTime        time.Time
 	keyValueTimeout  time.Duration
@@ -70,6 +72,65 @@ func (t *Transaction) NewAttempt() error {
 		atrScopeName:        "",
 		atrCollectionName:   "",
 		atrKey:              nil,
+		expiryOvertimeMode:  false,
+		hooks:               t.hooks,
+	}
+
+	return nil
+}
+
+func (t *Transaction) resumeAttempt(txnData *jsonSerializedAttempt) error {
+	attemptUUID := txnData.ID.Attempt
+
+	atrAgent, err := t.parent.config.BucketAgentProvider(txnData.ATR.Bucket)
+	if err != nil {
+		return err
+	}
+
+	stagedMutations := make([]*stagedMutation, len(txnData.Mutations))
+	for mutationIdx, mutationData := range txnData.Mutations {
+		agent, err := t.parent.config.BucketAgentProvider(mutationData.Bucket)
+		if err != nil {
+			return err
+		}
+
+		cas, err := strconv.ParseUint(mutationData.Cas, 10, 64)
+		if err != nil {
+			return err
+		}
+
+		opType, err := stagedMutationTypeFromString(mutationData.Type)
+		if err != nil {
+			return err
+		}
+
+		stagedMutations[mutationIdx] = &stagedMutation{
+			OpType:         opType,
+			Agent:          agent,
+			ScopeName:      mutationData.Scope,
+			CollectionName: mutationData.Collection,
+			Key:            []byte(mutationData.ID),
+			Cas:            gocbcore.Cas(cas),
+			Staged:         nil,
+			IsTombstone:    false,
+		}
+	}
+
+	t.attempt = &transactionAttempt{
+		expiryTime:      t.expiryTime,
+		txnStartTime:    t.startTime,
+		keyValueTimeout: t.keyValueTimeout,
+		durabilityLevel: t.durabilityLevel,
+		transactionID:   t.transactionID,
+
+		id:                  attemptUUID,
+		state:               AttemptStatePending,
+		stagedMutations:     stagedMutations,
+		finalMutationTokens: nil,
+		atrAgent:            atrAgent,
+		atrScopeName:        txnData.ATR.Scope,
+		atrCollectionName:   txnData.ATR.Collection,
+		atrKey:              []byte(txnData.ATR.ID),
 		expiryOvertimeMode:  false,
 		hooks:               t.hooks,
 	}
@@ -204,7 +265,9 @@ func (t *Transaction) Rollback(cb RollbackCallback) error {
 }
 
 // SerializeAttempt will serialize the current transaction attempt, allowing it
-// to be resumed later, potentially under a different transactions client.
-func (t *Transaction) SerializeAttempt() ([]byte, error) {
-	return nil, errors.New("not implemented")
+// to be resumed later, potentially under a different transactions client.  It
+// is no longer safe to use this attempt once this has occurred, a new attempt
+// must be started to use this object following this call.
+func (t *Transaction) SerializeAttempt(cb func([]byte, error)) error {
+	return t.attempt.Serialize(cb)
 }

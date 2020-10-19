@@ -12,7 +12,7 @@ func durabilityLevelToMemd(durabilityLevel DurabilityLevel) memd.DurabilityLevel
 		return memd.DurabilityLevelMajorityAndPersistOnMaster
 	case DurabilityLevelPersistToMajority:
 		return memd.DurabilityLevelPersistToMajority
-	case DurabilityLevelUnset:
+	case DurabilityLevelUnknown:
 		panic("unexpected unset durability level")
 	default:
 		panic("unexpected durability level")

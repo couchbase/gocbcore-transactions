@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -37,6 +38,57 @@ type transactionAttempt struct {
 	lock          sync.Mutex
 	txnAtrSection atomicWaitQueue
 	txnOpSection  atomicWaitQueue
+}
+
+func (t *transactionAttempt) Serialize(cb func([]byte, error)) error {
+	// TODO(brett19): I think this needs to guarentee the transaction attempts
+	// has already been started before generating the serialized result.
+
+	// TODO(brett19): Ensure ATR and Op critical sections are completed.
+	// This is probably not safe to do without first guarenteeing that all
+	// pending operations have completed, and all pending ATR changes
+	// have completed...
+	var res jsonSerializedAttempt
+
+	t.lock.Lock()
+
+	res.ID.Transaction = t.transactionID
+	res.ID.Attempt = t.id
+	res.ATR.Bucket = t.atrAgent.BucketName()
+	res.ATR.Scope = t.atrScopeName
+	res.ATR.Collection = t.atrCollectionName
+	res.ATR.ID = string(t.atrKey)
+
+	// TODO(brett19): Use durable rather than kv timeout during serialization.
+	res.Config.KvTimeoutMs = int(t.keyValueTimeout / time.Millisecond)
+	res.Config.KvDurableTimeoutMs = int(t.keyValueTimeout / time.Millisecond)
+	res.Config.DurabilityLevel = durabilityLevelToString(t.durabilityLevel)
+	res.Config.NumAtrs = 1024
+
+	res.State.TimeLeftMs = int(t.expiryTime.Sub(time.Now()) / time.Millisecond)
+
+	for _, mutation := range t.stagedMutations {
+		var mutationData jsonSerializedMutation
+
+		mutationData.Bucket = mutation.Agent.BucketName()
+		mutationData.Scope = mutation.ScopeName
+		mutationData.Collection = mutation.CollectionName
+		mutationData.ID = string(mutation.Key)
+		mutationData.Cas = fmt.Sprintf("%d", mutation.Cas)
+		mutationData.Type = stagedMutationTypeToString(mutation.OpType)
+
+		res.Mutations = append(res.Mutations, mutationData)
+	}
+
+	t.lock.Unlock()
+
+	resBytes, err := json.Marshal(res)
+	if err != nil {
+		return err
+	}
+
+	cb(resBytes, nil)
+	return nil
 }
 
 func (t *transactionAttempt) GetMutations() []StagedMutation {

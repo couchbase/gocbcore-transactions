@@ -5,10 +5,11 @@ import (
 	"testing"
 
 	gocb "github.com/couchbase/gocb/v2"
+	"github.com/couchbase/gocbcore/v9"
 )
 
 func TestSomething(t *testing.T) {
-	cluster, err := gocb.Connect("couchbase://172.23.111.142", gocb.ClusterOptions{
+	cluster, err := gocb.Connect("couchbase://172.23.111.130", gocb.ClusterOptions{
 		Username: "Administrator",
 		Password: "password",
 	})
@@ -50,6 +51,11 @@ func TestSomething(t *testing.T) {
 
 	transactions, err := Init(&Config{
 		DurabilityLevel: DurabilityLevelNone,
+		BucketAgentProvider: func(bucketName string) (*gocbcore.Agent, error) {
+			// We can always return just this one agent as we only actually
+			// use a single bucket for this entire test.
+			return agent, nil
+		},
 	})
 	if err != nil {
 		log.Printf("Init failed: %+v", err)
@@ -89,6 +95,24 @@ func TestSomething(t *testing.T) {
 	log.Printf("Insert result: %+v", insRes)
 
 	log.Printf("TXNATMPT: %+v", txn.attempt)
+
+	log.Printf("SERIALIZING...")
+
+	txnBytes, err := testBlkSerialize(txn)
+	if err != nil {
+		log.Printf("Serialize failed: %+v", err)
+		panic(err)
+	}
+
+	log.Printf("RESUMING...")
+
+	txn, err = transactions.ResumeTransactionAttempt(txnBytes)
+	if err != nil {
+		log.Printf("Resume failed: %+v", err)
+		panic(err)
+	}
+
+	log.Printf("RESUMED...")
 
 	getRes, err := testBlkGet(txn, GetOptions{
 		Agent:          agent,

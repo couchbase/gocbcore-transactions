@@ -91,3 +91,18 @@ func testBlkRollback(txn *Transaction) (errOut error) {
 	<-waitCh
 	return
 }
+
+func testBlkSerialize(txn *Transaction) (txnBytesOut []byte, errOut error) {
+	waitCh := make(chan struct{}, 1)
+	err := txn.SerializeAttempt(func(txnBytes []byte, err error) {
+		txnBytesOut = txnBytes
+		errOut = err
+		waitCh <- struct{}{}
+	})
+	if err != nil {
+		errOut = err
+		return
+	}
+	<-waitCh
+	return
+}
