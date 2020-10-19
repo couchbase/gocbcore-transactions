@@ -49,7 +49,7 @@ var (
 	ErrPreviousOperationFailed = errors.New("previous operation failed")
 )
 
-// ErrTransactionOperationFailed is used when a transaction operation fails.
+// TransactionOperationFailedError is used when a transaction operation fails.
 // Internal: This should never be used and is not supported.
 type TransactionOperationFailedError struct {
 	shouldRetry       bool
