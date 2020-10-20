@@ -41,6 +41,28 @@ type TransactionHooks interface {
 	HasExpiredClientSideHook(stage string, docID []byte, cb func(bool, error))
 }
 
+// CleanUpHooks provides a number of internal hooks used for testing.
+// Internal: This should never be used and is not supported.
+type CleanUpHooks interface {
+	BeforeATRGet(id []byte, cb func(error))
+	BeforeDocGet(id []byte, cb func(error))
+	BeforeRemoveLinks(id []byte, cb func(error))
+	BeforeCommitDoc(id []byte, cb func(error))
+	BeforeRemoveDocStagedForRemoval(id []byte, cb func(error))
+	BeforeRemoveDoc(id []byte, cb func(error))
+	BeforeATRRemove(id []byte, cb func(error))
+}
+
+// ClientRecordHooks provides a number of internal hooks used for testing.
+// Internal: This should never be used and is not supported.
+type ClientRecordHooks interface {
+	BeforeCreateRecord() error
+	BeforeRemoveClient() error
+	BeforeUpdateCAS() error
+	BeforeGetRecord() error
+	BeforeUpdateRecord() error
+}
+
 // DefaultHooks is default set of noop hooks used within the library.
 // Internal: This should never be used and is not supported.
 type DefaultHooks struct {
@@ -224,6 +246,39 @@ func (dh *DefaultHooks) RandomATRIDForVbucket(vbID []byte, cb func(string, error
 // HasExpiredClientSideHook checks if a transaction has expired.
 func (dh *DefaultHooks) HasExpiredClientSideHook(stage string, docID []byte, cb func(bool, error)) {
 	cb(false, nil)
+}
+
+// DefaultCleanupHooks is default set of noop hooks used within the library.
+// Internal: This should never be used and is not supported.
+type DefaultCleanupHooks struct {
+}
+
+func (dh *DefaultCleanupHooks) BeforeATRGet(id []byte, cb func(error)) {
+	cb(nil)
+}
+
+func (dh *DefaultCleanupHooks) BeforeDocGet(id []byte, cb func(error)) {
+	cb(nil)
+}
+
+func (dh *DefaultCleanupHooks) BeforeRemoveLinks(id []byte, cb func(error)) {
+	cb(nil)
+}
+
+func (dh *DefaultCleanupHooks) BeforeCommitDoc(id []byte, cb func(error)) {
+	cb(nil)
+}
+
+func (dh *DefaultCleanupHooks) BeforeRemoveDocStagedForRemoval(id []byte, cb func(error)) {
+	cb(nil)
+}
+
+func (dh *DefaultCleanupHooks) BeforeRemoveDoc(id []byte, cb func(error)) {
+	cb(nil)
+}
+
+func (dh *DefaultCleanupHooks) BeforeATRRemove(id []byte, cb func(error)) {
+	cb(nil)
 }
 
 const (

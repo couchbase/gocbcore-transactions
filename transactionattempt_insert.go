@@ -9,7 +9,16 @@ import (
 )
 
 func (t *transactionAttempt) Insert(opts InsertOptions, cb StoreCallback) error {
-	return t.insert(opts, 0, cb)
+	return t.insert(opts, 0, func(result *GetResult, err error) {
+		var tErr *TransactionOperationFailedError
+		if errors.As(err, &tErr) {
+			if tErr.shouldNotRollback {
+				t.addCleanupRequest(t.createCleanUpRequest())
+			}
+		}
+
+		cb(result, err)
+	})
 }
 
 func (t *transactionAttempt) insert(opts InsertOptions, cas gocbcore.Cas, cb StoreCallback) error {

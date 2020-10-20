@@ -2,6 +2,7 @@ package transactions
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/couchbase/gocbcore/v9"
 	"github.com/couchbase/gocbcore/v9/memd"
@@ -9,6 +10,19 @@ import (
 )
 
 func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error {
+	return t.remove(opts, func(result *GetResult, err error) {
+		var tErr *TransactionOperationFailedError
+		if errors.As(err, &tErr) {
+			if tErr.shouldNotRollback {
+				t.addCleanupRequest(t.createCleanUpRequest())
+			}
+		}
+
+		cb(result, err)
+	})
+}
+
+func (t *transactionAttempt) remove(opts RemoveOptions, cb StoreCallback) error {
 	if err := t.checkDone(); err != nil {
 		ec := t.classifyError(err)
 		return t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec, false)
@@ -53,7 +67,7 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 					return
 				}
 
-				t.remove(opts.Document, func(res *GetResult, err error) {
+				t.stagedRemove(opts.Document, func(res *GetResult, err error) {
 					if err != nil {
 						var failErr error
 						ec := t.classifyError(err)
@@ -90,7 +104,7 @@ func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error 
 	return nil
 }
 
-func (t *transactionAttempt) remove(doc *GetResult, cb StoreCallback) {
+func (t *transactionAttempt) stagedRemove(doc *GetResult, cb StoreCallback) {
 	t.hooks.BeforeStagedRemove(doc.key, func(err error) {
 		if err != nil {
 			cb(nil, err)

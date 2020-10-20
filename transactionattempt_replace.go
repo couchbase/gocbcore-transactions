@@ -2,6 +2,7 @@ package transactions
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -10,6 +11,19 @@ import (
 )
 
 func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) error {
+	return t.replace(opts, func(result *GetResult, err error) {
+		var tErr *TransactionOperationFailedError
+		if errors.As(err, &tErr) {
+			if tErr.shouldNotRollback {
+				t.addCleanupRequest(t.createCleanUpRequest())
+			}
+		}
+
+		cb(result, err)
+	})
+}
+
+func (t *transactionAttempt) replace(opts ReplaceOptions, cb StoreCallback) error {
 	if err := t.checkDone(); err != nil {
 		ec := t.classifyError(err)
 		return t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, false)

@@ -60,6 +60,10 @@ func durabilityLevelFromString(level string) (DurabilityLevel, error) {
 	return DurabilityLevelUnknown, errors.New("invalid durability level string")
 }
 
+// BucketAgentProviderFn is a function used to provide an agent for
+// a particular bucket by name.
+type BucketAgentProviderFn func(bucketName string) (*gocbcore.Agent, error)
+
 // Config specifies various tunable options related to transactions.
 type Config struct {
 	// ExpirationTime sets the maximum time that transactions created
@@ -89,18 +93,22 @@ type Config struct {
 	// to cleanup any ‘lost’ transaction attempts.
 	CleanupLostAttempts bool
 
+	// CleanupQueueSize controls the maximum queue size for the cleanup thread.
+	CleanupQueueSize uint32
+
 	// BucketAgentProvider provides a function which returns an agent for
 	// a particular bucket by name.
-	BucketAgentProvider func(bucketName string) (*gocbcore.Agent, error)
+	BucketAgentProvider BucketAgentProviderFn
 
 	// Internal specifies a set of options for internal use.
 	// Internal: This should never be used and is not supported.
 	Internal struct {
-		Hooks TransactionHooks
+		Hooks        TransactionHooks
+		CleanUpHooks CleanUpHooks
 	}
 }
 
-//PerTransactionConfig specifies options which can be overriden on a per transaction basis.
+// PerTransactionConfig specifies options which can be overriden on a per transaction basis.
 type PerTransactionConfig struct {
 	// ExpirationTime sets the maximum time that this transaction will
 	// run for, before expiring.

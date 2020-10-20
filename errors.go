@@ -39,8 +39,8 @@ var (
 	// ErrDocAlreadyInTransaction indicates that a document is already in a transaction.
 	ErrDocAlreadyInTransaction = errors.New("doc already in transaction")
 
-	// ErrIllegalState is used for when a transaction enters an illegal state.
-	ErrIllegalState = errors.New("illegal state")
+	// ErrIllegalState is used for when a transaction enters an illegal State.
+	ErrIllegalState = errors.New("illegal State")
 
 	// ErrTransactionAbortedExternally indicates the transaction was aborted externally.
 	ErrTransactionAbortedExternally = errors.New("transaction aborted externally")

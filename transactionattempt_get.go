@@ -12,6 +12,13 @@ import (
 func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 	return t.get(opts, "", func(result *GetResult, err error) {
 		if err != nil {
+			var tErr *TransactionOperationFailedError
+			if errors.As(err, &tErr) {
+				if tErr.shouldNotRollback {
+					t.addCleanupRequest(t.createCleanUpRequest())
+				}
+			}
+
 			cb(nil, err)
 			return
 		}

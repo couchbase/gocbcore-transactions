@@ -9,6 +9,8 @@ import (
 	"github.com/google/uuid"
 )
 
+type addCleanupRequest func(req *CleanupRequest) bool
+
 // Transaction represents a single active transaction, it can be used to
 // stage mutations and finally commit them.
 type Transaction struct {
@@ -23,6 +25,8 @@ type Transaction struct {
 	transactionID string
 	attempt       *transactionAttempt
 	hooks         TransactionHooks
+
+	addCleanupRequest addCleanupRequest
 }
 
 // ID returns the transaction ID of this transaction.
@@ -74,6 +78,8 @@ func (t *Transaction) NewAttempt() error {
 		atrKey:              nil,
 		expiryOvertimeMode:  false,
 		hooks:               t.hooks,
+
+		addCleanupRequest: t.addCleanupRequest,
 	}
 
 	return nil
@@ -133,6 +139,7 @@ func (t *Transaction) resumeAttempt(txnData *jsonSerializedAttempt) error {
 		atrKey:              []byte(txnData.ATR.ID),
 		expiryOvertimeMode:  false,
 		hooks:               t.hooks,
+		addCleanupRequest:   t.addCleanupRequest,
 	}
 
 	return nil

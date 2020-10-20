@@ -61,6 +61,7 @@ type jsonTxnXattr struct {
 	Operation struct {
 		Type   jsonMutationType `json:"type,omitempty"`
 		Staged json.RawMessage  `json:"stgd,omitempty"`
+		CRC32  string           `json:"crc32,omitempty"`
 	} `json:"op,omitempty"`
 	Restore *struct {
 		OriginalCAS string `json:"CAS,omitempty"`
@@ -73,6 +74,7 @@ type docMeta struct {
 	Cas        string `json:"CAS"`
 	RevID      string `json:"revid"`
 	Expiration uint   `json:"exptime"`
+	CRC32      string `json:"value_crc32c,omitempty"`
 }
 
 type getDoc struct {

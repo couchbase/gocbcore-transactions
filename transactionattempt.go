@@ -38,6 +38,8 @@ type transactionAttempt struct {
 	lock          sync.Mutex
 	txnAtrSection atomicWaitQueue
 	txnOpSection  atomicWaitQueue
+
+	addCleanupRequest addCleanupRequest
 }
 
 func (t *transactionAttempt) Serialize(cb func([]byte, error)) error {
@@ -354,8 +356,6 @@ func (t *transactionAttempt) confirmATRPending(
 			}
 		})
 	})
-
-	return
 }
 
 func (t *transactionAttempt) getStagedMutationLocked(bucketName, scopeName, collectionName string, key []byte) (int, *stagedMutation) {
@@ -542,4 +542,39 @@ func (t *transactionAttempt) writeWriteConflictPoll(res *GetResult, cb func(erro
 		})
 	}
 	onePoll()
+}
+
+func (t *transactionAttempt) createCleanUpRequest() *CleanupRequest {
+	var inserts []DocRecord
+	var replaces []DocRecord
+	var removes []DocRecord
+	for _, staged := range t.stagedMutations {
+		dr := DocRecord{
+			CollectionName: staged.CollectionName,
+			ScopeName:      staged.ScopeName,
+			BucketName:     staged.Agent.BucketName(),
+			ID:             staged.Key,
+		}
+		switch staged.OpType {
+		case StagedMutationInsert:
+			inserts = append(inserts, dr)
+		case StagedMutationReplace:
+			replaces = append(replaces, dr)
+		case StagedMutationRemove:
+			removes = append(removes, dr)
+		}
+	}
+
+	return &CleanupRequest{
+		AttemptID:         t.id,
+		AtrID:             t.atrKey,
+		AtrCollectionName: t.atrCollectionName,
+		AtrScopeName:      t.atrScopeName,
+		AtrBucketName:     t.atrAgent.BucketName(),
+		Inserts:           inserts,
+		Replaces:          replaces,
+		Removes:           removes,
+		State:             t.state,
+		readyTime:         t.expiryTime,
+	}
 }

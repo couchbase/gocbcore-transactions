@@ -10,8 +10,7 @@ import (
 func (t *transactionAttempt) abort(
 	cb func(error),
 ) {
-	var handler func(err error)
-	handler = func(err error) {
+	handler := func(err error) {
 		if err != nil {
 			ec := t.classifyError(err)
 
@@ -195,8 +194,7 @@ func (t *transactionAttempt) setATRAborted(
 }
 
 func (t *transactionAttempt) rollbackInsMutation(mutation stagedMutation, cb func(error)) {
-	var handler func(error)
-	handler = func(err error) {
+	handler := func(err error) {
 		if err != nil {
 			ec := t.classifyError(err)
 			if t.expiryOvertimeMode {
@@ -295,8 +293,7 @@ func (t *transactionAttempt) rollbackInsMutation(mutation stagedMutation, cb fun
 }
 
 func (t *transactionAttempt) rollbackRepRemMutation(mutation stagedMutation, cb func(error)) {
-	var handler func(error)
-	handler = func(err error) {
+	handler := func(err error) {
 		if err != nil {
 			ec := t.classifyError(err)
 			if t.expiryOvertimeMode {
@@ -551,6 +548,16 @@ func (t *transactionAttempt) setATRRolledBack(
 }
 
 func (t *transactionAttempt) Rollback(cb RollbackCallback) error {
+	t.rollback(func(err error) {
+		t.addCleanupRequest(t.createCleanUpRequest())
+
+		cb(err)
+	})
+
+	return nil
+}
+
+func (t *transactionAttempt) rollback(cb RollbackCallback) {
 	t.txnOpSection.Wait(func() {
 		t.lock.Lock()
 		if t.state == AttemptStateNothingWritten {
@@ -616,6 +623,4 @@ func (t *transactionAttempt) Rollback(cb RollbackCallback) error {
 			}()
 		})
 	})
-
-	return nil
 }

@@ -1,6 +1,6 @@
 package transactions
 
-// AttemptState represents the current state of a transaction
+// AttemptState represents the current State of a transaction
 type AttemptState int
 
 const (

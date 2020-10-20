@@ -351,6 +351,21 @@ func (t *transactionAttempt) unstageRemMutation(mutation stagedMutation, cb func
 }
 
 func (t *transactionAttempt) Commit(cb CommitCallback) error {
+	t.commit(func(err error) {
+		t.addCleanupRequest(t.createCleanUpRequest())
+
+		if err != nil {
+			cb(err)
+			return
+		}
+
+		cb(nil)
+	})
+
+	return nil
+}
+
+func (t *transactionAttempt) commit(cb CommitCallback) {
 	t.txnOpSection.Wait(func() {
 		t.lock.Lock()
 		if t.state == AttemptStateNothingWritten {
@@ -469,7 +484,6 @@ func (t *transactionAttempt) Commit(cb CommitCallback) error {
 			})
 		})
 	})
-	return nil
 }
 
 func (t *transactionAttempt) setATRCompleted(
@@ -601,8 +615,6 @@ func (t *transactionAttempt) setATRCompleted(
 			}
 		})
 	})
-
-	return
 }
 
 func (t *transactionAttempt) setATRCommittedAmbiguityResolution(cb func(error)) {
@@ -877,5 +889,4 @@ func (t *transactionAttempt) setATRCommitted(
 			}
 		})
 	})
-	return
 }

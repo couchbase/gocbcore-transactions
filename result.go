@@ -4,7 +4,7 @@ import (
 	gocbcore "github.com/couchbase/gocbcore/v9"
 )
 
-// MutationToken holds the mutation state information from an operation.
+// MutationToken holds the mutation State information from an operation.
 type MutationToken struct {
 	BucketName string
 	gocbcore.MutationToken
@@ -36,7 +36,7 @@ type Result struct {
 	// this transaction.
 	Attempts []Attempt
 
-	// MutationState represents the state associated with this transaction
+	// MutationState represents the State associated with this transaction
 	// and can be used to perform RYOW queries at a later point.
 	MutationState []gocbcore.MutationToken
 

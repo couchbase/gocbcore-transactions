@@ -12,7 +12,8 @@ import (
 // Transactions is the top level wrapper object for all transactions
 // handling.  It also manages the cleanup process in the background.
 type Transactions struct {
-	config Config
+	config  Config
+	cleaner Cleaner
 }
 
 // Init will initialize the transactions library and return a Transactions
@@ -47,16 +48,30 @@ func Init(config *Config) (*Transactions, error) {
 	if config.CleanupWindow == 0 {
 		config.CleanupWindow = defaultConfig.CleanupWindow
 	}
-	if config.Internal.Hooks == nil {
-		config.Internal.Hooks = &DefaultHooks{}
-	}
 	if config.BucketAgentProvider == nil {
 		config.BucketAgentProvider = defaultConfig.BucketAgentProvider
 	}
+	if config.Internal.Hooks == nil {
+		config.Internal.Hooks = &DefaultHooks{}
+	}
+	if config.Internal.CleanUpHooks == nil {
+		config.Internal.CleanUpHooks = &DefaultCleanupHooks{}
+	}
+	if config.CleanupQueueSize == 0 {
+		config.CleanupQueueSize = 100000
+	}
 
-	return &Transactions{
+	t := &Transactions{
 		config: *config,
-	}, nil
+	}
+
+	if config.CleanupClientAttempts {
+		t.cleaner = startCleanupThread(config)
+	} else {
+		t.cleaner = &noopCleaner{}
+	}
+
+	return t, nil
 }
 
 // Config returns the config that was used during the initialization
@@ -92,14 +107,15 @@ func (t *Transactions) BeginTransaction(perConfig *PerTransactionConfig) (*Trans
 
 	now := time.Now()
 	return &Transaction{
-		parent:           t,
-		expiryTime:       now.Add(expirationTime),
-		startTime:        now,
-		durabilityLevel:  durabilityLevel,
-		transactionID:    transactionUUID,
-		keyValueTimeout:  keyValueTimeout,
-		kvDurableTimeout: kvDurableTimeout,
-		hooks:            t.config.Internal.Hooks,
+		parent:            t,
+		expiryTime:        now.Add(expirationTime),
+		startTime:         now,
+		durabilityLevel:   durabilityLevel,
+		transactionID:     transactionUUID,
+		keyValueTimeout:   keyValueTimeout,
+		kvDurableTimeout:  kvDurableTimeout,
+		hooks:             t.config.Internal.Hooks,
+		addCleanupRequest: t.cleaner.AddRequest,
 	}, nil
 }
 
@@ -125,14 +141,15 @@ func (t *Transactions) ResumeTransactionAttempt(txnBytes []byte) (*Transaction, 
 
 	now := time.Now()
 	txn := &Transaction{
-		parent:           t,
-		expiryTime:       now.Add(expirationTime),
-		startTime:        now,
-		durabilityLevel:  durabilityLevel,
-		transactionID:    transactionUUID,
-		keyValueTimeout:  kvTimeout,
-		kvDurableTimeout: kvDurableTimeout,
-		hooks:            t.config.Internal.Hooks,
+		parent:            t,
+		expiryTime:        now.Add(expirationTime),
+		startTime:         now,
+		durabilityLevel:   durabilityLevel,
+		transactionID:     transactionUUID,
+		keyValueTimeout:   kvTimeout,
+		kvDurableTimeout:  kvDurableTimeout,
+		hooks:             t.config.Internal.Hooks,
+		addCleanupRequest: t.cleaner.AddRequest,
 	}
 
 	err = txn.resumeAttempt(&txnData)
@@ -146,6 +163,7 @@ func (t *Transactions) ResumeTransactionAttempt(txnBytes []byte) (*Transaction, 
 // Close will shut down this Transactions object, shutting down all
 // background tasks associated with it.
 func (t *Transactions) Close() error {
+	t.cleaner.Close()
 	return errors.New("not implemented")
 }
 
@@ -186,4 +204,14 @@ func (t *TransactionsInternal) CreateGetResult(opts CreateGetResultOptions) *Get
 		Value: nil,
 		Cas:   opts.Cas,
 	}
+}
+
+// ForceCleanupQueue forces the transactions client cleanup queue to drain without waiting for expirations.
+func (t *TransactionsInternal) ForceCleanupQueue(cb func([]CleanupAttempt)) {
+	t.parent.cleaner.ForceCleanupQueue(cb)
+}
+
+// CleanupQueueLength returns the current length of the client cleanup queue.
+func (t *TransactionsInternal) CleanupQueueLength() int32 {
+	return t.parent.cleaner.QueueLength()
 }
