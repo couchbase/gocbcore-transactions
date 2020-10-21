@@ -88,7 +88,7 @@ func (nc *noopCleaner) PopRequest() *CleanupRequest {
 }
 
 func (nc *noopCleaner) ForceCleanupQueue(cb func([]CleanupAttempt)) {
-
+	cb([]CleanupAttempt{})
 }
 
 func (nc *noopCleaner) QueueLength() int32 {
