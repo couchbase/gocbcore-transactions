@@ -565,12 +565,17 @@ func (t *transactionAttempt) createCleanUpRequest() *CleanupRequest {
 		}
 	}
 
+	var bucketName string
+	if t.atrAgent != nil {
+		bucketName = t.atrAgent.BucketName()
+	}
+
 	return &CleanupRequest{
 		AttemptID:         t.id,
 		AtrID:             t.atrKey,
 		AtrCollectionName: t.atrCollectionName,
 		AtrScopeName:      t.atrScopeName,
-		AtrBucketName:     t.atrAgent.BucketName(),
+		AtrBucketName:     bucketName,
 		Inserts:           inserts,
 		Replaces:          replaces,
 		Removes:           removes,
