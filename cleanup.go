@@ -242,14 +242,17 @@ func (c *stdCleaner) processQ() {
 			case req := <-q:
 				agent, err := c.bucketAgentProvider(req.AtrBucketName)
 				if err != nil {
-					<-time.After(10 * time.Second)
-					c.AddRequest(req)
+					time.AfterFunc(10*time.Second, func() {
+						c.AddRequest(req)
+					})
+					return
 				}
 
 				c.CleanupAttempt(agent, req, true, func(attempt CleanupAttempt) {
 					if !attempt.Success {
-						<-time.After(10 * time.Second)
-						c.AddRequest(req)
+						time.AfterFunc(10*time.Second, func() {
+							c.AddRequest(req)
+						})
 					}
 				})
 			}
