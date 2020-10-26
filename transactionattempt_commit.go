@@ -495,29 +495,17 @@ func (t *transactionAttempt) commit(cb CommitCallback) {
 						}
 					}
 					if mutErr != nil {
-						var txnErr *TransactionOperationFailedError
-						if errors.As(mutErr, &txnErr) {
-							if txnErr.shouldRaise != ErrorReasonTransactionFailedPostCommit {
-								// The unstage operations themselves will handle enhancing the error.
-								cb(mutErr)
-								return
-							}
-						}
-						cb(nil)
+						cb(mutErr)
 						return
 					}
 
 					t.setATRCompleted(func(err error) {
 						if err == nil {
 							t.unstagingComplete = true
-						} else {
-							var txnErr *TransactionOperationFailedError
-							if errors.As(err, &txnErr) {
-								if txnErr.shouldRaise != ErrorReasonTransactionFailedPostCommit || txnErr.errorClass == ErrorClassFailHard {
-									cb(err)
-									return
-								}
-							}
+						}
+						if errors.Is(err, ErrHard) {
+							cb(err)
+							return
 						}
 
 						cb(nil)
