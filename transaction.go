@@ -21,6 +21,7 @@ type Transaction struct {
 	keyValueTimeout  time.Duration
 	kvDurableTimeout time.Duration
 	durabilityLevel  DurabilityLevel
+	serialUnstaging  bool
 
 	transactionID string
 	attempt       *transactionAttempt
@@ -68,6 +69,7 @@ func (t *Transaction) NewAttempt() error {
 		keyValueTimeout: t.keyValueTimeout,
 		durabilityLevel: t.durabilityLevel,
 		transactionID:   t.transactionID,
+		serialUnstaging: t.serialUnstaging,
 
 		id:                  attemptUUID,
 		state:               AttemptStateNothingWritten,

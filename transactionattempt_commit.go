@@ -423,44 +423,72 @@ func (t *transactionAttempt) commit(cb CommitCallback) {
 
 				// TODO(brett19): Use atomic counters instead of a goroutine here
 				go func() {
-					numMutations := len(t.stagedMutations)
-					waitCh := make(chan error, numMutations)
-
-					// Unlike the RFC we do insert and replace separately. We have a bug in gocbcore where subdocs
-					// will raise doc exists rather than a cas mismatch so we need to do these ops separately to tell
-					// how to handle that error.
-					for _, mutation := range t.stagedMutations {
-						if mutation.OpType == StagedMutationInsert {
-							t.unstageInsMutation(*mutation, false, func(err error) {
-								waitCh <- err
-							})
-						} else if mutation.OpType == StagedMutationReplace {
-							t.unstageRepMutation(*mutation, false, false, func(err error) {
-								waitCh <- err
-							})
-						} else if mutation.OpType == StagedMutationRemove {
-							t.unstageRemMutation(*mutation, func(err error) {
-								waitCh <- err
-							})
-						} else {
-							// TODO(brett19): Pretty sure I can do better than this
-							waitCh <- ErrUhOh
-						}
-					}
-
 					var mutErr error
-					for i := 0; i < numMutations; i++ {
-						// TODO(brett19): Handle errors here better
-						err := <-waitCh
-						if err != nil {
-							if mutErr == nil {
-								mutErr = err
+					if t.serialUnstaging {
+						for _, mutation := range t.stagedMutations {
+							waitCh := make(chan error, 1)
+							if mutation.OpType == StagedMutationInsert {
+								t.unstageInsMutation(*mutation, false, func(err error) {
+									waitCh <- err
+								})
+							} else if mutation.OpType == StagedMutationReplace {
+								t.unstageRepMutation(*mutation, false, false, func(err error) {
+									waitCh <- err
+								})
+							} else if mutation.OpType == StagedMutationRemove {
+								t.unstageRemMutation(*mutation, func(err error) {
+									waitCh <- err
+								})
 							} else {
-								// If the error isn't a failed post commit then we should use it instead.
-								var tErr *TransactionOperationFailedError
-								if errors.As(err, &tErr) {
-									if tErr.shouldRaise != ErrorReasonTransactionFailedPostCommit {
-										mutErr = err
+								// TODO(brett19): Pretty sure I can do better than this
+								waitCh <- ErrUhOh
+							}
+
+							err := <-waitCh
+							if err != nil {
+								mutErr = err
+								break
+							}
+						}
+					} else {
+						numMutations := len(t.stagedMutations)
+						waitCh := make(chan error, numMutations)
+
+						// Unlike the RFC we do insert and replace separately. We have a bug in gocbcore where subdocs
+						// will raise doc exists rather than a cas mismatch so we need to do these ops separately to tell
+						// how to handle that error.
+						for _, mutation := range t.stagedMutations {
+							if mutation.OpType == StagedMutationInsert {
+								t.unstageInsMutation(*mutation, false, func(err error) {
+									waitCh <- err
+								})
+							} else if mutation.OpType == StagedMutationReplace {
+								t.unstageRepMutation(*mutation, false, false, func(err error) {
+									waitCh <- err
+								})
+							} else if mutation.OpType == StagedMutationRemove {
+								t.unstageRemMutation(*mutation, func(err error) {
+									waitCh <- err
+								})
+							} else {
+								// TODO(brett19): Pretty sure I can do better than this
+								waitCh <- ErrUhOh
+							}
+						}
+
+						for i := 0; i < numMutations; i++ {
+							// TODO(brett19): Handle errors here better
+							err := <-waitCh
+							if err != nil {
+								if mutErr == nil {
+									mutErr = err
+								} else {
+									// If the error isn't a failed post commit then we should use it instead.
+									var tErr *TransactionOperationFailedError
+									if errors.As(err, &tErr) {
+										if tErr.shouldRaise != ErrorReasonTransactionFailedPostCommit {
+											mutErr = err
+										}
 									}
 								}
 							}

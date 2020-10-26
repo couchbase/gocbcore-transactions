@@ -116,6 +116,7 @@ func (t *Transactions) BeginTransaction(perConfig *PerTransactionConfig) (*Trans
 		kvDurableTimeout:  kvDurableTimeout,
 		hooks:             t.config.Internal.Hooks,
 		addCleanupRequest: t.cleaner.AddRequest,
+		serialUnstaging:   t.config.Internal.SerialUnstaging,
 	}, nil
 }
 

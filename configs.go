@@ -103,8 +103,9 @@ type Config struct {
 	// Internal specifies a set of options for internal use.
 	// Internal: This should never be used and is not supported.
 	Internal struct {
-		Hooks        TransactionHooks
-		CleanUpHooks CleanUpHooks
+		Hooks           TransactionHooks
+		CleanUpHooks    CleanUpHooks
+		SerialUnstaging bool
 	}
 }
 

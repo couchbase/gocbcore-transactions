@@ -23,6 +23,7 @@ type transactionAttempt struct {
 	transactionID   string
 	id              string
 	hooks           TransactionHooks
+	serialUnstaging bool
 
 	// mutable state
 	state               AttemptState
