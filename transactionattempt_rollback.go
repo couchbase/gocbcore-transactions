@@ -239,7 +239,7 @@ func (t *transactionAttempt) rollbackInsMutation(mutation stagedMutation, cb fun
 		return
 	}
 
-	t.checkExpired(hookRollbackDoc, mutation.Key, func(err error) {
+	t.checkExpired(hookDeleteInserted, mutation.Key, func(err error) {
 		if err != nil && !t.expiryOvertimeMode {
 			handler(err)
 			return
