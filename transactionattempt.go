@@ -35,6 +35,8 @@ type transactionAttempt struct {
 	expiryOvertimeMode  bool
 	previousErrors      []*TransactionOperationFailedError
 
+	unstagingComplete bool
+
 	lock          sync.Mutex
 	txnAtrSection atomicWaitQueue
 	txnOpSection  atomicWaitQueue

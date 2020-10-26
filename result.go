@@ -21,6 +21,10 @@ type Attempt struct {
 	AtrScopeName      string
 	AtrCollectionName string
 
+	// UnstagingComplete indicates whether the transaction was succesfully
+	// unstaged, or if a later cleanup job will be responsible.
+	UnstagingComplete bool
+
 	// Internal: This should never be used and is not supported.
 	Internal struct {
 		Expired bool

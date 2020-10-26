@@ -48,6 +48,7 @@ func (t *Transaction) Attempt() Attempt {
 		AtrBucketName:     bucketName,
 		AtrScopeName:      t.attempt.atrScopeName,
 		AtrCollectionName: t.attempt.atrCollectionName,
+		UnstagingComplete: t.attempt.unstagingComplete,
 
 		Internal: struct {
 			Expired bool
