@@ -49,36 +49,6 @@ func (t *transactionAttempt) get(opts GetOptions, resolvingATREntry string, cb G
 			return
 		}
 
-		t.lock.Lock()
-
-		_, existingMutation := t.getStagedMutationLocked(opts.Agent.BucketName(), opts.ScopeName, opts.CollectionName, opts.Key)
-		if existingMutation != nil {
-			if existingMutation.OpType == StagedMutationInsert || existingMutation.OpType == StagedMutationReplace {
-				getRes := &GetResult{
-					agent:          existingMutation.Agent,
-					scopeName:      existingMutation.ScopeName,
-					collectionName: existingMutation.CollectionName,
-					key:            existingMutation.Key,
-					Value:          existingMutation.Staged,
-					Cas:            existingMutation.Cas,
-					Meta: MutableItemMeta{
-						Deleted: existingMutation.IsTombstone,
-					},
-				}
-
-				t.lock.Unlock()
-				cb(getRes, nil)
-				return
-			} else if existingMutation.OpType == StagedMutationRemove {
-				t.lock.Unlock()
-
-				cb(nil, t.createAndStashOperationFailedError(false, false, gocbcore.ErrDocumentNotFound, ErrorReasonTransactionFailed, ErrorClassFailDocNotFound, true))
-				return
-			}
-		}
-
-		t.lock.Unlock()
-
 		var deadline time.Time
 		if t.keyValueTimeout > 0 {
 			deadline = time.Now().Add(t.keyValueTimeout)
