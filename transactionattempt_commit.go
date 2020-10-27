@@ -500,9 +500,6 @@ func (t *transactionAttempt) commit(cb CommitCallback) {
 					}
 
 					t.setATRCompleted(func(err error) {
-						if err == nil {
-							t.unstagingComplete = true
-						}
 						if errors.Is(err, ErrHard) {
 							cb(err)
 							return
@@ -630,6 +627,7 @@ func (t *transactionAttempt) setATRCompleted(
 					t.lock.Lock()
 					t.state = AttemptStateCompleted
 					t.txnAtrSection.Done()
+					t.unstagingComplete = true
 					t.lock.Unlock()
 
 					handler(nil)
