@@ -851,14 +851,14 @@ func (t *transactionAttempt) setATRCommitted(
 			}
 
 			var marshalErr error
-			atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag) gocbcore.SubDocOp {
+			atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag, op memd.SubDocOpType) gocbcore.SubDocOp {
 				bytes, err := json.Marshal(data)
 				if err != nil {
 					marshalErr = err
 				}
 
 				return gocbcore.SubDocOp{
-					Op:    memd.SubDocOpDictSet,
+					Op:    op,
 					Flags: memd.SubdocFlagMkDirP | flags,
 					Path:  "attempts." + t.id + "." + fieldName,
 					Value: bytes,
@@ -877,12 +877,12 @@ func (t *transactionAttempt) setATRCommitted(
 				CollectionName: atrCollectionName,
 				Key:            atrKey,
 				Ops: []gocbcore.SubDocOp{
-					atrFieldOp("st", jsonAtrStateCommitted, memd.SubdocFlagXattrPath),
-					atrFieldOp("tsc", "${Mutation.CAS}", memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros),
-					atrFieldOp("p", 0, memd.SubdocFlagXattrPath),
-					atrFieldOp("ins", insMutations, memd.SubdocFlagXattrPath),
-					atrFieldOp("rep", repMutations, memd.SubdocFlagXattrPath),
-					atrFieldOp("rem", remMutations, memd.SubdocFlagXattrPath),
+					atrFieldOp("st", jsonAtrStateCommitted, memd.SubdocFlagXattrPath, memd.SubDocOpDictSet),
+					atrFieldOp("tsc", "${Mutation.CAS}", memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros, memd.SubDocOpDictSet),
+					atrFieldOp("p", 0, memd.SubdocFlagXattrPath, memd.SubDocOpDictAdd),
+					atrFieldOp("ins", insMutations, memd.SubdocFlagXattrPath, memd.SubDocOpDictSet),
+					atrFieldOp("rep", repMutations, memd.SubdocFlagXattrPath, memd.SubDocOpDictSet),
+					atrFieldOp("rem", remMutations, memd.SubdocFlagXattrPath, memd.SubDocOpDictSet),
 				},
 				DurabilityLevel:        durabilityLevelToMemd(t.durabilityLevel),
 				DurabilityLevelTimeout: duraTimeout,
