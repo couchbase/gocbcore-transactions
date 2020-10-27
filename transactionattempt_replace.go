@@ -41,8 +41,6 @@ func (t *transactionAttempt) replace(opts ReplaceOptions, cb StoreCallback) erro
 		}
 
 		agent := opts.Document.agent
-		scopeName := opts.Document.scopeName
-		collectionName := opts.Document.collectionName
 		key := opts.Document.key
 
 		t.writeWriteConflictPoll(opts.Document, func(err error) {
@@ -51,7 +49,7 @@ func (t *transactionAttempt) replace(opts ReplaceOptions, cb StoreCallback) erro
 				return
 			}
 
-			t.confirmATRPending(agent, scopeName, collectionName, key, func(err error) {
+			t.confirmATRPending(agent, key, func(err error) {
 				if err != nil {
 					cb(nil, err)
 					return

@@ -113,7 +113,7 @@ func (t *transactionAttempt) insert(opts InsertOptions, cas gocbcore.Cas, cb Sto
 			return
 		}
 
-		t.confirmATRPending(opts.Agent, opts.ScopeName, opts.CollectionName, opts.Key, func(err error) {
+		t.confirmATRPending(opts.Agent, opts.Key, func(err error) {
 			if err != nil {
 				// We've already classified the error so just hit the callback.
 				cb(nil, err)

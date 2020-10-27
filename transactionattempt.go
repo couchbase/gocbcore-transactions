@@ -180,13 +180,7 @@ func (t *transactionAttempt) checkExpired(stage string, id []byte, cb func(error
 	})
 }
 
-func (t *transactionAttempt) confirmATRPending(
-	agent *gocbcore.Agent,
-	scopeName string,
-	collectionName string,
-	firstKey []byte,
-	cb func(error),
-) {
+func (t *transactionAttempt) confirmATRPending(agent *gocbcore.Agent, firstKey []byte, cb func(error)) {
 	handler := func(err error) {
 		if err == nil {
 			cb(nil)
@@ -207,7 +201,7 @@ func (t *transactionAttempt) confirmATRPending(
 			failErr = t.createAndStashOperationFailedError(false, false, ErrAtrFull, ErrorReasonTransactionFailed, ec, false)
 		case ErrorClassFailAmbiguous:
 			time.AfterFunc(3*time.Millisecond, func() {
-				t.confirmATRPending(agent, scopeName, collectionName, firstKey, cb)
+				t.confirmATRPending(agent, firstKey, cb)
 			})
 			return
 		case ErrorClassFailHard:
@@ -242,8 +236,8 @@ func (t *transactionAttempt) confirmATRPending(
 	atrKey := []byte(atrIDList[atrID])
 
 	t.atrAgent = agent
-	t.atrScopeName = scopeName
-	t.atrCollectionName = collectionName
+	t.atrScopeName = "_default"
+	t.atrCollectionName = "_default"
 	t.atrKey = atrKey
 
 	t.txnAtrSection.Add(1)
@@ -291,8 +285,8 @@ func (t *transactionAttempt) confirmATRPending(
 			}
 
 			opts := gocbcore.MutateInOptions{
-				ScopeName:      scopeName,
-				CollectionName: collectionName,
+				ScopeName:      t.atrScopeName,
+				CollectionName: t.atrCollectionName,
 				Key:            atrKey,
 				Ops: []gocbcore.SubDocOp{
 					atrFieldOp("tst", "${Mutation.CAS}", memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros),

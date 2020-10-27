@@ -40,8 +40,6 @@ func (t *transactionAttempt) remove(opts RemoveOptions, cb StoreCallback) error 
 		}
 
 		agent := opts.Document.agent
-		scopeName := opts.Document.scopeName
-		collectionName := opts.Document.collectionName
 		key := opts.Document.key
 
 		t.lock.Lock()
@@ -61,7 +59,7 @@ func (t *transactionAttempt) remove(opts RemoveOptions, cb StoreCallback) error 
 				return
 			}
 
-			t.confirmATRPending(agent, scopeName, collectionName, key, func(err error) {
+			t.confirmATRPending(agent, key, func(err error) {
 				if err != nil {
 					cb(nil, err)
 					return
