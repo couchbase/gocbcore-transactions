@@ -4,10 +4,11 @@ import (
 	"container/heap"
 	"encoding/json"
 	"errors"
-	"github.com/couchbase/gocbcore/v9"
-	"github.com/couchbase/gocbcore/v9/memd"
 	"sync"
 	"time"
+
+	"github.com/couchbase/gocbcore/v9"
+	"github.com/couchbase/gocbcore/v9/memd"
 )
 
 // CleanupRequest represents a complete transaction attempt that requires cleanup.
@@ -433,7 +434,7 @@ func (c *stdCleaner) cleanupDocs(req *CleanupRequest, cb func(error)) {
 	}
 }
 
-func (c *stdCleaner) rollbackRepRemDocs(attemptId string, docs []DocRecord, cb func(err error)) {
+func (c *stdCleaner) rollbackRepRemDocs(attemptID string, docs []DocRecord, cb func(err error)) {
 	var overallErr error
 
 	for _, doc := range docs {
@@ -445,7 +446,7 @@ func (c *stdCleaner) rollbackRepRemDocs(attemptId string, docs []DocRecord, cb f
 			return
 		}
 
-		c.perDoc(false, attemptId, doc, agent, func(getRes *getDoc, err error) {
+		c.perDoc(false, attemptID, doc, agent, func(getRes *getDoc, err error) {
 			if err != nil {
 				waitCh <- err
 				return
@@ -501,7 +502,7 @@ func (c *stdCleaner) rollbackRepRemDocs(attemptId string, docs []DocRecord, cb f
 	cb(overallErr)
 }
 
-func (c *stdCleaner) rollbackInsDocs(attemptId string, docs []DocRecord, cb func(err error)) {
+func (c *stdCleaner) rollbackInsDocs(attemptID string, docs []DocRecord, cb func(err error)) {
 	var overallErr error
 
 	for _, doc := range docs {
@@ -513,7 +514,7 @@ func (c *stdCleaner) rollbackInsDocs(attemptId string, docs []DocRecord, cb func
 			return
 		}
 
-		c.perDoc(false, attemptId, doc, agent, func(getRes *getDoc, err error) {
+		c.perDoc(false, attemptID, doc, agent, func(getRes *getDoc, err error) {
 			if err != nil {
 				waitCh <- err
 				return
@@ -588,7 +589,7 @@ func (c *stdCleaner) rollbackInsDocs(attemptId string, docs []DocRecord, cb func
 	cb(overallErr)
 }
 
-func (c *stdCleaner) commitRemDocs(attemptId string, docs []DocRecord, cb func(err error)) {
+func (c *stdCleaner) commitRemDocs(attemptID string, docs []DocRecord, cb func(err error)) {
 	var overallErr error
 	for _, doc := range docs {
 		waitCh := make(chan error, 1)
@@ -599,7 +600,7 @@ func (c *stdCleaner) commitRemDocs(attemptId string, docs []DocRecord, cb func(e
 			return
 		}
 
-		c.perDoc(true, attemptId, doc, agent, func(getRes *getDoc, err error) {
+		c.perDoc(true, attemptID, doc, agent, func(getRes *getDoc, err error) {
 			if err != nil {
 				waitCh <- err
 				return
@@ -650,7 +651,7 @@ func (c *stdCleaner) commitRemDocs(attemptId string, docs []DocRecord, cb func(e
 	cb(overallErr)
 }
 
-func (c *stdCleaner) commitInsRepDocs(attemptId string, docs []DocRecord, cb func(err error)) {
+func (c *stdCleaner) commitInsRepDocs(attemptID string, docs []DocRecord, cb func(err error)) {
 	var overallErr error
 
 	for _, doc := range docs {
@@ -662,7 +663,7 @@ func (c *stdCleaner) commitInsRepDocs(attemptId string, docs []DocRecord, cb fun
 			return
 		}
 
-		c.perDoc(true, attemptId, doc, agent, func(getRes *getDoc, err error) {
+		c.perDoc(true, attemptID, doc, agent, func(getRes *getDoc, err error) {
 			if err != nil {
 				waitCh <- err
 				return
@@ -740,7 +741,7 @@ func (c *stdCleaner) commitInsRepDocs(attemptId string, docs []DocRecord, cb fun
 	cb(overallErr)
 }
 
-func (c *stdCleaner) perDoc(crc32MatchStaging bool, attemptId string, dr DocRecord, agent *gocbcore.Agent,
+func (c *stdCleaner) perDoc(crc32MatchStaging bool, attemptID string, dr DocRecord, agent *gocbcore.Agent,
 	cb func(getRes *getDoc, err error)) {
 	c.hooks.BeforeDocGet(dr.ID, func(err error) {
 		if err != nil {
@@ -796,7 +797,7 @@ func (c *stdCleaner) perDoc(crc32MatchStaging bool, attemptId string, dr DocReco
 				return
 			}
 
-			if attemptId != txnMetaVal.ID.Attempt {
+			if attemptID != txnMetaVal.ID.Attempt {
 				// Document involved in another txn, was probably committed, this is success.
 				cb(nil, nil)
 				return

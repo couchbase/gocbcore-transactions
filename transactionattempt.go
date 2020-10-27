@@ -296,7 +296,7 @@ func (t *transactionAttempt) confirmATRPending(agent *gocbcore.Agent, firstKey [
 					atrFieldOp("tid", t.transactionID, memd.SubdocFlagXattrPath),
 					atrFieldOp("st", jsonAtrStatePending, memd.SubdocFlagXattrPath),
 					atrFieldOp("exp", t.expiryTime.Sub(time.Now())/time.Millisecond, memd.SubdocFlagXattrPath),
-					gocbcore.SubDocOp{
+					{
 						Op:    memd.SubDocOpSetDoc,
 						Flags: memd.SubdocFlagNone,
 						Path:  "",

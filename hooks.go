@@ -253,30 +253,37 @@ func (dh *DefaultHooks) HasExpiredClientSideHook(stage string, docID []byte, cb 
 type DefaultCleanupHooks struct {
 }
 
+// BeforeATRGet happens before an ATR get.
 func (dh *DefaultCleanupHooks) BeforeATRGet(id []byte, cb func(error)) {
 	cb(nil)
 }
 
+// BeforeDocGet happens before an doc get.
 func (dh *DefaultCleanupHooks) BeforeDocGet(id []byte, cb func(error)) {
 	cb(nil)
 }
 
+// BeforeRemoveLinks happens before we remove links.
 func (dh *DefaultCleanupHooks) BeforeRemoveLinks(id []byte, cb func(error)) {
 	cb(nil)
 }
 
+// BeforeCommitDoc happens before we commit a document.
 func (dh *DefaultCleanupHooks) BeforeCommitDoc(id []byte, cb func(error)) {
 	cb(nil)
 }
 
+// BeforeRemoveDocStagedForRemoval happens before we remove a staged document.
 func (dh *DefaultCleanupHooks) BeforeRemoveDocStagedForRemoval(id []byte, cb func(error)) {
 	cb(nil)
 }
 
+// BeforeRemoveDoc happens before we remove a document.
 func (dh *DefaultCleanupHooks) BeforeRemoveDoc(id []byte, cb func(error)) {
 	cb(nil)
 }
 
+// BeforeATRRemove happens before we remove an ATR.
 func (dh *DefaultCleanupHooks) BeforeATRRemove(id []byte, cb func(error)) {
 	cb(nil)
 }
