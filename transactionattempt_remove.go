@@ -3,10 +3,10 @@ package transactions
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
+	"time"
+
 	"github.com/couchbase/gocbcore/v9"
 	"github.com/couchbase/gocbcore/v9/memd"
-	"time"
 )
 
 func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error {
@@ -115,7 +115,6 @@ func (t *transactionAttempt) stagedRemove(doc *GetResult, cb StoreCallback) {
 			ScopeName:      doc.scopeName,
 			CollectionName: doc.collectionName,
 			Key:            doc.key,
-			IsTombstone:    true,
 		}
 
 		var txnMeta jsonTxnXattr
@@ -126,21 +125,11 @@ func (t *transactionAttempt) stagedRemove(doc *GetResult, cb StoreCallback) {
 		txnMeta.ATR.BucketName = t.atrAgent.BucketName()
 		txnMeta.ATR.DocID = string(t.atrKey)
 		txnMeta.Operation.Type = jsonMutationRemove
-
-		restore := struct {
-			OriginalCAS string
-			ExpiryTime  uint
-			RevID       string
-		}{
-			OriginalCAS: fmt.Sprintf("%d", doc.Cas),
-			ExpiryTime:  doc.Meta.Expiry,
-			RevID:       doc.Meta.RevID,
+		txnMeta.Restore = &jsonTxnXattrRestore{
+			OriginalCAS: "",
+			ExpiryTime:  0,
+			RevID:       "",
 		}
-		txnMeta.Restore = (*struct {
-			OriginalCAS string `json:"CAS,omitempty"`
-			ExpiryTime  uint   `json:"exptime"`
-			RevID       string `json:"revid,omitempty"`
-		})(&restore)
 
 		txnMetaBytes, err := json.Marshal(txnMeta)
 		if err != nil {
@@ -155,10 +144,7 @@ func (t *transactionAttempt) stagedRemove(doc *GetResult, cb StoreCallback) {
 			duraTimeout = t.keyValueTimeout * 10 / 9
 		}
 
-		flags := memd.SubdocDocFlagNone
-		if doc.Meta.Deleted {
-			flags = memd.SubdocDocFlagAccessDeleted
-		}
+		flags := memd.SubdocDocFlagAccessDeleted
 
 		_, err = stagedInfo.Agent.MutateIn(gocbcore.MutateInOptions{
 			ScopeName:      stagedInfo.ScopeName,
@@ -175,8 +161,26 @@ func (t *transactionAttempt) stagedRemove(doc *GetResult, cb StoreCallback) {
 				{
 					Op:    memd.SubDocOpDictSet,
 					Path:  "txn.op.crc32",
-					Flags: memd.SubdocFlagMkDirP | memd.SubdocFlagXattrPath | memd.SubdocFlagExpandMacros,
+					Flags: memd.SubdocFlagXattrPath | memd.SubdocFlagExpandMacros,
 					Value: crc32cMacro,
+				},
+				{
+					Op:    memd.SubDocOpDictSet,
+					Path:  "txn.restore.CAS",
+					Flags: memd.SubdocFlagXattrPath | memd.SubdocFlagExpandMacros,
+					Value: casMacro,
+				},
+				{
+					Op:    memd.SubDocOpDictSet,
+					Path:  "txn.restore.exptime",
+					Flags: memd.SubdocFlagXattrPath | memd.SubdocFlagExpandMacros,
+					Value: exptimeMacro,
+				},
+				{
+					Op:    memd.SubDocOpDictSet,
+					Path:  "txn.restore.revid",
+					Flags: memd.SubdocFlagXattrPath | memd.SubdocFlagExpandMacros,
+					Value: revidMacro,
 				},
 			},
 			Flags:                  flags,

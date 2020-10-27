@@ -69,5 +69,4 @@ type stagedMutation struct {
 	Key            []byte
 	Cas            gocbcore.Cas
 	Staged         json.RawMessage
-	IsTombstone    bool
 }

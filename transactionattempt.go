@@ -13,6 +13,9 @@ import (
 )
 
 var crc32cMacro = []byte("\"${Mutation.value_crc32c}\"")
+var revidMacro = []byte("\"${$document.revid}\"")
+var exptimeMacro = []byte("\"${$document.exptime}\"")
+var casMacro = []byte("\"${$document.CAS}\"")
 
 type transactionAttempt struct {
 	// immutable state
@@ -374,15 +377,23 @@ func (t *transactionAttempt) getStagedMutationLocked(bucketName, scopeName, coll
 	return 0, nil
 }
 
-func (t *transactionAttempt) getTxnState(opts GetOptions, deadline time.Time, xattr *jsonTxnXattr, cb func(*jsonAtrAttempt, error)) {
-	_, err := opts.Agent.LookupIn(gocbcore.LookupInOptions{
-		ScopeName:      opts.ScopeName,
-		CollectionName: opts.CollectionName,
-		Key:            []byte(xattr.ATR.DocID),
+func (t *transactionAttempt) getTxnState(
+	agent *gocbcore.Agent,
+	scopeName string,
+	collectionName string,
+	atrDocID string,
+	attemptID string,
+	deadline time.Time,
+	cb func(*jsonAtrAttempt, error),
+) {
+	_, err := agent.LookupIn(gocbcore.LookupInOptions{
+		ScopeName:      scopeName,
+		CollectionName: collectionName,
+		Key:            []byte(atrDocID),
 		Ops: []gocbcore.SubDocOp{
 			{
 				Op:    memd.SubDocOpGet,
-				Path:  "attempts." + xattr.ID.Attempt,
+				Path:  "attempts." + attemptID,
 				Flags: memd.SubdocFlagXattrPath,
 			},
 		},
@@ -474,13 +485,13 @@ func (t *transactionAttempt) writeWriteConflictPoll(res *GetResult, cb func(erro
 		cb(nil)
 	}
 
-	if res.Meta.TxnMeta == nil {
+	if res.Meta == nil {
 		// There is no write-write conflict.
 		handler(nil)
 		return
 	}
 
-	if res.Meta.TxnMeta.ID.Transaction == t.transactionID {
+	if res.Meta.TransactionID == t.transactionID {
 		// The transaction matches our transaction.  We can safely overwrite the existing
 		// data in the txn meta and continue.
 		handler(nil)
@@ -504,42 +515,44 @@ func (t *transactionAttempt) writeWriteConflictPoll(res *GetResult, cb func(erro
 				return
 			}
 
-			t.hooks.BeforeCheckATREntryForBlockingDoc([]byte(res.Meta.TxnMeta.ATR.DocID), func(err error) {
+			t.hooks.BeforeCheckATREntryForBlockingDoc([]byte(res.Meta.ATR.DocID), func(err error) {
 				if err != nil {
 					handler(err)
 					return
 				}
 
-				t.getTxnState(GetOptions{
-					Agent:          res.agent,
-					ScopeName:      res.Meta.TxnMeta.ATR.ScopeName,
-					CollectionName: res.Meta.TxnMeta.ATR.CollectionName,
-					Key:            []byte(res.Meta.TxnMeta.ATR.DocID),
-				}, deadline, res.Meta.TxnMeta, func(attempt *jsonAtrAttempt, err error) {
-					if err == ErrAtrEntryNotFound {
-						// The ATR isn't there anymore, which counts as it being completed.
-						handler(nil)
-						return
-					} else if err != nil {
-						handler(err)
-						return
-					}
+				t.getTxnState(
+					res.agent,
+					res.Meta.ATR.ScopeName,
+					res.Meta.ATR.CollectionName,
+					res.Meta.ATR.DocID,
+					res.Meta.AttemptID,
+					deadline,
+					func(attempt *jsonAtrAttempt, err error) {
+						if err == ErrAtrEntryNotFound {
+							// The ATR isn't there anymore, which counts as it being completed.
+							handler(nil)
+							return
+						} else if err != nil {
+							handler(err)
+							return
+						}
 
-					td := time.Duration(attempt.ExpiryTime) * time.Millisecond
-					if t.txnStartTime.Add(td).Before(time.Now()) {
-						handler(nil)
-						return
-					}
+						td := time.Duration(attempt.ExpiryTime) * time.Millisecond
+						if t.txnStartTime.Add(td).Before(time.Now()) {
+							handler(nil)
+							return
+						}
 
-					state := jsonAtrState(attempt.State)
-					if state == jsonAtrStateCommitted || state == jsonAtrStateRolledBack {
-						// If we have progressed enough to continue, let's do that.
-						handler(nil)
-						return
-					}
+						state := jsonAtrState(attempt.State)
+						if state == jsonAtrStateCommitted || state == jsonAtrStateRolledBack {
+							// If we have progressed enough to continue, let's do that.
+							handler(nil)
+							return
+						}
 
-					time.AfterFunc(200*time.Millisecond, onePoll)
-				})
+						time.AfterFunc(200*time.Millisecond, onePoll)
+					})
 			})
 
 		})

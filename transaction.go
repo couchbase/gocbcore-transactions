@@ -121,7 +121,6 @@ func (t *Transaction) resumeAttempt(txnData *jsonSerializedAttempt) error {
 			Key:            []byte(mutationData.ID),
 			Cas:            gocbcore.Cas(cas),
 			Staged:         nil,
-			IsTombstone:    false,
 		}
 	}
 
@@ -156,13 +155,20 @@ type GetOptions struct {
 	Key            []byte
 }
 
+// MutableItemMetaATR represents the ATR for meta.
+type MutableItemMetaATR struct {
+	BucketName     string `json:"bkt"`
+	ScopeName      string `json:"scp"`
+	CollectionName string `json:"coll"`
+	DocID          string `json:"key"`
+}
+
 // MutableItemMeta represents all the meta-data for a fetched
 // item.  Most of this is used for later mutation operations.
 type MutableItemMeta struct {
-	RevID   string        `json:"revid,omitempty"`
-	Expiry  uint          `json:"expiry,omitempty"`
-	Deleted bool          `json:"deleted,omitempty"`
-	TxnMeta *jsonTxnXattr `json:"txn,omitempty"`
+	TransactionID string             `json:"txn"`
+	AttemptID     string             `json:"atmpt"`
+	ATR           MutableItemMetaATR `json:"atr"`
 }
 
 // GetResult represents the result of a Get or GetOptional operation.
@@ -172,7 +178,7 @@ type GetResult struct {
 	collectionName string
 	key            []byte
 
-	Meta  MutableItemMeta
+	Meta  *MutableItemMeta
 	Value []byte
 	Cas   gocbcore.Cas
 }

@@ -47,27 +47,35 @@ type jsonAtrAttempt struct {
 	Removes  []jsonAtrMutation `json:"rem,omitempty"`
 }
 
+type jsonTxnXattrID struct {
+	Transaction string `json:"txn,omitempty"`
+	Attempt     string `json:"atmpt,omitempty"`
+}
+
+type jsonTxnXattrATR struct {
+	DocID          string `json:"id,omitempty"`
+	BucketName     string `json:"bkt,omitempty"`
+	CollectionName string `json:"coll,omitempty"`
+	ScopeName      string `json:"scp,omitempty"`
+}
+
+type jsonTxnXattrOp struct {
+	Type   jsonMutationType `json:"type,omitempty"`
+	Staged json.RawMessage  `json:"stgd,omitempty"`
+	CRC32  string           `json:"crc32,omitempty"`
+}
+
+type jsonTxnXattrRestore struct {
+	OriginalCAS string `json:"CAS,omitempty"`
+	ExpiryTime  uint   `json:"exptime"`
+	RevID       string `json:"revid,omitempty"`
+}
+
 type jsonTxnXattr struct {
-	ID struct {
-		Transaction string `json:"txn,omitempty"`
-		Attempt     string `json:"atmpt,omitempty"`
-	} `json:"id,omitempty"`
-	ATR struct {
-		DocID          string `json:"id,omitempty"`
-		BucketName     string `json:"bkt,omitempty"`
-		CollectionName string `json:"coll,omitempty"`
-		ScopeName      string `json:"scp,omitempty"`
-	} `json:"atr,omitempty"`
-	Operation struct {
-		Type   jsonMutationType `json:"type,omitempty"`
-		Staged json.RawMessage  `json:"stgd,omitempty"`
-		CRC32  string           `json:"crc32,omitempty"`
-	} `json:"op,omitempty"`
-	Restore *struct {
-		OriginalCAS string `json:"CAS,omitempty"`
-		ExpiryTime  uint   `json:"exptime"`
-		RevID       string `json:"revid,omitempty"`
-	} `json:"restore,omitempty"`
+	ID        jsonTxnXattrID       `json:"id,omitempty"`
+	ATR       jsonTxnXattrATR      `json:"atr,omitempty"`
+	Operation jsonTxnXattrOp       `json:"op,omitempty"`
+	Restore   *jsonTxnXattrRestore `json:"restore,omitempty"`
 }
 
 type docMeta struct {

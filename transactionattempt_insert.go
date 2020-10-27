@@ -3,9 +3,10 @@ package transactions
 import (
 	"encoding/json"
 	"errors"
+	"time"
+
 	"github.com/couchbase/gocbcore/v9"
 	"github.com/couchbase/gocbcore/v9/memd"
-	"time"
 )
 
 func (t *transactionAttempt) Insert(opts InsertOptions, cb StoreCallback) error {
@@ -133,7 +134,6 @@ func (t *transactionAttempt) insert(opts InsertOptions, cas gocbcore.Cas, cb Sto
 					CollectionName: opts.CollectionName,
 					Key:            opts.Key,
 					Staged:         opts.Value,
-					IsTombstone:    true,
 				}
 
 				var txnMeta jsonTxnXattr
@@ -183,7 +183,7 @@ func (t *transactionAttempt) insert(opts InsertOptions, cas gocbcore.Cas, cb Sto
 						{
 							Op:    memd.SubDocOpDictAdd,
 							Path:  "txn.op.crc32",
-							Flags: memd.SubdocFlagMkDirP | memd.SubdocFlagXattrPath | memd.SubdocFlagExpandMacros,
+							Flags: memd.SubdocFlagXattrPath | memd.SubdocFlagExpandMacros,
 							Value: crc32cMacro,
 						},
 					},
@@ -292,11 +292,9 @@ func (t *transactionAttempt) getForInsert(opts InsertOptions, cb func(*GetResult
 						scopeName:      opts.ScopeName,
 						collectionName: opts.CollectionName,
 						key:            opts.Key,
-						Meta: MutableItemMeta{
-							TxnMeta: txnMeta,
-						},
-						Value: val,
-						Cas:   result.Cas,
+						Meta:           nil,
+						Value:          val,
+						Cas:            result.Cas,
 					}, nil)
 					return
 				}
@@ -310,11 +308,9 @@ func (t *transactionAttempt) getForInsert(opts InsertOptions, cb func(*GetResult
 				scopeName:      opts.ScopeName,
 				collectionName: opts.CollectionName,
 				key:            opts.Key,
-				Meta: MutableItemMeta{
-					TxnMeta: txnMeta,
-				},
-				Value: val,
-				Cas:   result.Cas,
+				Meta:           nil,
+				Value:          val,
+				Cas:            result.Cas,
 			}, nil)
 
 			return

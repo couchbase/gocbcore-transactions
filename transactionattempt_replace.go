@@ -3,7 +3,6 @@ package transactions
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/couchbase/gocbcore/v9"
@@ -106,9 +105,7 @@ func (t *transactionAttempt) replace(opts ReplaceOptions, cb StoreCallback) erro
 						key:            stagedInfo.Key,
 						Value:          stagedInfo.Staged,
 						Cas:            stagedInfo.Cas,
-						Meta: MutableItemMeta{
-							Deleted: stagedInfo.IsTombstone,
-						},
+						Meta:           nil,
 					}, nil)
 				})
 			})
@@ -123,7 +120,6 @@ func (t *transactionAttempt) doReplace(opts ReplaceOptions, cb func(*stagedMutat
 	scopeName := opts.Document.scopeName
 	collectionName := opts.Document.collectionName
 	key := opts.Document.key
-	deleted := opts.Document.Meta.Deleted
 
 	t.hooks.BeforeStagedReplace(key, func(err error) {
 		if err != nil {
@@ -138,7 +134,6 @@ func (t *transactionAttempt) doReplace(opts ReplaceOptions, cb func(*stagedMutat
 			CollectionName: collectionName,
 			Key:            key,
 			Staged:         opts.Value,
-			IsTombstone:    deleted,
 		}
 
 		var txnMeta jsonTxnXattr
@@ -150,20 +145,11 @@ func (t *transactionAttempt) doReplace(opts ReplaceOptions, cb func(*stagedMutat
 		txnMeta.ATR.DocID = string(t.atrKey)
 		txnMeta.Operation.Type = jsonMutationReplace
 		txnMeta.Operation.Staged = stagedInfo.Staged
-		restore := struct {
-			OriginalCAS string
-			ExpiryTime  uint
-			RevID       string
-		}{
-			OriginalCAS: fmt.Sprintf("%d", opts.Document.Cas),
-			ExpiryTime:  opts.Document.Meta.Expiry,
-			RevID:       opts.Document.Meta.RevID,
+		txnMeta.Restore = &jsonTxnXattrRestore{
+			OriginalCAS: "",
+			ExpiryTime:  0,
+			RevID:       "",
 		}
-		txnMeta.Restore = (*struct {
-			OriginalCAS string `json:"CAS,omitempty"`
-			ExpiryTime  uint   `json:"exptime"`
-			RevID       string `json:"revid,omitempty"`
-		})(&restore)
 
 		txnMetaBytes, err := json.Marshal(txnMeta)
 		if err != nil {
@@ -178,10 +164,7 @@ func (t *transactionAttempt) doReplace(opts ReplaceOptions, cb func(*stagedMutat
 			duraTimeout = t.keyValueTimeout * 10 / 9
 		}
 
-		flags := memd.SubdocDocFlagNone
-		if deleted {
-			flags = memd.SubdocDocFlagAccessDeleted
-		}
+		flags := memd.SubdocDocFlagAccessDeleted
 
 		_, err = stagedInfo.Agent.MutateIn(gocbcore.MutateInOptions{
 			ScopeName:      stagedInfo.ScopeName,
@@ -198,8 +181,26 @@ func (t *transactionAttempt) doReplace(opts ReplaceOptions, cb func(*stagedMutat
 				{
 					Op:    memd.SubDocOpDictSet,
 					Path:  "txn.op.crc32",
-					Flags: memd.SubdocFlagMkDirP | memd.SubdocFlagXattrPath | memd.SubdocFlagExpandMacros,
+					Flags: memd.SubdocFlagXattrPath | memd.SubdocFlagExpandMacros,
 					Value: crc32cMacro,
+				},
+				{
+					Op:    memd.SubDocOpDictSet,
+					Path:  "txn.restore.CAS",
+					Flags: memd.SubdocFlagXattrPath | memd.SubdocFlagExpandMacros,
+					Value: casMacro,
+				},
+				{
+					Op:    memd.SubDocOpDictSet,
+					Path:  "txn.restore.exptime",
+					Flags: memd.SubdocFlagXattrPath | memd.SubdocFlagExpandMacros,
+					Value: exptimeMacro,
+				},
+				{
+					Op:    memd.SubDocOpDictSet,
+					Path:  "txn.restore.revid",
+					Flags: memd.SubdocFlagXattrPath | memd.SubdocFlagExpandMacros,
+					Value: revidMacro,
 				},
 			},
 			Flags:                  flags,

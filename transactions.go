@@ -190,7 +190,7 @@ type CreateGetResultOptions struct {
 	CollectionName string
 	Key            []byte
 	Cas            gocbcore.Cas
-	Meta           MutableItemMeta
+	Meta           *MutableItemMeta
 }
 
 // CreateGetResult creates a false GetResult which can be used with Replace/Remove operations
