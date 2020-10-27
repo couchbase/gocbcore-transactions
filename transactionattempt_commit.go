@@ -54,15 +54,15 @@ func (t *transactionAttempt) unstageRepMutation(mutation stagedMutation, casZero
 		cb(failErr)
 	}
 
-	t.hooks.BeforeDocCommitted(mutation.Key, func(err error) {
+	t.checkExpired(hookCommitDoc, mutation.Key, func(err error) {
 		if err != nil {
-			handler(err)
-			return
+			t.expiryOvertimeMode = true
 		}
 
-		t.checkExpired("", mutation.Key, func(err error) {
+		t.hooks.BeforeDocCommitted(mutation.Key, func(err error) {
 			if err != nil {
-				t.expiryOvertimeMode = true
+				handler(err)
+				return
 			}
 
 			var duraTimeout time.Duration
@@ -187,15 +187,15 @@ func (t *transactionAttempt) unstageInsMutation(mutation stagedMutation, ambigui
 		cb(failErr)
 	}
 
-	t.hooks.BeforeDocCommitted(mutation.Key, func(err error) {
+	t.checkExpired(hookCommitDoc, mutation.Key, func(err error) {
 		if err != nil {
-			handler(err)
-			return
+			t.expiryOvertimeMode = true
 		}
 
-		t.checkExpired("", mutation.Key, func(err error) {
+		t.hooks.BeforeDocCommitted(mutation.Key, func(err error) {
 			if err != nil {
-				t.expiryOvertimeMode = true
+				handler(err)
+				return
 			}
 
 			var duraTimeout time.Duration
@@ -289,15 +289,15 @@ func (t *transactionAttempt) unstageRemMutation(mutation stagedMutation, cb func
 		cb(failErr)
 	}
 
-	t.hooks.BeforeDocRemoved(mutation.Key, func(err error) {
+	t.checkExpired(hookRemoveDoc, mutation.Key, func(err error) {
 		if err != nil {
-			handler(err)
-			return
+			t.expiryOvertimeMode = true
 		}
 
-		t.checkExpired("", mutation.Key, func(err error) {
+		t.hooks.BeforeDocRemoved(mutation.Key, func(err error) {
 			if err != nil {
-				t.expiryOvertimeMode = true
+				handler(err)
+				return
 			}
 
 			var duraTimeout time.Duration
@@ -536,8 +536,8 @@ func (t *transactionAttempt) setATRCompleted(
 	}
 
 	t.checkExpired(hookATRComplete, []byte{}, func(err error) {
-		if err != nil {
-			handler(err)
+		if err != nil && !t.expiryOvertimeMode {
+			handler(nil)
 			return
 		}
 
@@ -776,6 +776,7 @@ func (t *transactionAttempt) setATRCommitted(
 		ec := t.classifyError(err)
 		switch ec {
 		case ErrorClassFailExpiry:
+			t.expiryOvertimeMode = true
 			failErr = t.createAndStashOperationFailedError(false, false, ErrAttemptExpired, ErrorReasonTransactionExpired, ec, true)
 		case ErrorClassFailAmbiguous:
 			t.setATRCommittedAmbiguityResolution(cb)
