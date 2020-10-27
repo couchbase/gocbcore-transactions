@@ -165,7 +165,8 @@ func (t *Transactions) ResumeTransactionAttempt(txnBytes []byte) (*Transaction, 
 // background tasks associated with it.
 func (t *Transactions) Close() error {
 	t.cleaner.Close()
-	return errors.New("not implemented")
+
+	return nil
 }
 
 // TransactionsInternal exposes internal methods that are useful for testing and/or
