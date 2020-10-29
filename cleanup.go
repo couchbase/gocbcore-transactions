@@ -23,6 +23,7 @@ type CleanupRequest struct {
 	Replaces          []DocRecord
 	Removes           []DocRecord
 	State             AttemptState
+	ForwardCompat     map[string][]ForwardCompatibilityEntry
 
 	readyTime time.Time
 }
@@ -266,7 +267,7 @@ func (c *stdCleaner) processQ() {
 }
 
 func (c *stdCleaner) CleanupAttempt(atrAgent *gocbcore.Agent, req *CleanupRequest, regular bool, cb func(attempt CleanupAttempt)) {
-	c.cleanupDocs(req, func(err error) {
+	checkForwardCompatbility(forwardCompatStageGetsCleanupEntry, req.ForwardCompat, func(shouldRetry bool, retryInterval time.Duration, err error) {
 		if err != nil {
 			cb(CleanupAttempt{
 				Success:           false,
@@ -281,21 +282,37 @@ func (c *stdCleaner) CleanupAttempt(atrAgent *gocbcore.Agent, req *CleanupReques
 			return
 		}
 
-		c.cleanupATR(atrAgent, req, func(err error) {
-			success := true
+		c.cleanupDocs(req, func(err error) {
 			if err != nil {
-				success = false
+				cb(CleanupAttempt{
+					Success:           false,
+					IsReqular:         regular,
+					AttemptID:         req.AttemptID,
+					AtrID:             req.AtrID,
+					AtrCollectionName: req.AtrCollectionName,
+					AtrScopeName:      req.AtrScopeName,
+					AtrBucketName:     req.AtrBucketName,
+					Request:           req,
+				})
+				return
 			}
 
-			cb(CleanupAttempt{
-				Success:           success,
-				IsReqular:         regular,
-				AttemptID:         req.AttemptID,
-				AtrID:             req.AtrID,
-				AtrCollectionName: req.AtrCollectionName,
-				AtrScopeName:      req.AtrScopeName,
-				AtrBucketName:     req.AtrBucketName,
-				Request:           req,
+			c.cleanupATR(atrAgent, req, func(err error) {
+				success := true
+				if err != nil {
+					success = false
+				}
+
+				cb(CleanupAttempt{
+					Success:           success,
+					IsReqular:         regular,
+					AttemptID:         req.AttemptID,
+					AtrID:             req.AtrID,
+					AtrCollectionName: req.AtrCollectionName,
+					AtrScopeName:      req.AtrScopeName,
+					AtrBucketName:     req.AtrBucketName,
+					Request:           req,
+				})
 			})
 		})
 	})

@@ -45,6 +45,8 @@ type jsonAtrAttempt struct {
 	Inserts  []jsonAtrMutation `json:"ins,omitempty"`
 	Replaces []jsonAtrMutation `json:"rep,omitempty"`
 	Removes  []jsonAtrMutation `json:"rem,omitempty"`
+
+	ForwardCompat map[string][]jsonForwardCompatibilityEntry `json:"fc,omitempty"`
 }
 
 type jsonTxnXattrID struct {
@@ -72,10 +74,11 @@ type jsonTxnXattrRestore struct {
 }
 
 type jsonTxnXattr struct {
-	ID        jsonTxnXattrID       `json:"id,omitempty"`
-	ATR       jsonTxnXattrATR      `json:"atr,omitempty"`
-	Operation jsonTxnXattrOp       `json:"op,omitempty"`
-	Restore   *jsonTxnXattrRestore `json:"restore,omitempty"`
+	ID            jsonTxnXattrID                             `json:"id,omitempty"`
+	ATR           jsonTxnXattrATR                            `json:"atr,omitempty"`
+	Operation     jsonTxnXattrOp                             `json:"op,omitempty"`
+	Restore       *jsonTxnXattrRestore                       `json:"restore,omitempty"`
+	ForwardCompat map[string][]jsonForwardCompatibilityEntry `json:"fc,omitempty"`
 }
 
 type docMeta struct {
@@ -91,4 +94,11 @@ type getDoc struct {
 	DocMeta *docMeta
 	Cas     gocbcore.Cas
 	Deleted bool
+}
+
+type jsonForwardCompatibilityEntry struct {
+	ProtocolVersion   string `json:"p,omitempty"`
+	ProtocolExtension string `json:"e,omitempty"`
+	Behaviour         string `json:"b,omitempty"`
+	RetryInterval     int    `json:"ra,omitempty"`
 }

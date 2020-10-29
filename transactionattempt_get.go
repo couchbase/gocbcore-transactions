@@ -27,7 +27,20 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 				cb(nil, err)
 				return
 			}
-			cb(result, nil)
+
+			var forwardCompat map[string][]ForwardCompatibilityEntry
+			if result.Meta != nil {
+				forwardCompat = result.Meta.ForwardCompat
+			}
+
+			t.checkForwardCompatbility(forwardCompatStageGets, forwardCompat, func(err error) {
+				if err != nil {
+					cb(nil, err)
+					return
+				}
+
+				cb(result, nil)
+			})
 		})
 	})
 }
@@ -114,6 +127,7 @@ func (t *transactionAttempt) get(opts GetOptions, resolvingATREntry string, cb G
 								CollectionName: doc.TxnMeta.ATR.CollectionName,
 								DocID:          doc.TxnMeta.ATR.DocID,
 							},
+							ForwardCompat: jsonForwardCompatToForwardCompat(doc.TxnMeta.ForwardCompat),
 						},
 					}
 
@@ -147,6 +161,7 @@ func (t *transactionAttempt) get(opts GetOptions, resolvingATREntry string, cb G
 							CollectionName: doc.TxnMeta.ATR.CollectionName,
 							DocID:          doc.TxnMeta.ATR.DocID,
 						},
+						ForwardCompat: jsonForwardCompatToForwardCompat(doc.TxnMeta.ForwardCompat),
 					},
 				}, nil)
 				return
@@ -184,21 +199,53 @@ func (t *transactionAttempt) get(opts GetOptions, resolvingATREntry string, cb G
 						return
 					}
 
-					state := jsonAtrState(attempt.State)
-					if state == jsonAtrStateCommitted || state == jsonAtrStateCompleted {
-						if doc.TxnMeta.Operation.Type == jsonMutationRemove {
+					t.checkForwardCompatbility(forwardCompatStageGetsReadingATR, jsonForwardCompatToForwardCompat(attempt.ForwardCompat), func(err error) {
+						if err != nil {
+							cb(nil, err)
+							return
+						}
+						state := jsonAtrState(attempt.State)
+						if state == jsonAtrStateCommitted || state == jsonAtrStateCompleted {
+							if doc.TxnMeta.Operation.Type == jsonMutationRemove {
 
+								cb(nil, t.createAndStashOperationFailedError(false, false, gocbcore.ErrDocumentNotFound, ErrorReasonTransactionFailed, ErrorClassFailDocNotFound, false))
+								return
+							}
+
+							// TODO(brett19): Discuss virtual CAS with Graham
+							cb(&GetResult{
+								agent:          opts.Agent,
+								scopeName:      opts.ScopeName,
+								collectionName: opts.CollectionName,
+								key:            opts.Key,
+								Value:          doc.TxnMeta.Operation.Staged,
+								Cas:            doc.Cas,
+								Meta: &MutableItemMeta{
+									TransactionID: doc.TxnMeta.ID.Transaction,
+									AttemptID:     doc.TxnMeta.ID.Attempt,
+									ATR: MutableItemMetaATR{
+										BucketName:     doc.TxnMeta.ATR.BucketName,
+										ScopeName:      doc.TxnMeta.ATR.ScopeName,
+										CollectionName: doc.TxnMeta.ATR.CollectionName,
+										DocID:          doc.TxnMeta.ATR.DocID,
+									},
+									ForwardCompat: jsonForwardCompatToForwardCompat(doc.TxnMeta.ForwardCompat),
+								},
+							}, nil)
+							return
+						}
+
+						if doc.Deleted {
 							cb(nil, t.createAndStashOperationFailedError(false, false, gocbcore.ErrDocumentNotFound, ErrorReasonTransactionFailed, ErrorClassFailDocNotFound, false))
 							return
 						}
 
-						// TODO(brett19): Discuss virtual CAS with Graham
 						cb(&GetResult{
 							agent:          opts.Agent,
 							scopeName:      opts.ScopeName,
 							collectionName: opts.CollectionName,
 							key:            opts.Key,
-							Value:          doc.TxnMeta.Operation.Staged,
+							Value:          doc.Body,
 							Cas:            doc.Cas,
 							Meta: &MutableItemMeta{
 								TransactionID: doc.TxnMeta.ID.Transaction,
@@ -209,34 +256,10 @@ func (t *transactionAttempt) get(opts GetOptions, resolvingATREntry string, cb G
 									CollectionName: doc.TxnMeta.ATR.CollectionName,
 									DocID:          doc.TxnMeta.ATR.DocID,
 								},
+								ForwardCompat: jsonForwardCompatToForwardCompat(doc.TxnMeta.ForwardCompat),
 							},
 						}, nil)
-						return
-					}
-
-					if doc.Deleted {
-						cb(nil, t.createAndStashOperationFailedError(false, false, gocbcore.ErrDocumentNotFound, ErrorReasonTransactionFailed, ErrorClassFailDocNotFound, false))
-						return
-					}
-
-					cb(&GetResult{
-						agent:          opts.Agent,
-						scopeName:      opts.ScopeName,
-						collectionName: opts.CollectionName,
-						key:            opts.Key,
-						Value:          doc.Body,
-						Cas:            doc.Cas,
-						Meta: &MutableItemMeta{
-							TransactionID: doc.TxnMeta.ID.Transaction,
-							AttemptID:     doc.TxnMeta.ID.Attempt,
-							ATR: MutableItemMetaATR{
-								BucketName:     doc.TxnMeta.ATR.BucketName,
-								ScopeName:      doc.TxnMeta.ATR.ScopeName,
-								CollectionName: doc.TxnMeta.ATR.CollectionName,
-								DocID:          doc.TxnMeta.ATR.DocID,
-							},
-						},
-					}, nil)
+					})
 				})
 		})
 	})

@@ -42,7 +42,7 @@ func (t *transactionAttempt) replace(opts ReplaceOptions, cb StoreCallback) erro
 		agent := opts.Document.agent
 		key := opts.Document.key
 
-		t.writeWriteConflictPoll(opts.Document, func(err error) {
+		t.writeWriteConflictPoll(opts.Document, forwardCompatStageWWCReplacing, func(err error) {
 			if err != nil {
 				cb(nil, err)
 				return

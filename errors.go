@@ -47,6 +47,10 @@ var (
 
 	// ErrPreviousOperationFailed indicates a previous operation in the transaction failed.
 	ErrPreviousOperationFailed = errors.New("previous operation failed")
+
+	// ErrForwardCompatibilityFailure indicates an operation failed due to involving a document in another transaction
+	// which contains features this transaction does not support.
+	ErrForwardCompatibilityFailure = errors.New("forward compatibility error")
 )
 
 // TransactionOperationFailedError is used when a transaction operation fails.

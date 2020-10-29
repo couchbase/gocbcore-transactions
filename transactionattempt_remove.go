@@ -53,7 +53,7 @@ func (t *transactionAttempt) remove(opts RemoveOptions, cb StoreCallback) error 
 		}
 		t.lock.Unlock()
 
-		t.writeWriteConflictPoll(opts.Document, func(err error) {
+		t.writeWriteConflictPoll(opts.Document, forwardCompatStageWWCRemoving, func(err error) {
 			if err != nil {
 				cb(nil, err)
 				return

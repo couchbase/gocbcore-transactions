@@ -57,6 +57,11 @@ func (t *transactionAttempt) insert(opts InsertOptions, cas gocbcore.Cas, cb Sto
 			case ErrorClassFailCasMismatch:
 				t.getForInsert(opts, func(result *GetResult, err error) {
 					if err != nil {
+						if errors.Is(err, ErrForwardCompatibilityFailure) {
+							cb(nil, err)
+							return
+						}
+
 						var failErr error
 						ec := t.classifyError(err)
 						switch ec {
@@ -74,7 +79,7 @@ func (t *transactionAttempt) insert(opts InsertOptions, cas gocbcore.Cas, cb Sto
 						return
 					}
 
-					t.writeWriteConflictPoll(result, func(err error) {
+					t.writeWriteConflictPoll(result, forwardCompatStageWWCInserting, func(err error) {
 						if err != nil {
 							cb(nil, err)
 							return
@@ -279,50 +284,61 @@ func (t *transactionAttempt) getForInsert(opts InsertOptions, cb func(*GetResult
 				txnMeta = &txnMetaVal
 			}
 
-			var val []byte
-			if result.Ops[2].Err != nil {
-				val = result.Ops[2].Value
+			var forwardCompat map[string][]ForwardCompatibilityEntry
+			if txnMeta != nil {
+				forwardCompat = jsonForwardCompatToForwardCompat(txnMeta.ForwardCompat)
 			}
 
-			if txnMeta == nil {
-				// This doc isn't in a transaction
-				if result.Internal.IsDeleted {
-					cb(&GetResult{
-						agent:          opts.Agent,
-						scopeName:      opts.ScopeName,
-						collectionName: opts.CollectionName,
-						key:            opts.Key,
-						Meta:           nil,
-						Value:          val,
-						Cas:            result.Cas,
-					}, nil)
+			t.checkForwardCompatbility(forwardCompatStageWWCInsertingGet, forwardCompat, func(err error) {
+				if err != nil {
+					cb(nil, err)
 					return
 				}
 
-				cb(nil, gocbcore.ErrDocumentExists)
-				return
-			}
+				var val []byte
+				if result.Ops[2].Err != nil {
+					val = result.Ops[2].Value
+				}
 
-			cb(&GetResult{
-				agent:          opts.Agent,
-				scopeName:      opts.ScopeName,
-				collectionName: opts.CollectionName,
-				key:            opts.Key,
-				Meta: &MutableItemMeta{
-					TransactionID: txnMeta.ID.Transaction,
-					AttemptID:     txnMeta.ID.Attempt,
-					ATR: MutableItemMetaATR{
-						BucketName:     txnMeta.ATR.BucketName,
-						ScopeName:      txnMeta.ATR.ScopeName,
-						CollectionName: txnMeta.ATR.CollectionName,
-						DocID:          txnMeta.ATR.DocID,
+				if txnMeta == nil {
+					// This doc isn't in a transaction
+					if result.Internal.IsDeleted {
+						cb(&GetResult{
+							agent:          opts.Agent,
+							scopeName:      opts.ScopeName,
+							collectionName: opts.CollectionName,
+							key:            opts.Key,
+							Meta:           nil,
+							Value:          val,
+							Cas:            result.Cas,
+						}, nil)
+						return
+					}
+
+					cb(nil, gocbcore.ErrDocumentExists)
+					return
+				}
+
+				cb(&GetResult{
+					agent:          opts.Agent,
+					scopeName:      opts.ScopeName,
+					collectionName: opts.CollectionName,
+					key:            opts.Key,
+					Meta: &MutableItemMeta{
+						TransactionID: txnMeta.ID.Transaction,
+						AttemptID:     txnMeta.ID.Attempt,
+						ATR: MutableItemMetaATR{
+							BucketName:     txnMeta.ATR.BucketName,
+							ScopeName:      txnMeta.ATR.ScopeName,
+							CollectionName: txnMeta.ATR.CollectionName,
+							DocID:          txnMeta.ATR.DocID,
+						},
+						ForwardCompat: forwardCompat,
 					},
-				},
-				Value: val,
-				Cas:   result.Cas,
-			}, nil)
-
-			return
+					Value: val,
+					Cas:   result.Cas,
+				}, nil)
+			})
 		})
 		if err != nil {
 			cb(nil, err)

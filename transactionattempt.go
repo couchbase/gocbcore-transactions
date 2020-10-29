@@ -464,7 +464,7 @@ func (t *transactionAttempt) classifyError(err error) ErrorClass {
 	return ec
 }
 
-func (t *transactionAttempt) writeWriteConflictPoll(res *GetResult, cb func(error)) {
+func (t *transactionAttempt) writeWriteConflictPoll(res *GetResult, stage forwardCompatStage, cb func(error)) {
 	handler := func(err error) {
 		if err != nil {
 			ec := t.classifyError(err)
@@ -508,53 +508,65 @@ func (t *transactionAttempt) writeWriteConflictPoll(res *GetResult, cb func(erro
 			return
 		}
 
-		t.checkExpired("", res.key, func(err error) {
+		var forwardCompat map[string][]ForwardCompatibilityEntry
+		if res.Meta != nil {
+			forwardCompat = res.Meta.ForwardCompat
+		}
+
+		t.checkForwardCompatbility(stage, forwardCompat, func(err error) {
 			if err != nil {
-				t.expiryOvertimeMode = true
-				handler(err)
+				// We've already enhanced this error
+				cb(err)
 				return
 			}
 
-			t.hooks.BeforeCheckATREntryForBlockingDoc([]byte(res.Meta.ATR.DocID), func(err error) {
+			t.checkExpired("", res.key, func(err error) {
 				if err != nil {
+					t.expiryOvertimeMode = true
 					handler(err)
 					return
 				}
 
-				t.getTxnState(
-					res.agent,
-					res.Meta.ATR.ScopeName,
-					res.Meta.ATR.CollectionName,
-					res.Meta.ATR.DocID,
-					res.Meta.AttemptID,
-					deadline,
-					func(attempt *jsonAtrAttempt, err error) {
-						if err == ErrAtrEntryNotFound {
-							// The ATR isn't there anymore, which counts as it being completed.
-							handler(nil)
-							return
-						} else if err != nil {
-							handler(err)
-							return
-						}
+				t.hooks.BeforeCheckATREntryForBlockingDoc([]byte(res.Meta.ATR.DocID), func(err error) {
+					if err != nil {
+						handler(err)
+						return
+					}
 
-						td := time.Duration(attempt.ExpiryTime) * time.Millisecond
-						if t.txnStartTime.Add(td).Before(time.Now()) {
-							handler(nil)
-							return
-						}
+					t.getTxnState(
+						res.agent,
+						res.Meta.ATR.ScopeName,
+						res.Meta.ATR.CollectionName,
+						res.Meta.ATR.DocID,
+						res.Meta.AttemptID,
+						deadline,
+						func(attempt *jsonAtrAttempt, err error) {
+							if err == ErrAtrEntryNotFound {
+								// The ATR isn't there anymore, which counts as it being completed.
+								handler(nil)
+								return
+							} else if err != nil {
+								handler(err)
+								return
+							}
 
-						state := jsonAtrState(attempt.State)
-						if state == jsonAtrStateCommitted || state == jsonAtrStateRolledBack {
-							// If we have progressed enough to continue, let's do that.
-							handler(nil)
-							return
-						}
+							td := time.Duration(attempt.ExpiryTime) * time.Millisecond
+							if t.txnStartTime.Add(td).Before(time.Now()) {
+								handler(nil)
+								return
+							}
 
-						time.AfterFunc(200*time.Millisecond, onePoll)
-					})
+							state := jsonAtrState(attempt.State)
+							if state == jsonAtrStateCommitted || state == jsonAtrStateRolledBack {
+								// If we have progressed enough to continue, let's do that.
+								handler(nil)
+								return
+							}
+
+							time.AfterFunc(200*time.Millisecond, onePoll)
+						})
+				})
 			})
-
 		})
 	}
 	onePoll()
@@ -597,5 +609,46 @@ func (t *transactionAttempt) createCleanUpRequest() *CleanupRequest {
 		Removes:           removes,
 		State:             t.state,
 		readyTime:         t.expiryTime,
+		ForwardCompat:     nil, // Let's just be explicit about this, it'll change in the future anyway.
 	}
+}
+
+func (t *transactionAttempt) checkForwardCompatbility(stage forwardCompatStage, fc map[string][]ForwardCompatibilityEntry,
+	cb func(error)) {
+	checkForwardCompatbility(stage, fc, func(shouldRetry bool, retryInterval time.Duration, err error) {
+		if err == nil {
+			cb(nil)
+			return
+		}
+
+		if retryInterval > 0 {
+			time.AfterFunc(retryInterval, func() {
+				cb(t.createAndStashOperationFailedError(shouldRetry, false, ErrForwardCompatibilityFailure,
+					ErrorReasonTransactionFailed, ErrorClassFailOther, false))
+			})
+			return
+		}
+
+		cb(t.createAndStashOperationFailedError(shouldRetry, false, ErrForwardCompatibilityFailure,
+			ErrorReasonTransactionFailed, ErrorClassFailOther, false))
+	})
+}
+
+func jsonForwardCompatToForwardCompat(fc map[string][]jsonForwardCompatibilityEntry) map[string][]ForwardCompatibilityEntry {
+	if fc == nil {
+		return nil
+	}
+	forwardCompat := make(map[string][]ForwardCompatibilityEntry)
+
+	for k, entries := range fc {
+		if _, ok := forwardCompat[k]; !ok {
+			forwardCompat[k] = make([]ForwardCompatibilityEntry, len(entries))
+		}
+
+		for i, entry := range entries {
+			forwardCompat[k][i] = ForwardCompatibilityEntry(entry)
+		}
+	}
+
+	return forwardCompat
 }

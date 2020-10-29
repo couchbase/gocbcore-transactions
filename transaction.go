@@ -166,9 +166,10 @@ type MutableItemMetaATR struct {
 // MutableItemMeta represents all the meta-data for a fetched
 // item.  Most of this is used for later mutation operations.
 type MutableItemMeta struct {
-	TransactionID string             `json:"txn"`
-	AttemptID     string             `json:"atmpt"`
-	ATR           MutableItemMetaATR `json:"atr"`
+	TransactionID string                                 `json:"txn"`
+	AttemptID     string                                 `json:"atmpt"`
+	ATR           MutableItemMetaATR                     `json:"atr"`
+	ForwardCompat map[string][]ForwardCompatibilityEntry `json:"fc,omitempty"`
 }
 
 // GetResult represents the result of a Get or GetOptional operation.
