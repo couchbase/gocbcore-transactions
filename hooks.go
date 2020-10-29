@@ -37,7 +37,7 @@ type TransactionHooks interface {
 	AfterATRAborted(func(err error))
 	AfterATRRolledBack(func(err error))
 	BeforeATRCommitAmbiguityResolution(func(err error))
-	RandomATRIDForVbucket(vbID []byte, cb func(string, error))
+	RandomATRIDForVbucket(cb func(string, error))
 	HasExpiredClientSideHook(stage string, docID []byte, cb func(bool, error))
 }
 
@@ -239,7 +239,7 @@ func (dh *DefaultHooks) BeforeATRCommitAmbiguityResolution(cb func(err error)) {
 }
 
 // RandomATRIDForVbucket generates a random ATRID for a vbucket.
-func (dh *DefaultHooks) RandomATRIDForVbucket(vbID []byte, cb func(string, error)) {
+func (dh *DefaultHooks) RandomATRIDForVbucket(cb func(string, error)) {
 	cb("", nil)
 }
 

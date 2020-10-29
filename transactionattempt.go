@@ -236,26 +236,23 @@ func (t *transactionAttempt) confirmATRPending(agent *gocbcore.Agent, firstKey [
 	}
 
 	atrID := int(cbcVbMap(firstKey, 1024))
-	atrKey := []byte(atrIDList[atrID])
-
-	t.atrAgent = agent
-	t.atrScopeName = "_default"
-	t.atrCollectionName = "_default"
-	t.atrKey = atrKey
-
-	t.txnAtrSection.Add(1)
-	t.lock.Unlock()
-
-	t.checkExpired(hookATRPending, []byte{}, func(err error) {
-		if err != nil {
-			t.lock.Lock()
-			t.txnAtrSection.Done()
-			t.lock.Unlock()
-			handler(err)
-			return
+	t.hooks.RandomATRIDForVbucket(func(s string, err error) {
+		var atrKey []byte
+		if s == "" {
+			atrKey = []byte(atrIDList[atrID])
+		} else {
+			atrKey = []byte(s)
 		}
 
-		t.hooks.BeforeATRPending(func(err error) {
+		t.atrAgent = agent
+		t.atrScopeName = "_default"
+		t.atrCollectionName = "_default"
+		t.atrKey = atrKey
+
+		t.txnAtrSection.Add(1)
+		t.lock.Unlock()
+
+		t.checkExpired(hookATRPending, []byte{}, func(err error) {
 			if err != nil {
 				t.lock.Lock()
 				t.txnAtrSection.Done()
@@ -264,60 +261,7 @@ func (t *transactionAttempt) confirmATRPending(agent *gocbcore.Agent, firstKey [
 				return
 			}
 
-			var duraTimeout time.Duration
-			var deadline time.Time
-			if t.keyValueTimeout > 0 {
-				deadline = time.Now().Add(t.keyValueTimeout)
-				duraTimeout = t.keyValueTimeout * 10 / 9
-			}
-
-			var marshalErr error
-			atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag) gocbcore.SubDocOp {
-				b, err := json.Marshal(data)
-				if err != nil {
-					marshalErr = err
-					return gocbcore.SubDocOp{}
-				}
-
-				return gocbcore.SubDocOp{
-					Op:    memd.SubDocOpDictAdd,
-					Flags: memd.SubdocFlagMkDirP | flags,
-					Path:  "attempts." + t.id + "." + fieldName,
-					Value: b,
-				}
-			}
-
-			opts := gocbcore.MutateInOptions{
-				ScopeName:      t.atrScopeName,
-				CollectionName: t.atrCollectionName,
-				Key:            atrKey,
-				Ops: []gocbcore.SubDocOp{
-					atrFieldOp("tst", "${Mutation.CAS}", memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros),
-					atrFieldOp("tid", t.transactionID, memd.SubdocFlagXattrPath),
-					atrFieldOp("st", jsonAtrStatePending, memd.SubdocFlagXattrPath),
-					atrFieldOp("exp", t.expiryTime.Sub(time.Now())/time.Millisecond, memd.SubdocFlagXattrPath),
-					{
-						Op:    memd.SubDocOpSetDoc,
-						Flags: memd.SubdocFlagNone,
-						Path:  "",
-						Value: []byte{0},
-					},
-				},
-				DurabilityLevel:        durabilityLevelToMemd(t.durabilityLevel),
-				DurabilityLevelTimeout: duraTimeout,
-				Deadline:               deadline,
-				Flags:                  memd.SubdocDocFlagMkDoc,
-			}
-
-			if marshalErr != nil {
-				t.lock.Lock()
-				t.txnAtrSection.Done()
-				t.lock.Unlock()
-				handler(err)
-				return
-			}
-
-			_, err = agent.MutateIn(opts, func(result *gocbcore.MutateInResult, err error) {
+			t.hooks.BeforeATRPending(func(err error) {
 				if err != nil {
 					t.lock.Lock()
 					t.txnAtrSection.Done()
@@ -326,17 +270,60 @@ func (t *transactionAttempt) confirmATRPending(agent *gocbcore.Agent, firstKey [
 					return
 				}
 
-				for _, op := range result.Ops {
-					if op.Err != nil {
-						t.lock.Lock()
-						t.txnAtrSection.Done()
-						t.lock.Unlock()
-						handler(op.Err)
-						return
+				var duraTimeout time.Duration
+				var deadline time.Time
+				if t.keyValueTimeout > 0 {
+					deadline = time.Now().Add(t.keyValueTimeout)
+					duraTimeout = t.keyValueTimeout * 10 / 9
+				}
+
+				var marshalErr error
+				atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag) gocbcore.SubDocOp {
+					b, err := json.Marshal(data)
+					if err != nil {
+						marshalErr = err
+						return gocbcore.SubDocOp{}
+					}
+
+					return gocbcore.SubDocOp{
+						Op:    memd.SubDocOpDictAdd,
+						Flags: memd.SubdocFlagMkDirP | flags,
+						Path:  "attempts." + t.id + "." + fieldName,
+						Value: b,
 					}
 				}
 
-				t.hooks.AfterATRPending(func(err error) {
+				opts := gocbcore.MutateInOptions{
+					ScopeName:      t.atrScopeName,
+					CollectionName: t.atrCollectionName,
+					Key:            atrKey,
+					Ops: []gocbcore.SubDocOp{
+						atrFieldOp("tst", "${Mutation.CAS}", memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros),
+						atrFieldOp("tid", t.transactionID, memd.SubdocFlagXattrPath),
+						atrFieldOp("st", jsonAtrStatePending, memd.SubdocFlagXattrPath),
+						atrFieldOp("exp", t.expiryTime.Sub(time.Now())/time.Millisecond, memd.SubdocFlagXattrPath),
+						{
+							Op:    memd.SubDocOpSetDoc,
+							Flags: memd.SubdocFlagNone,
+							Path:  "",
+							Value: []byte{0},
+						},
+					},
+					DurabilityLevel:        durabilityLevelToMemd(t.durabilityLevel),
+					DurabilityLevelTimeout: duraTimeout,
+					Deadline:               deadline,
+					Flags:                  memd.SubdocDocFlagMkDoc,
+				}
+
+				if marshalErr != nil {
+					t.lock.Lock()
+					t.txnAtrSection.Done()
+					t.lock.Unlock()
+					handler(err)
+					return
+				}
+
+				_, err = agent.MutateIn(opts, func(result *gocbcore.MutateInResult, err error) {
 					if err != nil {
 						t.lock.Lock()
 						t.txnAtrSection.Done()
@@ -345,21 +332,41 @@ func (t *transactionAttempt) confirmATRPending(agent *gocbcore.Agent, firstKey [
 						return
 					}
 
+					for _, op := range result.Ops {
+						if op.Err != nil {
+							t.lock.Lock()
+							t.txnAtrSection.Done()
+							t.lock.Unlock()
+							handler(op.Err)
+							return
+						}
+					}
+
+					t.hooks.AfterATRPending(func(err error) {
+						if err != nil {
+							t.lock.Lock()
+							t.txnAtrSection.Done()
+							t.lock.Unlock()
+							handler(err)
+							return
+						}
+
+						t.lock.Lock()
+						t.state = AttemptStatePending
+						t.txnAtrSection.Done()
+						t.lock.Unlock()
+
+						handler(nil)
+					})
+				})
+				if err != nil {
 					t.lock.Lock()
-					t.state = AttemptStatePending
 					t.txnAtrSection.Done()
 					t.lock.Unlock()
-
-					handler(nil)
-				})
+					handler(err)
+					return
+				}
 			})
-			if err != nil {
-				t.lock.Lock()
-				t.txnAtrSection.Done()
-				t.lock.Unlock()
-				handler(err)
-				return
-			}
 		})
 	})
 }
