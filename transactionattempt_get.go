@@ -96,6 +96,35 @@ func (t *transactionAttempt) get(opts GetOptions, resolvingATREntry string, cb G
 				return
 			}
 
+			if doc.TxnMeta.ID.Attempt == t.id {
+				if doc.TxnMeta.Operation.Type == jsonMutationInsert || doc.TxnMeta.Operation.Type == jsonMutationReplace {
+					getRes := &GetResult{
+						agent:          opts.Agent,
+						scopeName:      opts.ScopeName,
+						collectionName: opts.CollectionName,
+						key:            opts.Key,
+						Value:          doc.TxnMeta.Operation.Staged,
+						Cas:            doc.Cas,
+						Meta: &MutableItemMeta{
+							TransactionID: doc.TxnMeta.ID.Transaction,
+							AttemptID:     doc.TxnMeta.ID.Attempt,
+							ATR: MutableItemMetaATR{
+								BucketName:     doc.TxnMeta.ATR.BucketName,
+								ScopeName:      doc.TxnMeta.ATR.ScopeName,
+								CollectionName: doc.TxnMeta.ATR.CollectionName,
+								DocID:          doc.TxnMeta.ATR.DocID,
+							},
+						},
+					}
+
+					cb(getRes, nil)
+					return
+				} else if doc.TxnMeta.Operation.Type == jsonMutationRemove {
+					cb(nil, t.createAndStashOperationFailedError(false, false, gocbcore.ErrDocumentNotFound, ErrorReasonTransactionFailed, ErrorClassFailDocNotFound, true))
+					return
+				}
+			}
+
 			if doc.TxnMeta.ID.Attempt == resolvingATREntry {
 				if doc.Deleted {
 					cb(nil, t.createAndStashOperationFailedError(false, false, gocbcore.ErrDocumentNotFound, ErrorReasonTransactionFailed, ErrorClassFailDocNotFound, false))
