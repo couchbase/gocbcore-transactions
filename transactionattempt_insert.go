@@ -308,9 +308,18 @@ func (t *transactionAttempt) getForInsert(opts InsertOptions, cb func(*GetResult
 				scopeName:      opts.ScopeName,
 				collectionName: opts.CollectionName,
 				key:            opts.Key,
-				Meta:           nil,
-				Value:          val,
-				Cas:            result.Cas,
+				Meta: &MutableItemMeta{
+					TransactionID: txnMeta.ID.Transaction,
+					AttemptID:     txnMeta.ID.Attempt,
+					ATR: MutableItemMetaATR{
+						BucketName:     txnMeta.ATR.BucketName,
+						ScopeName:      txnMeta.ATR.ScopeName,
+						CollectionName: txnMeta.ATR.CollectionName,
+						DocID:          txnMeta.ATR.DocID,
+					},
+				},
+				Value: val,
+				Cas:   result.Cas,
 			}, nil)
 
 			return
