@@ -77,13 +77,13 @@ func (t *transactionAttempt) get(opts GetOptions, resolvingATREntry string, cb G
 						ec, true)
 				case ErrorClassFailHard:
 					failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed,
-						ec, true)
+						ec, false)
 				case ErrorClassFailTransient:
 					failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed,
-						ec, true)
+						ec, false)
 				default:
 					failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed,
-						ec, true)
+						ec, false)
 				}
 
 				cb(nil, failErr)
@@ -178,7 +178,7 @@ func (t *transactionAttempt) get(opts GetOptions, resolvingATREntry string, cb G
 					if err != nil {
 						ec := t.classifyError(err)
 						if errors.Is(err, ErrAtrNotFound) {
-							cb(nil, t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, true))
+							cb(nil, t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, false))
 							return
 						} else if errors.Is(err, ErrAtrEntryNotFound) {
 							if err := t.get(opts, doc.TxnMeta.ID.Attempt, cb); err != nil {
@@ -189,11 +189,11 @@ func (t *transactionAttempt) get(opts GetOptions, resolvingATREntry string, cb G
 						var failErr error
 						switch ec {
 						case ErrorClassFailHard:
-							failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec, true)
+							failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec, false)
 						case ErrorClassFailTransient:
-							failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, true)
+							failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
 						default:
-							failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, true)
+							failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, false)
 						}
 						cb(nil, failErr)
 						return
