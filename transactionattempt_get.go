@@ -93,7 +93,7 @@ func (t *transactionAttempt) get(opts GetOptions, resolvingATREntry string, cb G
 			// Doc not involved in another transaction.
 			if doc.TxnMeta == nil {
 				if doc.Deleted {
-					cb(nil, t.createAndStashOperationFailedError(false, false, gocbcore.ErrDocumentNotFound, ErrorReasonTransactionFailed, ErrorClassFailDocNotFound, false))
+					cb(nil, t.createAndStashOperationFailedError(false, false, gocbcore.ErrDocumentNotFound, ErrorReasonTransactionFailed, ErrorClassFailDocNotFound, true))
 					return
 				}
 
@@ -141,7 +141,7 @@ func (t *transactionAttempt) get(opts GetOptions, resolvingATREntry string, cb G
 
 			if doc.TxnMeta.ID.Attempt == resolvingATREntry {
 				if doc.Deleted {
-					cb(nil, t.createAndStashOperationFailedError(false, false, gocbcore.ErrDocumentNotFound, ErrorReasonTransactionFailed, ErrorClassFailDocNotFound, false))
+					cb(nil, t.createAndStashOperationFailedError(false, false, gocbcore.ErrDocumentNotFound, ErrorReasonTransactionFailed, ErrorClassFailDocNotFound, true))
 					return
 				}
 
@@ -178,7 +178,7 @@ func (t *transactionAttempt) get(opts GetOptions, resolvingATREntry string, cb G
 					if err != nil {
 						ec := t.classifyError(err)
 						if errors.Is(err, ErrAtrNotFound) {
-							cb(nil, t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, false))
+							cb(nil, t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, true))
 							return
 						} else if errors.Is(err, ErrAtrEntryNotFound) {
 							if err := t.get(opts, doc.TxnMeta.ID.Attempt, cb); err != nil {
@@ -189,11 +189,11 @@ func (t *transactionAttempt) get(opts GetOptions, resolvingATREntry string, cb G
 						var failErr error
 						switch ec {
 						case ErrorClassFailHard:
-							failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec, false)
+							failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec, true)
 						case ErrorClassFailTransient:
-							failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
+							failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, true)
 						default:
-							failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, false)
+							failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, true)
 						}
 						cb(nil, failErr)
 						return
@@ -208,7 +208,7 @@ func (t *transactionAttempt) get(opts GetOptions, resolvingATREntry string, cb G
 						if state == jsonAtrStateCommitted || state == jsonAtrStateCompleted {
 							if doc.TxnMeta.Operation.Type == jsonMutationRemove {
 
-								cb(nil, t.createAndStashOperationFailedError(false, false, gocbcore.ErrDocumentNotFound, ErrorReasonTransactionFailed, ErrorClassFailDocNotFound, false))
+								cb(nil, t.createAndStashOperationFailedError(false, false, gocbcore.ErrDocumentNotFound, ErrorReasonTransactionFailed, ErrorClassFailDocNotFound, true))
 								return
 							}
 
@@ -236,7 +236,7 @@ func (t *transactionAttempt) get(opts GetOptions, resolvingATREntry string, cb G
 						}
 
 						if doc.Deleted {
-							cb(nil, t.createAndStashOperationFailedError(false, false, gocbcore.ErrDocumentNotFound, ErrorReasonTransactionFailed, ErrorClassFailDocNotFound, false))
+							cb(nil, t.createAndStashOperationFailedError(false, false, gocbcore.ErrDocumentNotFound, ErrorReasonTransactionFailed, ErrorClassFailDocNotFound, true))
 							return
 						}
 
