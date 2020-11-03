@@ -84,6 +84,7 @@ func (t *Transactions) BeginTransaction(perConfig *PerTransactionConfig) (*Trans
 	expirationTime := t.config.ExpirationTime
 	durabilityLevel := t.config.DurabilityLevel
 	operationTimeout := t.config.KeyValueTimeout
+	customATRLocation := t.config.CustomATRLocation
 
 	if perConfig != nil {
 		if perConfig.ExpirationTime != 0 {
@@ -95,6 +96,9 @@ func (t *Transactions) BeginTransaction(perConfig *PerTransactionConfig) (*Trans
 		if perConfig.KeyValueTimeout != 0 {
 			operationTimeout = perConfig.KeyValueTimeout
 		}
+		if perConfig.CustomATRLocation.Agent != nil {
+			customATRLocation = perConfig.CustomATRLocation
+		}
 	}
 
 	now := time.Now()
@@ -105,9 +109,11 @@ func (t *Transactions) BeginTransaction(perConfig *PerTransactionConfig) (*Trans
 		durabilityLevel:   durabilityLevel,
 		transactionID:     transactionUUID,
 		operationTimeout:  operationTimeout,
-		hooks:             t.config.Internal.Hooks,
+		atrLocation:       customATRLocation,
 		addCleanupRequest: t.cleaner.AddRequest,
+		hooks:             t.config.Internal.Hooks,
 		serialUnstaging:   t.config.Internal.SerialUnstaging,
+		explicitATRs:      t.config.Internal.ExplicitATRs,
 	}, nil
 }
 
@@ -136,6 +142,30 @@ func (t *Transactions) ResumeTransactionAttempt(txnBytes []byte) (*Transaction, 
 		return nil, errors.New("invalid txn data - num atrs must be greater than 0 and less than 1024")
 	}
 
+	atrLocation := ATRLocation{}
+	if txnData.ATR.Bucket != "" && txnData.ATR.ID == "" {
+		// ATR references the specific ATR for this transaction.
+
+		foundAtrAgent, err := t.config.BucketAgentProvider(txnData.ATR.Bucket)
+		if err != nil {
+			return nil, err
+		}
+
+		atrLocation = ATRLocation{
+			Agent:          foundAtrAgent,
+			ScopeName:      txnData.ATR.Scope,
+			CollectionName: txnData.ATR.Collection,
+		}
+	} else {
+		// No ATR information means its pending with no custom.
+
+		atrLocation = ATRLocation{
+			Agent:          nil,
+			ScopeName:      "",
+			CollectionName: "",
+		}
+	}
+
 	transactionUUID := txnData.ID.Transaction
 
 	durabilityLevel, err := durabilityLevelFromString(txnData.Config.DurabilityLevel)
@@ -154,8 +184,11 @@ func (t *Transactions) ResumeTransactionAttempt(txnBytes []byte) (*Transaction, 
 		durabilityLevel:   durabilityLevel,
 		transactionID:     transactionUUID,
 		operationTimeout:  operationTimeout,
-		hooks:             t.config.Internal.Hooks,
+		atrLocation:       atrLocation,
 		addCleanupRequest: t.cleaner.AddRequest,
+		hooks:             t.config.Internal.Hooks,
+		serialUnstaging:   t.config.Internal.SerialUnstaging,
+		explicitATRs:      t.config.Internal.ExplicitATRs,
 	}
 
 	err = txn.resumeAttempt(&txnData)

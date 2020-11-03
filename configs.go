@@ -60,6 +60,14 @@ func durabilityLevelFromString(level string) (DurabilityLevel, error) {
 	return DurabilityLevelUnknown, errors.New("invalid durability level string")
 }
 
+// ATRLocation specifies a specific location where ATR entries should be
+// placed when performing transactions.
+type ATRLocation struct {
+	Agent          *gocbcore.Agent
+	ScopeName      string
+	CollectionName string
+}
+
 // BucketAgentProviderFn is a function used to provide an agent for
 // a particular bucket by name.
 type BucketAgentProviderFn func(bucketName string) (*gocbcore.Agent, error)
@@ -68,6 +76,9 @@ type BucketAgentProviderFn func(bucketName string) (*gocbcore.Agent, error)
 
 // Config specifies various tunable options related to transactions.
 type Config struct {
+	// CustomATRLocation specifies a specific location to place meta-data.
+	CustomATRLocation ATRLocation
+
 	// ExpirationTime sets the maximum time that transactions created
 	// by this Transactions object can run for, before expiring.
 	ExpirationTime time.Duration
@@ -108,6 +119,7 @@ type Config struct {
 		Hooks           TransactionHooks
 		CleanUpHooks    CleanUpHooks
 		SerialUnstaging bool
+		ExplicitATRs    bool
 	}
 }
 
@@ -115,6 +127,9 @@ type Config struct {
 
 // PerTransactionConfig specifies options which can be overriden on a per transaction basis.
 type PerTransactionConfig struct {
+	// CustomATRLocation specifies a specific location to place meta-data.
+	CustomATRLocation ATRLocation
+
 	// ExpirationTime sets the maximum time that this transaction will
 	// run for, before expiring.
 	ExpirationTime time.Duration

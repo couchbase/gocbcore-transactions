@@ -27,6 +27,8 @@ type transactionAttempt struct {
 	id               string
 	hooks            TransactionHooks
 	serialUnstaging  bool
+	explicitAtrs     bool
+	atrLocation      ATRLocation
 
 	// mutable state
 	state               AttemptState
@@ -48,6 +50,41 @@ type transactionAttempt struct {
 	addCleanupRequest addCleanupRequest
 }
 
+func (t *transactionAttempt) GetATRLocation() ATRLocation {
+	t.lock.Lock()
+	if t.atrAgent != nil {
+		location := ATRLocation{
+			Agent:          t.atrAgent,
+			ScopeName:      t.atrScopeName,
+			CollectionName: t.atrCollectionName,
+		}
+		t.lock.Unlock()
+
+		return location
+	}
+	t.lock.Unlock()
+
+	return t.atrLocation
+}
+
+func (t *transactionAttempt) SetATRLocation(location ATRLocation) error {
+	t.lock.Lock()
+	if t.atrAgent != nil {
+		t.lock.Unlock()
+		return errors.New("atr location cannot be set after mutations have occurred")
+	}
+
+	if t.atrLocation.Agent != nil {
+		t.lock.Unlock()
+		return errors.New("atr location can only be set once")
+	}
+
+	t.atrLocation = location
+
+	t.lock.Unlock()
+	return nil
+}
+
 func (t *transactionAttempt) Serialize(cb func([]byte, error)) error {
 	// TODO(brett19): I think this needs to guarentee the transaction attempts
 	// has already been started before generating the serialized result.
@@ -63,11 +100,16 @@ func (t *transactionAttempt) Serialize(cb func([]byte, error)) error {
 	res.ID.Transaction = t.transactionID
 	res.ID.Attempt = t.id
 
-	if t.atrAgent != nil && t.atrKey != nil {
+	if t.atrAgent != nil {
 		res.ATR.Bucket = t.atrAgent.BucketName()
 		res.ATR.Scope = t.atrScopeName
 		res.ATR.Collection = t.atrCollectionName
 		res.ATR.ID = string(t.atrKey)
+	} else if t.atrLocation.Agent != nil {
+		res.ATR.Bucket = t.atrLocation.Agent.BucketName()
+		res.ATR.Scope = t.atrLocation.ScopeName
+		res.ATR.Collection = t.atrLocation.CollectionName
+		res.ATR.ID = ""
 	}
 
 	res.Config.OperationTimeoutMs = int(t.operationTimeout / time.Millisecond)
@@ -266,10 +308,24 @@ func (t *transactionAttempt) confirmATRPending(agent *gocbcore.Agent, firstKey [
 			atrKey = []byte(s)
 		}
 
+		atrAgent := agent
+		atrScopeName := "_default"
+		atrCollectionName := "_default"
+		if t.atrLocation.Agent != nil {
+			atrAgent = t.atrLocation.Agent
+			atrScopeName = t.atrLocation.ScopeName
+			atrCollectionName = t.atrLocation.CollectionName
+		} else {
+			if t.explicitAtrs {
+				handler(errors.New("atrs must be explicitly defined"))
+				return
+			}
+		}
+
 		t.lock.Lock()
-		t.atrAgent = agent
-		t.atrScopeName = "_default"
-		t.atrCollectionName = "_default"
+		t.atrAgent = atrAgent
+		t.atrScopeName = atrScopeName
+		t.atrCollectionName = atrCollectionName
 		t.atrKey = atrKey
 		t.lock.Unlock()
 

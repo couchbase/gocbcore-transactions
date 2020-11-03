@@ -22,6 +22,8 @@ type Transaction struct {
 	operationTimeout time.Duration
 	durabilityLevel  DurabilityLevel
 	serialUnstaging  bool
+	explicitATRs     bool
+	atrLocation      ATRLocation
 
 	transactionID string
 	attempt       *transactionAttempt
@@ -70,6 +72,8 @@ func (t *Transaction) NewAttempt() error {
 		durabilityLevel:  t.durabilityLevel,
 		transactionID:    t.transactionID,
 		serialUnstaging:  t.serialUnstaging,
+		explicitAtrs:     t.explicitATRs,
+		atrLocation:      t.atrLocation,
 
 		id:                  attemptUUID,
 		state:               AttemptStateNothingWritten,
@@ -89,8 +93,6 @@ func (t *Transaction) NewAttempt() error {
 }
 
 func (t *Transaction) resumeAttempt(txnData *jsonSerializedAttempt) error {
-	var err error
-
 	if txnData.ID.Attempt == "" {
 		return errors.New("invalid txn data - no attempt id")
 	}
@@ -101,24 +103,26 @@ func (t *Transaction) resumeAttempt(txnData *jsonSerializedAttempt) error {
 	var atrAgent *gocbcore.Agent
 	var atrScope, atrCollection string
 	var atrKey []byte
-	if txnData.ATR.Bucket != "" || txnData.ATR.ID != "" {
+	if txnData.ATR.ID != "" {
+		// ATR references the specific ATR for this transaction.
+
 		if txnData.ATR.Bucket == "" {
 			return errors.New("invalid atr data - no bucket")
 		}
-		if txnData.ATR.ID == "" {
-			return errors.New("invalid atr data - no key")
-		}
 
-		txnState = AttemptStatePending
-		atrAgent, err = t.parent.config.BucketAgentProvider(txnData.ATR.Bucket)
+		foundAtrAgent, err := t.parent.config.BucketAgentProvider(txnData.ATR.Bucket)
 		if err != nil {
 			return err
 		}
 
+		txnState = AttemptStatePending
+		atrAgent = foundAtrAgent
 		atrScope = txnData.ATR.Scope
 		atrCollection = txnData.ATR.Collection
 		atrKey = []byte(txnData.ATR.ID)
 	} else {
+		// No ATR information means its pending with no custom.
+
 		txnState = AttemptStateNothingWritten
 		atrAgent = nil
 		atrScope = ""
@@ -173,6 +177,9 @@ func (t *Transaction) resumeAttempt(txnData *jsonSerializedAttempt) error {
 		operationTimeout: t.operationTimeout,
 		durabilityLevel:  t.durabilityLevel,
 		transactionID:    t.transactionID,
+		serialUnstaging:  t.serialUnstaging,
+		explicitAtrs:     t.explicitATRs,
+		atrLocation:      t.atrLocation,
 
 		id:                  attemptUUID,
 		state:               txnState,
@@ -184,7 +191,8 @@ func (t *Transaction) resumeAttempt(txnData *jsonSerializedAttempt) error {
 		atrKey:              atrKey,
 		expiryOvertimeMode:  false,
 		hooks:               t.hooks,
-		addCleanupRequest:   t.addCleanupRequest,
+
+		addCleanupRequest: t.addCleanupRequest,
 	}
 
 	return nil
@@ -250,16 +258,6 @@ type InsertOptions struct {
 
 // StoreCallback describes a callback for a completed Replace operation.
 type StoreCallback func(*GetResult, error)
-
-// GetMutations returns a list of all the current mutations that have been performed
-// under this transaction.
-func (t *Transaction) GetMutations() []StagedMutation {
-	if t.attempt == nil {
-		return nil
-	}
-
-	return t.attempt.GetMutations()
-}
 
 // Insert will attempt to insert a document.
 func (t *Transaction) Insert(opts InsertOptions, cb StoreCallback) error {
@@ -330,4 +328,56 @@ func (t *Transaction) Rollback(cb RollbackCallback) error {
 // must be started to use this object following this call.
 func (t *Transaction) SerializeAttempt(cb func([]byte, error)) error {
 	return t.attempt.Serialize(cb)
+}
+
+// GetMutations returns a list of all the current mutations that have been performed
+// under this transaction.
+func (t *Transaction) GetMutations() []StagedMutation {
+	if t.attempt == nil {
+		return nil
+	}
+
+	return t.attempt.GetMutations()
+}
+
+// GetATRLocation returns the ATR location for the current attempt, either by
+// identifying where it was placed, or where it will be based on custom atr
+// configurations.
+func (t *Transaction) GetATRLocation() ATRLocation {
+	if t.attempt != nil {
+		return t.attempt.GetATRLocation()
+	}
+
+	return t.atrLocation
+}
+
+// SetATRLocation forces the ATR location for the current attempt to a specific
+// location.  Note that this cannot be called if it has already been set.  This
+// is currently only safe to call before any mutations have occurred.
+func (t *Transaction) SetATRLocation(location ATRLocation) error {
+	if t.attempt == nil {
+		return errors.New("cannot set ATR location without an active attempt")
+	}
+
+	return t.attempt.SetATRLocation(location)
+}
+
+// Config returns the configured parameters for this transaction.
+// Note that the Expiration time is adjusted based on the time left.
+// Note also that after a transaction is resumed, the custom atr location
+// may no longer reflect the originally configured value.
+func (t *Transaction) Config() PerTransactionConfig {
+	curTime := time.Now()
+
+	timeLeft := time.Duration(0)
+	if curTime.Before(t.expiryTime) {
+		timeLeft = curTime.Sub(t.expiryTime)
+	}
+
+	return PerTransactionConfig{
+		CustomATRLocation: t.atrLocation,
+		ExpirationTime:    timeLeft,
+		DurabilityLevel:   t.durabilityLevel,
+		KeyValueTimeout:   t.operationTimeout,
+	}
 }
