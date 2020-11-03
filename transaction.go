@@ -204,6 +204,11 @@ type GetOptions struct {
 	ScopeName      string
 	CollectionName string
 	Key            []byte
+
+	// NoRYOW will disable the RYOW logic used to enable transactions
+	// to naturally read any mutations they have performed.
+	// VOLATILE: This parameter is subject to change.
+	NoRYOW bool
 }
 
 // MutableItemMetaATR represents the ATR for meta.

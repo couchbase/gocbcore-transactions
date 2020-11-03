@@ -90,6 +90,14 @@ func (t *transactionAttempt) get(opts GetOptions, resolvingATREntry string, cb G
 				return
 			}
 
+			if opts.NoRYOW {
+				if doc.TxnMeta != nil && doc.TxnMeta.ID.Attempt == t.id {
+					// This is going to be a RYOW, we can just clear the TxnMeta which
+					// will cause us to fall into the block below.
+					doc.TxnMeta = nil
+				}
+			}
+
 			// Doc not involved in another transaction.
 			if doc.TxnMeta == nil {
 				if doc.Deleted {
