@@ -3,9 +3,10 @@ package transactions
 import (
 	"encoding/json"
 	"errors"
+	"time"
+
 	"github.com/couchbase/gocbcore/v9"
 	"github.com/couchbase/gocbcore/v9/memd"
-	"time"
 )
 
 func (t *transactionAttempt) unstageRepMutation(mutation stagedMutation, casZero, ambiguityResolution bool, cb func(error)) {
@@ -606,38 +607,29 @@ func (t *transactionAttempt) setATRCompleted(
 
 			_, err = atrAgent.MutateIn(opts, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
-					t.lock.Lock()
 					t.txnAtrSection.Done()
-					t.lock.Unlock()
-
 					handler(err)
 					return
 				}
 
 				t.hooks.AfterATRComplete(func(err error) {
 					if err != nil {
-						t.lock.Lock()
 						t.txnAtrSection.Done()
-						t.lock.Unlock()
-
 						handler(err)
 						return
 					}
 
 					t.lock.Lock()
 					t.state = AttemptStateCompleted
-					t.txnAtrSection.Done()
 					t.unstagingComplete = true
 					t.lock.Unlock()
+					t.txnAtrSection.Done()
 
 					handler(nil)
 				})
 			})
 			if err != nil {
-				t.lock.Lock()
 				t.txnAtrSection.Done()
-				t.lock.Unlock()
-
 				handler(err)
 				return
 			}
@@ -670,9 +662,7 @@ func (t *transactionAttempt) setATRCommittedAmbiguityResolution(cb func(error)) 
 				failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec, false)
 			}
 
-			t.lock.Lock()
 			t.txnAtrSection.Done()
-			t.lock.Unlock()
 
 			cb(failErr)
 			return
@@ -682,25 +672,19 @@ func (t *transactionAttempt) setATRCommittedAmbiguityResolution(cb func(error)) 
 		case jsonAtrStateCommitted:
 			t.lock.Lock()
 			t.state = AttemptStateCommitted
-			t.txnAtrSection.Done()
 			t.lock.Unlock()
+			t.txnAtrSection.Done()
 			cb(nil)
 		case jsonAtrStatePending:
 			t.setATRCommitted(cb)
 		case jsonAtrStateAborted:
-			t.lock.Lock()
 			t.txnAtrSection.Done()
-			t.lock.Unlock()
 			cb(t.createAndStashOperationFailedError(false, true, nil, ErrorReasonTransactionFailed, ErrorClassFailOther, false))
 		case jsonAtrStateRolledBack:
-			t.lock.Lock()
 			t.txnAtrSection.Done()
-			t.lock.Unlock()
 			cb(t.createAndStashOperationFailedError(false, true, nil, ErrorReasonTransactionFailed, ErrorClassFailOther, false))
 		default:
-			t.lock.Lock()
 			t.txnAtrSection.Done()
-			t.lock.Unlock()
 			cb(t.createAndStashOperationFailedError(false, true, ErrIllegalState, ErrorReasonTransactionFailed, ErrorClassFailOther, false))
 		}
 	}
@@ -787,10 +771,6 @@ func (t *transactionAttempt) setATRCommitted(
 			failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, true)
 		}
 
-		t.lock.Lock()
-		t.txnAtrSection.Done()
-		t.lock.Unlock()
-
 		cb(failErr)
 	}
 
@@ -844,6 +824,7 @@ func (t *transactionAttempt) setATRCommitted(
 
 		t.hooks.BeforeATRCommit(func(err error) {
 			if err != nil {
+				t.txnAtrSection.Done()
 				handler(err)
 				return
 			}
@@ -889,31 +870,35 @@ func (t *transactionAttempt) setATRCommitted(
 			}
 
 			if marshalErr != nil {
+				t.txnAtrSection.Done()
 				handler(marshalErr)
 				return
 			}
 
 			_, err = atrAgent.MutateIn(opts, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
+					t.txnAtrSection.Done()
 					handler(err)
 					return
 				}
 
 				t.hooks.AfterATRCommit(func(err error) {
 					if err != nil {
+						t.txnAtrSection.Done()
 						handler(err)
 						return
 					}
 
 					t.lock.Lock()
 					t.state = AttemptStateCommitted
-					t.txnAtrSection.Done()
 					t.lock.Unlock()
 
+					t.txnAtrSection.Done()
 					handler(nil)
 				})
 			})
 			if err != nil {
+				t.txnAtrSection.Done()
 				handler(err)
 			}
 		})

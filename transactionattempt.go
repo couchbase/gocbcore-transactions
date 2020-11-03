@@ -229,14 +229,35 @@ func (t *transactionAttempt) confirmATRPending(agent *gocbcore.Agent, firstKey [
 		t.lock.Unlock()
 
 		t.txnAtrSection.Wait(func() {
+			t.lock.Lock()
+			if t.state == AttemptStateNothingWritten {
+				t.lock.Unlock()
+				handler(ErrPreviousOperationFailed)
+				return
+			}
+			t.lock.Unlock()
+
 			handler(nil)
 		})
 
 		return
 	}
 
+	t.state = AttemptStatePending
+	t.txnAtrSection.Add(1)
+	t.lock.Unlock()
+
 	atrID := int(cbcVbMap(firstKey, 1024))
 	t.hooks.RandomATRIDForVbucket(func(s string, err error) {
+		if err != nil {
+			t.lock.Lock()
+			t.state = AttemptStateNothingWritten
+			t.lock.Unlock()
+			t.txnAtrSection.Done()
+			handler(err)
+			return
+		}
+
 		var atrKey []byte
 		if s == "" {
 			atrKey = []byte(atrIDList[atrID])
@@ -244,19 +265,19 @@ func (t *transactionAttempt) confirmATRPending(agent *gocbcore.Agent, firstKey [
 			atrKey = []byte(s)
 		}
 
+		t.lock.Lock()
 		t.atrAgent = agent
 		t.atrScopeName = "_default"
 		t.atrCollectionName = "_default"
 		t.atrKey = atrKey
-
-		t.txnAtrSection.Add(1)
 		t.lock.Unlock()
 
 		t.checkExpired(hookATRPending, []byte{}, func(err error) {
 			if err != nil {
 				t.lock.Lock()
-				t.txnAtrSection.Done()
+				t.state = AttemptStateNothingWritten
 				t.lock.Unlock()
+				t.txnAtrSection.Done()
 				handler(err)
 				return
 			}
@@ -264,8 +285,9 @@ func (t *transactionAttempt) confirmATRPending(agent *gocbcore.Agent, firstKey [
 			t.hooks.BeforeATRPending(func(err error) {
 				if err != nil {
 					t.lock.Lock()
-					t.txnAtrSection.Done()
+					t.state = AttemptStateNothingWritten
 					t.lock.Unlock()
+					t.txnAtrSection.Done()
 					handler(err)
 					return
 				}
@@ -317,8 +339,9 @@ func (t *transactionAttempt) confirmATRPending(agent *gocbcore.Agent, firstKey [
 
 				if marshalErr != nil {
 					t.lock.Lock()
-					t.txnAtrSection.Done()
+					t.state = AttemptStateNothingWritten
 					t.lock.Unlock()
+					t.txnAtrSection.Done()
 					handler(err)
 					return
 				}
@@ -326,8 +349,9 @@ func (t *transactionAttempt) confirmATRPending(agent *gocbcore.Agent, firstKey [
 				_, err = agent.MutateIn(opts, func(result *gocbcore.MutateInResult, err error) {
 					if err != nil {
 						t.lock.Lock()
-						t.txnAtrSection.Done()
+						t.state = AttemptStateNothingWritten
 						t.lock.Unlock()
+						t.txnAtrSection.Done()
 						handler(err)
 						return
 					}
@@ -335,8 +359,9 @@ func (t *transactionAttempt) confirmATRPending(agent *gocbcore.Agent, firstKey [
 					for _, op := range result.Ops {
 						if op.Err != nil {
 							t.lock.Lock()
-							t.txnAtrSection.Done()
+							t.state = AttemptStateNothingWritten
 							t.lock.Unlock()
+							t.txnAtrSection.Done()
 							handler(op.Err)
 							return
 						}
@@ -345,24 +370,22 @@ func (t *transactionAttempt) confirmATRPending(agent *gocbcore.Agent, firstKey [
 					t.hooks.AfterATRPending(func(err error) {
 						if err != nil {
 							t.lock.Lock()
-							t.txnAtrSection.Done()
+							t.state = AttemptStateNothingWritten
 							t.lock.Unlock()
+							t.txnAtrSection.Done()
 							handler(err)
 							return
 						}
 
-						t.lock.Lock()
-						t.state = AttemptStatePending
 						t.txnAtrSection.Done()
-						t.lock.Unlock()
-
 						handler(nil)
 					})
 				})
 				if err != nil {
 					t.lock.Lock()
-					t.txnAtrSection.Done()
+					t.state = AttemptStateNothingWritten
 					t.lock.Unlock()
+					t.txnAtrSection.Done()
 					handler(err)
 					return
 				}

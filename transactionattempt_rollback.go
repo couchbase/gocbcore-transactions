@@ -2,9 +2,10 @@ package transactions
 
 import (
 	"encoding/json"
+	"time"
+
 	"github.com/couchbase/gocbcore/v9"
 	"github.com/couchbase/gocbcore/v9/memd"
-	"time"
 )
 
 func (t *transactionAttempt) abort(
@@ -157,36 +158,28 @@ func (t *transactionAttempt) setATRAborted(
 
 		_, err = atrAgent.MutateIn(opts, func(result *gocbcore.MutateInResult, err error) {
 			if err != nil {
-				t.lock.Lock()
 				t.txnAtrSection.Done()
-				t.lock.Unlock()
-
 				cb(err)
 				return
 			}
 
 			t.hooks.AfterATRAborted(func(err error) {
 				if err != nil {
-					t.lock.Lock()
 					t.txnAtrSection.Done()
-					t.lock.Unlock()
 					cb(err)
 					return
 				}
 
 				t.lock.Lock()
 				t.state = AttemptStateAborted
-				t.txnAtrSection.Done()
 				t.lock.Unlock()
+				t.txnAtrSection.Done()
 
 				cb(nil)
 			})
 		})
 		if err != nil {
-			t.lock.Lock()
 			t.txnAtrSection.Done()
-			t.lock.Unlock()
-
 			cb(err)
 		}
 	})
@@ -506,39 +499,35 @@ func (t *transactionAttempt) setATRRolledBack(
 			}
 
 			if marshalErr != nil {
+				t.txnAtrSection.Done()
 				handler(err)
 				return
 			}
 
 			_, err = atrAgent.MutateIn(opts, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
-					t.lock.Lock()
 					t.txnAtrSection.Done()
-					t.lock.Unlock()
-
 					handler(err)
 					return
 				}
 
 				t.hooks.AfterATRRolledBack(func(err error) {
 					if err != nil {
+						t.txnAtrSection.Done()
 						handler(err)
 						return
 					}
 
 					t.lock.Lock()
 					t.state = AttemptStateRolledBack
-					t.txnAtrSection.Done()
 					t.lock.Unlock()
+					t.txnAtrSection.Done()
 
 					cb(nil)
 				})
 			})
 			if err != nil {
-				t.lock.Lock()
 				t.txnAtrSection.Done()
-				t.lock.Unlock()
-
 				handler(err)
 			}
 		})
