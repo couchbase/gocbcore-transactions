@@ -9,6 +9,63 @@ import (
 	"github.com/couchbase/gocbcore/v9/memd"
 )
 
+func (t *transactionAttempt) ensureMutation(mutation *stagedMutation, cb func(error)) {
+	if mutation.OpType != StagedMutationInsert && mutation.OpType != StagedMutationReplace {
+		cb(nil)
+		return
+	}
+
+	if mutation.Staged != nil {
+		cb(nil)
+		return
+	}
+
+	_, err := mutation.Agent.LookupIn(gocbcore.LookupInOptions{
+		ScopeName:      mutation.ScopeName,
+		CollectionName: mutation.CollectionName,
+		Key:            mutation.Key,
+		Ops: []gocbcore.SubDocOp{
+			{
+				Op:    memd.SubDocOpGet,
+				Path:  "txn.op.stgd",
+				Flags: memd.SubdocFlagXattrPath,
+			},
+		},
+		Deadline: t.expiryTime,
+		Flags:    memd.SubdocDocFlagAccessDeleted,
+	}, func(result *gocbcore.LookupInResult, err error) {
+		if err != nil {
+			cb(err)
+			return
+		}
+
+		if result.Cas != mutation.Cas {
+			// Something changed the document, we leave the staged data blank
+			// knowing that the operation against it will fail anyways.  We do
+			// need to check this first, so we don't accidentally include path
+			// errors that occurred below DUE to the CAS change.
+			cb(nil)
+			return
+		}
+
+		if len(result.Ops) != 1 {
+			cb(ErrOther)
+			return
+		}
+
+		if result.Ops[0].Err != nil {
+			cb(result.Ops[0].Err)
+			return
+		}
+
+		mutation.Staged = json.RawMessage(result.Ops[0].Value)
+		cb(nil)
+	})
+	if err != nil {
+		cb(err)
+	}
+}
+
 func (t *transactionAttempt) unstageRepMutation(mutation stagedMutation, casZero, ambiguityResolution bool, cb func(error)) {
 	handler := func(err error) {
 		if err == nil {
@@ -428,22 +485,29 @@ func (t *transactionAttempt) commit(cb CommitCallback) {
 					if t.serialUnstaging {
 						for _, mutation := range t.stagedMutations {
 							waitCh := make(chan error, 1)
-							if mutation.OpType == StagedMutationInsert {
-								t.unstageInsMutation(*mutation, false, func(err error) {
+							t.ensureMutation(mutation, func(err error) {
+								if err != nil {
 									waitCh <- err
-								})
-							} else if mutation.OpType == StagedMutationReplace {
-								t.unstageRepMutation(*mutation, false, false, func(err error) {
-									waitCh <- err
-								})
-							} else if mutation.OpType == StagedMutationRemove {
-								t.unstageRemMutation(*mutation, func(err error) {
-									waitCh <- err
-								})
-							} else {
-								// TODO(brett19): Pretty sure I can do better than this
-								waitCh <- ErrUhOh
-							}
+									return
+								}
+
+								if mutation.OpType == StagedMutationInsert {
+									t.unstageInsMutation(*mutation, false, func(err error) {
+										waitCh <- err
+									})
+								} else if mutation.OpType == StagedMutationReplace {
+									t.unstageRepMutation(*mutation, false, false, func(err error) {
+										waitCh <- err
+									})
+								} else if mutation.OpType == StagedMutationRemove {
+									t.unstageRemMutation(*mutation, func(err error) {
+										waitCh <- err
+									})
+								} else {
+									// TODO(brett19): Pretty sure I can do better than this
+									waitCh <- ErrUhOh
+								}
+							})
 
 							err := <-waitCh
 							if err != nil {
@@ -459,22 +523,33 @@ func (t *transactionAttempt) commit(cb CommitCallback) {
 						// will raise doc exists rather than a cas mismatch so we need to do these ops separately to tell
 						// how to handle that error.
 						for _, mutation := range t.stagedMutations {
-							if mutation.OpType == StagedMutationInsert {
-								t.unstageInsMutation(*mutation, false, func(err error) {
+							// We need to recapture mutation in this local scope so that
+							// the callback below doesn't see later iterations values.
+							mutation := mutation
+
+							t.ensureMutation(mutation, func(err error) {
+								if err != nil {
 									waitCh <- err
-								})
-							} else if mutation.OpType == StagedMutationReplace {
-								t.unstageRepMutation(*mutation, false, false, func(err error) {
-									waitCh <- err
-								})
-							} else if mutation.OpType == StagedMutationRemove {
-								t.unstageRemMutation(*mutation, func(err error) {
-									waitCh <- err
-								})
-							} else {
-								// TODO(brett19): Pretty sure I can do better than this
-								waitCh <- ErrUhOh
-							}
+									return
+								}
+
+								if mutation.OpType == StagedMutationInsert {
+									t.unstageInsMutation(*mutation, false, func(err error) {
+										waitCh <- err
+									})
+								} else if mutation.OpType == StagedMutationReplace {
+									t.unstageRepMutation(*mutation, false, false, func(err error) {
+										waitCh <- err
+									})
+								} else if mutation.OpType == StagedMutationRemove {
+									t.unstageRemMutation(*mutation, func(err error) {
+										waitCh <- err
+									})
+								} else {
+									// TODO(brett19): Pretty sure I can do better than this
+									waitCh <- ErrUhOh
+								}
+							})
 						}
 
 						for i := 0; i < numMutations; i++ {
