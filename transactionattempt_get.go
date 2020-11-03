@@ -63,8 +63,8 @@ func (t *transactionAttempt) get(opts GetOptions, resolvingATREntry string, cb G
 		}
 
 		var deadline time.Time
-		if t.keyValueTimeout > 0 {
-			deadline = time.Now().Add(t.keyValueTimeout)
+		if t.operationTimeout > 0 {
+			deadline = time.Now().Add(t.operationTimeout)
 		}
 
 		t.getFullDoc(opts, deadline, func(doc *getDoc, err error) {

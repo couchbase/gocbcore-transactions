@@ -128,9 +128,9 @@ func (t *transactionAttempt) setATRAborted(
 
 		var duraTimeout time.Duration
 		var deadline time.Time
-		if t.keyValueTimeout > 0 {
-			deadline = time.Now().Add(t.keyValueTimeout)
-			duraTimeout = t.keyValueTimeout * 10 / 9
+		if t.operationTimeout > 0 {
+			deadline = time.Now().Add(t.operationTimeout)
+			duraTimeout = t.operationTimeout * 10 / 9
 		}
 
 		opts := gocbcore.MutateInOptions{
@@ -479,9 +479,9 @@ func (t *transactionAttempt) setATRRolledBack(
 
 			var duraTimeout time.Duration
 			var deadline time.Time
-			if t.keyValueTimeout > 0 {
-				deadline = time.Now().Add(t.keyValueTimeout)
-				duraTimeout = t.keyValueTimeout * 10 / 9
+			if t.operationTimeout > 0 {
+				deadline = time.Now().Add(t.operationTimeout)
+				duraTimeout = t.operationTimeout * 10 / 9
 			}
 
 			opts := gocbcore.MutateInOptions{

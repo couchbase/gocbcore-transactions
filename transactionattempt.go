@@ -19,14 +19,14 @@ var casMacro = []byte("\"${$document.CAS}\"")
 
 type transactionAttempt struct {
 	// immutable state
-	expiryTime      time.Time
-	txnStartTime    time.Time
-	keyValueTimeout time.Duration
-	durabilityLevel DurabilityLevel
-	transactionID   string
-	id              string
-	hooks           TransactionHooks
-	serialUnstaging bool
+	expiryTime       time.Time
+	txnStartTime     time.Time
+	operationTimeout time.Duration
+	durabilityLevel  DurabilityLevel
+	transactionID    string
+	id               string
+	hooks            TransactionHooks
+	serialUnstaging  bool
 
 	// mutable state
 	state               AttemptState
@@ -62,14 +62,15 @@ func (t *transactionAttempt) Serialize(cb func([]byte, error)) error {
 
 	res.ID.Transaction = t.transactionID
 	res.ID.Attempt = t.id
-	res.ATR.Bucket = t.atrAgent.BucketName()
-	res.ATR.Scope = t.atrScopeName
-	res.ATR.Collection = t.atrCollectionName
-	res.ATR.ID = string(t.atrKey)
 
-	// TODO(brett19): Use durable rather than kv timeout during serialization.
-	res.Config.KvTimeoutMs = int(t.keyValueTimeout / time.Millisecond)
-	res.Config.KvDurableTimeoutMs = int(t.keyValueTimeout / time.Millisecond)
+	if t.atrAgent != nil && t.atrKey != nil {
+		res.ATR.Bucket = t.atrAgent.BucketName()
+		res.ATR.Scope = t.atrScopeName
+		res.ATR.Collection = t.atrCollectionName
+		res.ATR.ID = string(t.atrKey)
+	}
+
+	res.Config.OperationTimeoutMs = int(t.operationTimeout / time.Millisecond)
 	res.Config.DurabilityLevel = durabilityLevelToString(t.durabilityLevel)
 	res.Config.NumAtrs = 1024
 
@@ -294,9 +295,9 @@ func (t *transactionAttempt) confirmATRPending(agent *gocbcore.Agent, firstKey [
 
 				var duraTimeout time.Duration
 				var deadline time.Time
-				if t.keyValueTimeout > 0 {
-					deadline = time.Now().Add(t.keyValueTimeout)
-					duraTimeout = t.keyValueTimeout * 10 / 9
+				if t.operationTimeout > 0 {
+					deadline = time.Now().Add(t.operationTimeout)
+					duraTimeout = t.operationTimeout * 10 / 9
 				}
 
 				var marshalErr error

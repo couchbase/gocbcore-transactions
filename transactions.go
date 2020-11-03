@@ -23,7 +23,6 @@ func Init(config *Config) (*Transactions, error) {
 		ExpirationTime:        10000 * time.Millisecond,
 		DurabilityLevel:       DurabilityLevelMajority,
 		KeyValueTimeout:       2500 * time.Millisecond,
-		KvDurableTimeout:      2500 * time.Millisecond,
 		CleanupWindow:         60000 * time.Millisecond,
 		CleanupClientAttempts: true,
 		CleanupLostAttempts:   true,
@@ -41,9 +40,6 @@ func Init(config *Config) (*Transactions, error) {
 	}
 	if config.KeyValueTimeout == 0 {
 		config.KeyValueTimeout = defaultConfig.KeyValueTimeout
-	}
-	if config.KvDurableTimeout == 0 {
-		config.KvDurableTimeout = defaultConfig.KvDurableTimeout
 	}
 	if config.CleanupWindow == 0 {
 		config.CleanupWindow = defaultConfig.CleanupWindow
@@ -87,8 +83,7 @@ func (t *Transactions) BeginTransaction(perConfig *PerTransactionConfig) (*Trans
 
 	expirationTime := t.config.ExpirationTime
 	durabilityLevel := t.config.DurabilityLevel
-	keyValueTimeout := t.config.KeyValueTimeout
-	kvDurableTimeout := t.config.KvDurableTimeout
+	operationTimeout := t.config.KeyValueTimeout
 
 	if perConfig != nil {
 		if perConfig.ExpirationTime != 0 {
@@ -98,10 +93,7 @@ func (t *Transactions) BeginTransaction(perConfig *PerTransactionConfig) (*Trans
 			durabilityLevel = perConfig.DurabilityLevel
 		}
 		if perConfig.KeyValueTimeout != 0 {
-			keyValueTimeout = perConfig.KeyValueTimeout
-		}
-		if perConfig.KvDurableTimeout != 0 {
-			kvDurableTimeout = perConfig.KvDurableTimeout
+			operationTimeout = perConfig.KeyValueTimeout
 		}
 	}
 
@@ -112,8 +104,7 @@ func (t *Transactions) BeginTransaction(perConfig *PerTransactionConfig) (*Trans
 		startTime:         now,
 		durabilityLevel:   durabilityLevel,
 		transactionID:     transactionUUID,
-		keyValueTimeout:   keyValueTimeout,
-		kvDurableTimeout:  kvDurableTimeout,
+		operationTimeout:  operationTimeout,
 		hooks:             t.config.Internal.Hooks,
 		addCleanupRequest: t.cleaner.AddRequest,
 		serialUnstaging:   t.config.Internal.SerialUnstaging,
@@ -129,6 +120,22 @@ func (t *Transactions) ResumeTransactionAttempt(txnBytes []byte) (*Transaction, 
 		return nil, err
 	}
 
+	if txnData.ID.Transaction == "" {
+		return nil, errors.New("invalid txn data - no transaction id")
+	}
+	if txnData.Config.DurabilityLevel == "" {
+		return nil, errors.New("invalid txn data - no durability level")
+	}
+	if txnData.State.TimeLeftMs <= 0 {
+		return nil, errors.New("invalid txn data - time left must be greater than 0")
+	}
+	if txnData.Config.OperationTimeoutMs <= 0 {
+		return nil, errors.New("invalid txn data - operation timeout must be greater than 0")
+	}
+	if txnData.Config.NumAtrs <= 0 || txnData.Config.NumAtrs > 1024 {
+		return nil, errors.New("invalid txn data - num atrs must be greater than 0 and less than 1024")
+	}
+
 	transactionUUID := txnData.ID.Transaction
 
 	durabilityLevel, err := durabilityLevelFromString(txnData.Config.DurabilityLevel)
@@ -137,8 +144,7 @@ func (t *Transactions) ResumeTransactionAttempt(txnBytes []byte) (*Transaction, 
 	}
 
 	expirationTime := time.Duration(txnData.State.TimeLeftMs) * time.Millisecond
-	kvTimeout := time.Duration(txnData.Config.KvTimeoutMs) * time.Millisecond
-	kvDurableTimeout := time.Duration(txnData.Config.KvDurableTimeoutMs) * time.Millisecond
+	operationTimeout := time.Duration(txnData.Config.OperationTimeoutMs) * time.Millisecond
 
 	now := time.Now()
 	txn := &Transaction{
@@ -147,8 +153,7 @@ func (t *Transactions) ResumeTransactionAttempt(txnBytes []byte) (*Transaction, 
 		startTime:         now,
 		durabilityLevel:   durabilityLevel,
 		transactionID:     transactionUUID,
-		keyValueTimeout:   kvTimeout,
-		kvDurableTimeout:  kvDurableTimeout,
+		operationTimeout:  operationTimeout,
 		hooks:             t.config.Internal.Hooks,
 		addCleanupRequest: t.cleaner.AddRequest,
 	}

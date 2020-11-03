@@ -159,9 +159,9 @@ func (t *transactionAttempt) doReplace(opts ReplaceOptions, cb func(*stagedMutat
 
 		var duraTimeout time.Duration
 		var deadline time.Time
-		if t.keyValueTimeout > 0 {
-			deadline = time.Now().Add(t.keyValueTimeout)
-			duraTimeout = t.keyValueTimeout * 10 / 9
+		if t.operationTimeout > 0 {
+			deadline = time.Now().Add(t.operationTimeout)
+			duraTimeout = t.operationTimeout * 10 / 9
 		}
 
 		flags := memd.SubdocDocFlagAccessDeleted

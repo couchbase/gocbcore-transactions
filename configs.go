@@ -64,6 +64,8 @@ func durabilityLevelFromString(level string) (DurabilityLevel, error) {
 // a particular bucket by name.
 type BucketAgentProviderFn func(bucketName string) (*gocbcore.Agent, error)
 
+// BUG(TXNG-28): KeyValueTimeout, KvDurableTimeout are deprecated in Config.
+
 // Config specifies various tunable options related to transactions.
 type Config struct {
 	// ExpirationTime sets the maximum time that transactions created
@@ -108,6 +110,8 @@ type Config struct {
 		SerialUnstaging bool
 	}
 }
+
+// BUG(TXNG-28): KeyValueTimeout, KvDurableTimeout are deprecated in PerTransactionConfig.
 
 // PerTransactionConfig specifies options which can be overriden on a per transaction basis.
 type PerTransactionConfig struct {

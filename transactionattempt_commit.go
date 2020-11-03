@@ -68,9 +68,9 @@ func (t *transactionAttempt) unstageRepMutation(mutation stagedMutation, casZero
 
 			var duraTimeout time.Duration
 			var deadline time.Time
-			if t.keyValueTimeout > 0 {
-				deadline = time.Now().Add(t.keyValueTimeout)
-				duraTimeout = t.keyValueTimeout * 10 / 9
+			if t.operationTimeout > 0 {
+				deadline = time.Now().Add(t.operationTimeout)
+				duraTimeout = t.operationTimeout * 10 / 9
 			}
 
 			cas := mutation.Cas
@@ -201,9 +201,9 @@ func (t *transactionAttempt) unstageInsMutation(mutation stagedMutation, ambigui
 
 			var duraTimeout time.Duration
 			var deadline time.Time
-			if t.keyValueTimeout > 0 {
-				deadline = time.Now().Add(t.keyValueTimeout)
-				duraTimeout = t.keyValueTimeout * 10 / 9
+			if t.operationTimeout > 0 {
+				deadline = time.Now().Add(t.operationTimeout)
+				duraTimeout = t.operationTimeout * 10 / 9
 			}
 
 			_, err = mutation.Agent.Add(gocbcore.AddOptions{
@@ -303,9 +303,9 @@ func (t *transactionAttempt) unstageRemMutation(mutation stagedMutation, cb func
 
 			var duraTimeout time.Duration
 			var deadline time.Time
-			if t.keyValueTimeout > 0 {
-				deadline = time.Now().Add(t.keyValueTimeout)
-				duraTimeout = t.keyValueTimeout * 10 / 9
+			if t.operationTimeout > 0 {
+				deadline = time.Now().Add(t.operationTimeout)
+				duraTimeout = t.operationTimeout * 10 / 9
 			}
 
 			_, err = mutation.Agent.Delete(gocbcore.DeleteOptions{
@@ -581,9 +581,9 @@ func (t *transactionAttempt) setATRCompleted(
 
 			var duraTimeout time.Duration
 			var deadline time.Time
-			if t.keyValueTimeout > 0 {
-				deadline = time.Now().Add(t.keyValueTimeout)
-				duraTimeout = t.keyValueTimeout * 10 / 9
+			if t.operationTimeout > 0 {
+				deadline = time.Now().Add(t.operationTimeout)
+				duraTimeout = t.operationTimeout * 10 / 9
 			}
 
 			opts := gocbcore.MutateInOptions{
@@ -702,8 +702,8 @@ func (t *transactionAttempt) setATRCommittedAmbiguityResolution(cb func(error)) 
 			}
 
 			var deadline time.Time
-			if t.keyValueTimeout > 0 {
-				deadline = time.Now().Add(t.keyValueTimeout)
+			if t.operationTimeout > 0 {
+				deadline = time.Now().Add(t.operationTimeout)
 			}
 
 			_, err = t.atrAgent.LookupIn(gocbcore.LookupInOptions{
@@ -846,9 +846,9 @@ func (t *transactionAttempt) setATRCommitted(
 
 			var duraTimeout time.Duration
 			var deadline time.Time
-			if t.keyValueTimeout > 0 {
-				deadline = time.Now().Add(t.keyValueTimeout)
-				duraTimeout = t.keyValueTimeout * 10 / 9
+			if t.operationTimeout > 0 {
+				deadline = time.Now().Add(t.operationTimeout)
+				duraTimeout = t.operationTimeout * 10 / 9
 			}
 
 			opts := gocbcore.MutateInOptions{

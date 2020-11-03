@@ -2,6 +2,7 @@ package transactions
 
 import (
 	"encoding/json"
+	"errors"
 	"strconv"
 	"time"
 
@@ -18,8 +19,7 @@ type Transaction struct {
 
 	expiryTime       time.Time
 	startTime        time.Time
-	keyValueTimeout  time.Duration
-	kvDurableTimeout time.Duration
+	operationTimeout time.Duration
 	durabilityLevel  DurabilityLevel
 	serialUnstaging  bool
 
@@ -64,12 +64,12 @@ func (t *Transaction) NewAttempt() error {
 	attemptUUID := uuid.New().String()
 
 	t.attempt = &transactionAttempt{
-		expiryTime:      t.expiryTime,
-		txnStartTime:    t.startTime,
-		keyValueTimeout: t.keyValueTimeout,
-		durabilityLevel: t.durabilityLevel,
-		transactionID:   t.transactionID,
-		serialUnstaging: t.serialUnstaging,
+		expiryTime:       t.expiryTime,
+		txnStartTime:     t.startTime,
+		operationTimeout: t.operationTimeout,
+		durabilityLevel:  t.durabilityLevel,
+		transactionID:    t.transactionID,
+		serialUnstaging:  t.serialUnstaging,
 
 		id:                  attemptUUID,
 		state:               AttemptStateNothingWritten,
@@ -89,15 +89,58 @@ func (t *Transaction) NewAttempt() error {
 }
 
 func (t *Transaction) resumeAttempt(txnData *jsonSerializedAttempt) error {
+	var err error
+
+	if txnData.ID.Attempt == "" {
+		return errors.New("invalid txn data - no attempt id")
+	}
+
 	attemptUUID := txnData.ID.Attempt
 
-	atrAgent, err := t.parent.config.BucketAgentProvider(txnData.ATR.Bucket)
-	if err != nil {
-		return err
+	var txnState AttemptState
+	var atrAgent *gocbcore.Agent
+	var atrScope, atrCollection string
+	var atrKey []byte
+	if txnData.ATR.Bucket != "" || txnData.ATR.ID != "" {
+		if txnData.ATR.Bucket == "" {
+			return errors.New("invalid atr data - no bucket")
+		}
+		if txnData.ATR.ID == "" {
+			return errors.New("invalid atr data - no key")
+		}
+
+		txnState = AttemptStatePending
+		atrAgent, err = t.parent.config.BucketAgentProvider(txnData.ATR.Bucket)
+		if err != nil {
+			return err
+		}
+
+		atrScope = txnData.ATR.Scope
+		atrCollection = txnData.ATR.Collection
+		atrKey = []byte(txnData.ATR.ID)
+	} else {
+		txnState = AttemptStateNothingWritten
+		atrAgent = nil
+		atrScope = ""
+		atrCollection = ""
+		atrKey = nil
 	}
 
 	stagedMutations := make([]*stagedMutation, len(txnData.Mutations))
 	for mutationIdx, mutationData := range txnData.Mutations {
+		if mutationData.Bucket == "" {
+			return errors.New("invalid staged mutation - no bucket")
+		}
+		if mutationData.ID == "" {
+			return errors.New("invalid staged mutation - no key")
+		}
+		if mutationData.Cas == "" {
+			return errors.New("invalid staged mutation - no cas")
+		}
+		if mutationData.Type == "" {
+			return errors.New("invalid staged mutation - no type")
+		}
+
 		agent, err := t.parent.config.BucketAgentProvider(mutationData.Bucket)
 		if err != nil {
 			return err
@@ -125,20 +168,20 @@ func (t *Transaction) resumeAttempt(txnData *jsonSerializedAttempt) error {
 	}
 
 	t.attempt = &transactionAttempt{
-		expiryTime:      t.expiryTime,
-		txnStartTime:    t.startTime,
-		keyValueTimeout: t.keyValueTimeout,
-		durabilityLevel: t.durabilityLevel,
-		transactionID:   t.transactionID,
+		expiryTime:       t.expiryTime,
+		txnStartTime:     t.startTime,
+		operationTimeout: t.operationTimeout,
+		durabilityLevel:  t.durabilityLevel,
+		transactionID:    t.transactionID,
 
 		id:                  attemptUUID,
-		state:               AttemptStatePending,
+		state:               txnState,
 		stagedMutations:     stagedMutations,
 		finalMutationTokens: nil,
 		atrAgent:            atrAgent,
-		atrScopeName:        txnData.ATR.Scope,
-		atrCollectionName:   txnData.ATR.Collection,
-		atrKey:              []byte(txnData.ATR.ID),
+		atrScopeName:        atrScope,
+		atrCollectionName:   atrCollection,
+		atrKey:              atrKey,
 		expiryOvertimeMode:  false,
 		hooks:               t.hooks,
 		addCleanupRequest:   t.addCleanupRequest,

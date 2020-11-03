@@ -74,7 +74,7 @@ func NewCleaner(config *Config) Cleaner {
 		stop:                make(chan struct{}),
 		bucketAgentProvider: config.BucketAgentProvider,
 		q:                   make(delayQueue, 0, config.CleanupQueueSize),
-		kvTimeout:           config.KeyValueTimeout,
+		operationTimeout:    config.KeyValueTimeout,
 		durabilityLevel:     config.DurabilityLevel,
 	}
 }
@@ -110,7 +110,7 @@ type stdCleaner struct {
 	qLock               sync.Mutex
 	stop                chan struct{}
 	bucketAgentProvider BucketAgentProviderFn
-	kvTimeout           time.Duration
+	operationTimeout    time.Duration
 	durabilityLevel     DurabilityLevel
 }
 
@@ -121,7 +121,7 @@ func startCleanupThread(config *Config) *stdCleaner {
 		stop:                make(chan struct{}),
 		bucketAgentProvider: config.BucketAgentProvider,
 		q:                   make(delayQueue, 0, config.CleanupQueueSize),
-		kvTimeout:           config.KeyValueTimeout,
+		operationTimeout:    config.KeyValueTimeout,
 		durabilityLevel:     config.DurabilityLevel,
 	}
 

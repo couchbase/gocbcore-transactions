@@ -159,9 +159,9 @@ func (t *transactionAttempt) insert(opts InsertOptions, cas gocbcore.Cas, cb Sto
 
 				var duraTimeout time.Duration
 				var deadline time.Time
-				if t.keyValueTimeout > 0 {
-					deadline = time.Now().Add(t.keyValueTimeout)
-					duraTimeout = t.keyValueTimeout * 10 / 9
+				if t.operationTimeout > 0 {
+					deadline = time.Now().Add(t.operationTimeout)
+					duraTimeout = t.operationTimeout * 10 / 9
 				}
 
 				flags := memd.SubdocDocFlagCreateAsDeleted | memd.SubdocDocFlagAccessDeleted
@@ -241,8 +241,8 @@ func (t *transactionAttempt) getForInsert(opts InsertOptions, cb func(*GetResult
 		}
 
 		var deadline time.Time
-		if t.keyValueTimeout > 0 {
-			deadline = time.Now().Add(t.keyValueTimeout)
+		if t.operationTimeout > 0 {
+			deadline = time.Now().Add(t.operationTimeout)
 		}
 
 		_, err = opts.Agent.LookupIn(gocbcore.LookupInOptions{

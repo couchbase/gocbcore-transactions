@@ -21,8 +21,7 @@ type jsonSerializedAttempt struct {
 		ID         string `json:"id"`
 	} `json:"atr"`
 	Config struct {
-		KvTimeoutMs        int    `json:"kvTimeoutMs"`
-		KvDurableTimeoutMs int    `json:"kvDurableTimeoutMs"`
+		OperationTimeoutMs int    `json:"operationTimeoutMs"`
 		DurabilityLevel    string `json:"durabilityLevel"`
 		NumAtrs            int    `json:"numAtrs"`
 	} `json:"config"`
