@@ -42,7 +42,17 @@ func (t *transactionAttempt) replace(opts ReplaceOptions, cb StoreCallback) erro
 		agent := opts.Document.agent
 		key := opts.Document.key
 
-		t.writeWriteConflictPoll(opts.Document, forwardCompatStageWWCReplacing, func(err error) {
+		replaceOfInsert := false
+		_, existingMutation := t.getStagedMutationLocked(
+			agent.BucketName(),
+			opts.Document.scopeName,
+			opts.Document.collectionName,
+			opts.Document.key)
+		if existingMutation != nil && existingMutation.OpType == StagedMutationInsert {
+			replaceOfInsert = true
+		}
+
+		t.writeWriteConflictPoll(opts.Document, existingMutation, forwardCompatStageWWCReplacing, func(err error) {
 			if err != nil {
 				cb(nil, err)
 				return
@@ -54,7 +64,7 @@ func (t *transactionAttempt) replace(opts ReplaceOptions, cb StoreCallback) erro
 					return
 				}
 
-				t.doReplace(opts, func(stagedInfo *stagedMutation, err error) {
+				t.doReplace(opts, replaceOfInsert, func(stagedInfo *stagedMutation, err error) {
 					if err != nil {
 						var failErr error
 						ec := t.classifyError(err)
@@ -81,20 +91,17 @@ func (t *transactionAttempt) replace(opts ReplaceOptions, cb StoreCallback) erro
 						cb(nil, failErr)
 						return
 					}
+
 					t.lock.Lock()
-
-					idx, existingMutation := t.getStagedMutationLocked(agent.BucketName(), opts.Document.scopeName, opts.Document.collectionName,
+					mutIdx, _ := t.getStagedMutationLocked(
+						agent.BucketName(),
+						opts.Document.scopeName,
+						opts.Document.collectionName,
 						opts.Document.key)
-					if existingMutation == nil {
-						t.stagedMutations = append(t.stagedMutations, stagedInfo)
+					if mutIdx >= 0 {
+						t.stagedMutations[mutIdx] = stagedInfo
 					} else {
-						if existingMutation.OpType == StagedMutationReplace {
-							t.stagedMutations[idx] = stagedInfo
-						} else if existingMutation.OpType == StagedMutationInsert {
-							stagedInfo.OpType = StagedMutationInsert
-							t.stagedMutations = append(t.stagedMutations[:idx+copy(t.stagedMutations[idx:], t.stagedMutations[idx+1:])], stagedInfo)
-						}
-
+						t.stagedMutations = append(t.stagedMutations, stagedInfo)
 					}
 					t.lock.Unlock()
 
@@ -115,7 +122,7 @@ func (t *transactionAttempt) replace(opts ReplaceOptions, cb StoreCallback) erro
 	return nil
 }
 
-func (t *transactionAttempt) doReplace(opts ReplaceOptions, cb func(*stagedMutation, error)) {
+func (t *transactionAttempt) doReplace(opts ReplaceOptions, replaceOfInsert bool, cb func(*stagedMutation, error)) {
 	agent := opts.Document.agent
 	scopeName := opts.Document.scopeName
 	collectionName := opts.Document.collectionName
@@ -151,6 +158,11 @@ func (t *transactionAttempt) doReplace(opts ReplaceOptions, cb func(*stagedMutat
 			RevID:       "",
 		}
 
+		if replaceOfInsert {
+			stagedInfo.OpType = StagedMutationInsert
+			txnMeta.Operation.Type = jsonMutationInsert
+		}
+
 		txnMetaBytes, err := json.Marshal(txnMeta)
 		if err != nil {
 			cb(nil, err)
@@ -163,8 +175,6 @@ func (t *transactionAttempt) doReplace(opts ReplaceOptions, cb func(*stagedMutat
 			deadline = time.Now().Add(t.operationTimeout)
 			duraTimeout = t.operationTimeout * 10 / 9
 		}
-
-		flags := memd.SubdocDocFlagAccessDeleted
 
 		_, err = stagedInfo.Agent.MutateIn(gocbcore.MutateInOptions{
 			ScopeName:      stagedInfo.ScopeName,
@@ -203,7 +213,7 @@ func (t *transactionAttempt) doReplace(opts ReplaceOptions, cb func(*stagedMutat
 					Value: revidMacro,
 				},
 			},
-			Flags:                  flags,
+			Flags:                  memd.SubdocDocFlagAccessDeleted,
 			DurabilityLevel:        durabilityLevelToMemd(t.durabilityLevel),
 			DurabilityLevelTimeout: duraTimeout,
 			Deadline:               deadline,

@@ -48,12 +48,42 @@ func (t *transactionAttempt) remove(opts RemoveOptions, cb StoreCallback) error 
 			opts.Document.key)
 		if existingMutation != nil && existingMutation.OpType == StagedMutationInsert {
 			t.lock.Unlock()
-			cb(nil, t.createAndStashOperationFailedError(false, false, ErrIllegalState, ErrorReasonTransactionFailed, ErrorClassFailOther, false))
+
+			t.stagedInsertRemove(opts.Document, func(res *GetResult, err error) {
+				if err != nil {
+					var failErr error
+					ec := t.classifyError(err)
+					switch ec {
+					case ErrorClassFailExpiry:
+						t.expiryOvertimeMode = true
+						failErr = t.createAndStashOperationFailedError(false, false, ErrAttemptExpired, ErrorReasonTransactionExpired, ec, false)
+					case ErrorClassFailDocNotFound:
+						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
+					case ErrorClassFailCasMismatch:
+						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
+					case ErrorClassFailDocAlreadyExists:
+						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ErrorClassFailCasMismatch, false)
+					case ErrorClassFailTransient:
+						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
+					case ErrorClassFailAmbiguous:
+						failErr = t.createAndStashOperationFailedError(true, false, err, ErrorReasonTransactionFailed, ec, false)
+					case ErrorClassFailHard:
+						failErr = t.createAndStashOperationFailedError(false, true, err, ErrorReasonTransactionFailed, ec, false)
+					default:
+						failErr = t.createAndStashOperationFailedError(false, false, err, ErrorReasonTransactionFailed, ec, false)
+					}
+
+					cb(nil, failErr)
+					return
+				}
+
+				cb(res, nil)
+			})
 			return
 		}
 		t.lock.Unlock()
 
-		t.writeWriteConflictPoll(opts.Document, forwardCompatStageWWCRemoving, func(err error) {
+		t.writeWriteConflictPoll(opts.Document, existingMutation, forwardCompatStageWWCRemoving, func(err error) {
 			if err != nil {
 				cb(nil, err)
 				return
@@ -100,6 +130,71 @@ func (t *transactionAttempt) remove(opts RemoveOptions, cb StoreCallback) error 
 	})
 
 	return nil
+}
+
+func (t *transactionAttempt) stagedInsertRemove(doc *GetResult, cb StoreCallback) {
+	t.hooks.BeforeStagedRemove(doc.key, func(err error) {
+		if err != nil {
+			cb(nil, err)
+			return
+		}
+
+		var duraTimeout time.Duration
+		var deadline time.Time
+		if t.operationTimeout > 0 {
+			deadline = time.Now().Add(t.operationTimeout)
+			duraTimeout = t.operationTimeout * 10 / 9
+		}
+
+		_, err = doc.agent.MutateIn(gocbcore.MutateInOptions{
+			ScopeName:      doc.scopeName,
+			CollectionName: doc.collectionName,
+			Key:            doc.key,
+			Cas:            doc.Cas,
+			Flags:          memd.SubdocDocFlagAccessDeleted,
+			Ops: []gocbcore.SubDocOp{
+				{
+					Op:    memd.SubDocOpDelete,
+					Path:  "txn",
+					Flags: memd.SubdocFlagXattrPath,
+				},
+			},
+			DurabilityLevel:        durabilityLevelToMemd(t.durabilityLevel),
+			DurabilityLevelTimeout: duraTimeout,
+			Deadline:               deadline,
+		}, func(result *gocbcore.MutateInResult, err error) {
+			if err != nil {
+				cb(nil, err)
+				return
+			}
+
+			t.hooks.AfterStagedRemoveComplete(doc.key, func(err error) {
+				if err != nil {
+					cb(nil, err)
+					return
+				}
+
+				t.lock.Lock()
+				mutIdx, _ := t.getStagedMutationLocked(doc.agent.BucketName(), doc.scopeName, doc.collectionName, doc.key)
+				if mutIdx >= 0 {
+					// This should never happen, but as a protection against panics.
+					t.stagedMutations = append(t.stagedMutations[:mutIdx], t.stagedMutations[mutIdx+1:]...)
+				}
+				t.lock.Unlock()
+
+				cb(&GetResult{
+					agent:          doc.agent,
+					scopeName:      doc.scopeName,
+					collectionName: doc.collectionName,
+					key:            doc.key,
+					Cas:            result.Cas,
+				}, nil)
+			})
+		})
+		if err != nil {
+			cb(nil, err)
+		}
+	})
 }
 
 func (t *transactionAttempt) stagedRemove(doc *GetResult, cb StoreCallback) {
@@ -201,7 +296,13 @@ func (t *transactionAttempt) stagedRemove(doc *GetResult, cb StoreCallback) {
 
 				t.lock.Lock()
 				stagedInfo.Cas = result.Cas
-				t.stagedMutations = append(t.stagedMutations, stagedInfo)
+
+				mutIdx, _ := t.getStagedMutationLocked(doc.agent.BucketName(), doc.scopeName, doc.collectionName, doc.key)
+				if mutIdx >= 0 {
+					t.stagedMutations[mutIdx] = stagedInfo
+				} else {
+					t.stagedMutations = append(t.stagedMutations, stagedInfo)
+				}
 				t.lock.Unlock()
 
 				cb(&GetResult{

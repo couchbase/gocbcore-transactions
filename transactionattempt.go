@@ -461,7 +461,7 @@ func (t *transactionAttempt) getStagedMutationLocked(bucketName, scopeName, coll
 		}
 	}
 
-	return 0, nil
+	return -1, nil
 }
 
 func (t *transactionAttempt) getTxnState(
@@ -551,10 +551,12 @@ func (t *transactionAttempt) classifyError(err error) ErrorClass {
 	return ec
 }
 
-func (t *transactionAttempt) writeWriteConflictPoll(res *GetResult, stage forwardCompatStage, cb func(error)) {
+func (t *transactionAttempt) writeWriteConflictPoll(res *GetResult, existingMutation *stagedMutation, stage forwardCompatStage, cb func(error)) {
 	handler := func(err error) {
 		if err != nil {
 			ec := t.classifyError(err)
+
+			// TODO(brett19): Probably need to add CASMismatch handling here...
 
 			switch ec {
 			case ErrorClassFailExpiry:
@@ -579,6 +581,26 @@ func (t *transactionAttempt) writeWriteConflictPoll(res *GetResult, stage forwar
 	}
 
 	if res.Meta.TransactionID == t.transactionID {
+		if res.Meta.AttemptID == t.id {
+			if existingMutation != nil {
+				if res.Cas != existingMutation.Cas {
+					// There was an existing mutation but it doesn't match the expected
+					// CAS.  We throw a CAS mismatch to early detect this.
+					handler(gocbcore.ErrCasMismatch)
+					return
+				}
+
+				handler(nil)
+				return
+			}
+
+			// This means that we are trying to overwrite a previous write this specific
+			// attempt has performed without actually having found the existing mutation,
+			// this is never going to work correctly.
+			handler(ErrUhOh)
+			return
+		}
+
 		// The transaction matches our transaction.  We can safely overwrite the existing
 		// data in the txn meta and continue.
 		handler(nil)

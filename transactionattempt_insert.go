@@ -79,7 +79,7 @@ func (t *transactionAttempt) insert(opts InsertOptions, cas gocbcore.Cas, cb Sto
 						return
 					}
 
-					t.writeWriteConflictPoll(result, forwardCompatStageWWCInserting, func(err error) {
+					t.writeWriteConflictPoll(result, nil, forwardCompatStageWWCInserting, func(err error) {
 						if err != nil {
 							cb(nil, err)
 							return
@@ -111,6 +111,23 @@ func (t *transactionAttempt) insert(opts InsertOptions, cas gocbcore.Cas, cb Sto
 
 	if err := t.checkError(); err != nil {
 		return err
+	}
+
+	insertOfRemove := false
+	_, existingMutation := t.getStagedMutationLocked(
+		opts.Agent.BucketName(),
+		opts.ScopeName,
+		opts.CollectionName,
+		opts.Key)
+	if existingMutation != nil {
+		if existingMutation.OpType == StagedMutationRemove {
+			cas = existingMutation.Cas
+			insertOfRemove = true
+		} else {
+			cb(nil, t.createAndStashOperationFailedError(true, false, gocbcore.ErrDocumentExists,
+				ErrorReasonTransactionFailed, ErrorClassFailDocAlreadyExists, true))
+			return nil
+		}
 	}
 
 	t.checkExpired(hookInsert, opts.Key, func(err error) {
@@ -150,6 +167,11 @@ func (t *transactionAttempt) insert(opts InsertOptions, cas gocbcore.Cas, cb Sto
 				txnMeta.ATR.DocID = string(t.atrKey)
 				txnMeta.Operation.Type = jsonMutationInsert
 				txnMeta.Operation.Staged = stagedInfo.Staged
+
+				if insertOfRemove {
+					stagedInfo.OpType = StagedMutationReplace
+					txnMeta.Operation.Type = jsonMutationReplace
+				}
 
 				txnMetaBytes, err := json.Marshal(txnMeta)
 				if err != nil {
