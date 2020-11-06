@@ -135,6 +135,13 @@ func (t *transactionAttempt) unstageRepMutation(mutation stagedMutation, casZero
 				cas = 0
 			}
 
+			stagedData := mutation.Staged
+			if stagedData == nil {
+				// If there is no staged data, it probably means we are about to CAS conflict
+				// and fail, but we need to keep the data valid for the call to CAS fail.
+				stagedData = []byte{0}
+			}
+
 			_, err = mutation.Agent.MutateIn(gocbcore.MutateInOptions{
 				ScopeName:      mutation.ScopeName,
 				CollectionName: mutation.CollectionName,
@@ -155,7 +162,7 @@ func (t *transactionAttempt) unstageRepMutation(mutation stagedMutation, casZero
 					{
 						Op:    memd.SubDocOpSetDoc,
 						Path:  "",
-						Value: mutation.Staged,
+						Value: stagedData,
 					},
 				},
 				Deadline:               deadline,
