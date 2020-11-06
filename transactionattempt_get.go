@@ -126,17 +126,6 @@ func (t *transactionAttempt) get(opts GetOptions, resolvingATREntry string, cb G
 						key:            opts.Key,
 						Value:          doc.TxnMeta.Operation.Staged,
 						Cas:            doc.Cas,
-						Meta: &MutableItemMeta{
-							TransactionID: doc.TxnMeta.ID.Transaction,
-							AttemptID:     doc.TxnMeta.ID.Attempt,
-							ATR: MutableItemMetaATR{
-								BucketName:     doc.TxnMeta.ATR.BucketName,
-								ScopeName:      doc.TxnMeta.ATR.ScopeName,
-								CollectionName: doc.TxnMeta.ATR.CollectionName,
-								DocID:          doc.TxnMeta.ATR.DocID,
-							},
-							ForwardCompat: jsonForwardCompatToForwardCompat(doc.TxnMeta.ForwardCompat),
-						},
 					}
 
 					cb(getRes, nil)

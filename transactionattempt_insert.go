@@ -308,7 +308,6 @@ func (t *transactionAttempt) getForInsert(opts InsertOptions, cb func(*GetResult
 							scopeName:      opts.ScopeName,
 							collectionName: opts.CollectionName,
 							key:            opts.Key,
-							Meta:           nil,
 							Value:          val,
 							Cas:            result.Cas,
 						}, nil)
@@ -324,19 +323,8 @@ func (t *transactionAttempt) getForInsert(opts InsertOptions, cb func(*GetResult
 					scopeName:      opts.ScopeName,
 					collectionName: opts.CollectionName,
 					key:            opts.Key,
-					Meta: &MutableItemMeta{
-						TransactionID: txnMeta.ID.Transaction,
-						AttemptID:     txnMeta.ID.Attempt,
-						ATR: MutableItemMetaATR{
-							BucketName:     txnMeta.ATR.BucketName,
-							ScopeName:      txnMeta.ATR.ScopeName,
-							CollectionName: txnMeta.ATR.CollectionName,
-							DocID:          txnMeta.ATR.DocID,
-						},
-						ForwardCompat: forwardCompat,
-					},
-					Value: val,
-					Cas:   result.Cas,
+					Value:          val,
+					Cas:            result.Cas,
 				}, nil)
 			})
 		})
