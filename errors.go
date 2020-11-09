@@ -33,9 +33,6 @@ var (
 	// ErrAtrEntryNotFound indicates that an expected ATR entry was missing.
 	ErrAtrEntryNotFound = errors.New("atr entry not found")
 
-	// ErrUhOh is used for now to describe errors I yet know how to categorize.
-	ErrUhOh = errors.New("uh oh")
-
 	// ErrDocAlreadyInTransaction indicates that a document is already in a transaction.
 	ErrDocAlreadyInTransaction = errors.New("doc already in transaction")
 

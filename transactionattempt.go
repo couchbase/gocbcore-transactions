@@ -597,7 +597,7 @@ func (t *transactionAttempt) writeWriteConflictPoll(res *GetResult, existingMuta
 			// This means that we are trying to overwrite a previous write this specific
 			// attempt has performed without actually having found the existing mutation,
 			// this is never going to work correctly.
-			handler(ErrUhOh)
+			handler(ErrIllegalState)
 			return
 		}
 

@@ -316,7 +316,7 @@ func (t *transactionAttempt) unstageInsMutation(mutation stagedMutation, ambigui
 
 func (t *transactionAttempt) unstageRemMutation(mutation stagedMutation, cb func(error)) {
 	if mutation.OpType != StagedMutationRemove {
-		cb(ErrUhOh)
+		cb(ErrIllegalState)
 		return
 	}
 
@@ -512,7 +512,7 @@ func (t *transactionAttempt) commit(cb CommitCallback) {
 									})
 								} else {
 									// TODO(brett19): Pretty sure I can do better than this
-									waitCh <- ErrUhOh
+									waitCh <- ErrIllegalState
 								}
 							})
 
@@ -554,7 +554,7 @@ func (t *transactionAttempt) commit(cb CommitCallback) {
 									})
 								} else {
 									// TODO(brett19): Pretty sure I can do better than this
-									waitCh <- ErrUhOh
+									waitCh <- ErrIllegalState
 								}
 							})
 						}

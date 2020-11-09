@@ -227,8 +227,9 @@ func (t *transactionAttempt) rollbackInsMutation(mutation stagedMutation, cb fun
 
 		cb(nil)
 	}
+
 	if mutation.OpType != StagedMutationInsert {
-		cb(ErrUhOh)
+		cb(ErrIllegalState)
 		return
 	}
 
@@ -329,7 +330,7 @@ func (t *transactionAttempt) rollbackRepRemMutation(mutation stagedMutation, cb 
 	}
 
 	if mutation.OpType != StagedMutationRemove && mutation.OpType != StagedMutationReplace {
-		cb(ErrUhOh)
+		cb(ErrIllegalState)
 		return
 	}
 
