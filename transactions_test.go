@@ -1,9 +1,11 @@
 package transactions
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"testing"
+	"time"
 
 	gocb "github.com/couchbase/gocb/v2"
 	"github.com/couchbase/gocbcore/v9"
@@ -11,7 +13,7 @@ import (
 )
 
 func TestSomething(t *testing.T) {
-	cluster, err := gocb.Connect("couchbase://172.23.111.133", gocb.ClusterOptions{
+	cluster, err := gocb.Connect("couchbase://172.23.111.148", gocb.ClusterOptions{
 		Username: "Administrator",
 		Password: "password",
 	})
@@ -79,6 +81,7 @@ func TestSomething(t *testing.T) {
 			// use a single bucket for this entire test.
 			return agent, nil
 		},
+		ExpirationTime: 60 * time.Second,
 	})
 	assert.NoError(t, err, "txn init failed")
 
@@ -414,6 +417,100 @@ func TestSomething(t *testing.T) {
 			mutation.Key,
 			mutation.Staged)
 	}
+
+	testDummy1Bytes, _ := json.Marshal(testDummy1)
+
+	txn2, err := transactions.BeginTransaction(nil)
+	assert.NoError(t, err, "txn2 begin failed")
+
+	err = txn2.NewAttempt()
+	assert.NoError(t, err, "txn2 attempt start failed")
+
+	// T1-INSERT -> T2-GET
+	_, err = testBlkGet(txn2, GetOptions{
+		Agent:          agent,
+		ScopeName:      testScopeName,
+		CollectionName: testCollectionName,
+		Key:            []byte(`insertDoc`),
+	})
+	assert.Error(t, err, "insertDoc get from T2 should have failed")
+
+	// T1-INSERT -> T2-INSERT
+	_, err = testBlkInsert(txn2, InsertOptions{
+		Agent:          agent,
+		ScopeName:      testScopeName,
+		CollectionName: testCollectionName,
+		Key:            []byte(`insertDoc`),
+		Value:          testDummy3,
+	})
+	assert.Error(t, err, "insertDoc insert from T2 should have failed")
+
+	// T1-INSERT -> T2-REPLACE = IMPOSSIBLE
+	// T1-INSERT -> T2-REMOVE = IMPOSSIBLE
+
+	// T1-REPLACE -> T2-GET
+	getOfReplace, err := testBlkGet(txn2, GetOptions{
+		Agent:          agent,
+		ScopeName:      testScopeName,
+		CollectionName: testCollectionName,
+		Key:            []byte(`replaceDoc`),
+	})
+	assert.NoError(t, err, "replaceDoc get from T2 should have succeeded")
+	assert.EqualValues(t, testDummy1Bytes, getOfReplace.Value, "replaceDoc get from T2 should have right data")
+
+	// T1-REPLACE -> T2-INSERT
+	_, err = testBlkInsert(txn2, InsertOptions{
+		Agent:          agent,
+		ScopeName:      testScopeName,
+		CollectionName: testCollectionName,
+		Key:            []byte(`replaceDoc`),
+	})
+	assert.Error(t, err, "replaceDoc insert from T2 should have failed")
+
+	// T1-REPLACE -> T2->REPLACE
+	_, err = testBlkReplace(txn2, ReplaceOptions{
+		Document: getOfReplace,
+		Value:    testDummy3,
+	})
+	assert.Error(t, err, "replaceDoc replace from T2 should have failed")
+
+	// T1-REPLACE -> T2->REMOVE
+	_, err = testBlkRemove(txn2, RemoveOptions{
+		Document: getOfReplace,
+	})
+	assert.Error(t, err, "replaceDoc remove from T2 should have failed")
+
+	// T1-REMOVE -> T2->GET
+	getOfRemove, err := testBlkGet(txn2, GetOptions{
+		Agent:          agent,
+		ScopeName:      testScopeName,
+		CollectionName: testCollectionName,
+		Key:            []byte(`removeDoc`),
+	})
+	assert.NoError(t, err, "removeDoc get from T2 should have succeeded")
+	assert.EqualValues(t, testDummy1Bytes, getOfRemove.Value, "removeDoc get from T2 should have right data")
+
+	// T1-REMOVE -> T2->INSERT
+	_, err = testBlkInsert(txn2, InsertOptions{
+		Agent:          agent,
+		ScopeName:      testScopeName,
+		CollectionName: testCollectionName,
+		Key:            []byte(`removeDoc`),
+	})
+	assert.Error(t, err, "removeDoc insert from T2 should have failed")
+
+	// T1-REMOVE -> T2->REPLACE
+	_, err = testBlkReplace(txn2, ReplaceOptions{
+		Document: getOfRemove,
+		Value:    testDummy3,
+	})
+	assert.Error(t, err, "removeDoc replace from T2 should have failed")
+
+	// T1-REMOVE -> T2->REMOVE
+	_, err = testBlkRemove(txn2, RemoveOptions{
+		Document: getOfRemove,
+	})
+	assert.Error(t, err, "removeDoc remove from T2 should have failed")
 
 	fetchStagedOpData := func(key string) (jsonMutationType, []byte, bool) {
 		lookupOpts := &gocb.LookupInOptions{}

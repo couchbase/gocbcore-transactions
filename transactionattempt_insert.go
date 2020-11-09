@@ -347,6 +347,17 @@ func (t *transactionAttempt) getForInsert(opts InsertOptions, cb func(*GetResult
 					key:            opts.Key,
 					Value:          val,
 					Cas:            result.Cas,
+					Meta: &MutableItemMeta{
+						TransactionID: txnMeta.ID.Transaction,
+						AttemptID:     txnMeta.ID.Attempt,
+						ATR: MutableItemMetaATR{
+							BucketName:     txnMeta.ATR.BucketName,
+							ScopeName:      txnMeta.ATR.ScopeName,
+							CollectionName: txnMeta.ATR.CollectionName,
+							DocID:          txnMeta.ATR.DocID,
+						},
+						ForwardCompat: jsonForwardCompatToForwardCompat(txnMeta.ForwardCompat),
+					},
 				}, nil)
 			})
 		})
