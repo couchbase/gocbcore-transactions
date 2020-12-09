@@ -17,13 +17,15 @@ type addCleanupRequest func(req *CleanupRequest) bool
 type Transaction struct {
 	parent *Transactions
 
-	expiryTime       time.Time
-	startTime        time.Time
-	operationTimeout time.Duration
-	durabilityLevel  DurabilityLevel
-	serialUnstaging  bool
-	explicitATRs     bool
-	atrLocation      ATRLocation
+	expiryTime          time.Time
+	startTime           time.Time
+	operationTimeout    time.Duration
+	durabilityLevel     DurabilityLevel
+	serialUnstaging     bool
+	disableCompoundOps  bool
+	explicitATRs        bool
+	atrLocation         ATRLocation
+	bucketAgentProvider BucketAgentProviderFn
 
 	transactionID string
 	attempt       *transactionAttempt
@@ -39,26 +41,11 @@ func (t *Transaction) ID() string {
 
 // Attempt returns meta-data about the current attempt to complete the transaction.
 func (t *Transaction) Attempt() Attempt {
-	var bucketName string
-	if t.attempt.atrAgent != nil {
-		bucketName = t.attempt.atrAgent.BucketName()
+	if t.attempt == nil {
+		return Attempt{}
 	}
-	return Attempt{
-		State:             t.attempt.state,
-		ID:                t.attempt.id,
-		MutationState:     t.attempt.finalMutationTokens,
-		AtrID:             t.attempt.atrKey,
-		AtrBucketName:     bucketName,
-		AtrScopeName:      t.attempt.atrScopeName,
-		AtrCollectionName: t.attempt.atrCollectionName,
-		UnstagingComplete: t.attempt.unstagingComplete,
 
-		Internal: struct {
-			Expired bool
-		}{
-			Expired: hasExpired(t.expiryTime),
-		},
-	}
+	return t.attempt.State()
 }
 
 // NewAttempt begins a new attempt with this transaction.
@@ -66,14 +53,16 @@ func (t *Transaction) NewAttempt() error {
 	attemptUUID := uuid.New().String()
 
 	t.attempt = &transactionAttempt{
-		expiryTime:       t.expiryTime,
-		txnStartTime:     t.startTime,
-		operationTimeout: t.operationTimeout,
-		durabilityLevel:  t.durabilityLevel,
-		transactionID:    t.transactionID,
-		serialUnstaging:  t.serialUnstaging,
-		explicitAtrs:     t.explicitATRs,
-		atrLocation:      t.atrLocation,
+		expiryTime:          t.expiryTime,
+		txnStartTime:        t.startTime,
+		operationTimeout:    t.operationTimeout,
+		durabilityLevel:     t.durabilityLevel,
+		transactionID:       t.transactionID,
+		disableCompoundOps:  t.disableCompoundOps,
+		serialUnstaging:     t.serialUnstaging,
+		explicitAtrs:        t.explicitATRs,
+		atrLocation:         t.atrLocation,
+		bucketAgentProvider: t.bucketAgentProvider,
 
 		id:                  attemptUUID,
 		state:               AttemptStateNothingWritten,
@@ -83,7 +72,6 @@ func (t *Transaction) NewAttempt() error {
 		atrScopeName:        "",
 		atrCollectionName:   "",
 		atrKey:              nil,
-		expiryOvertimeMode:  false,
 		hooks:               t.hooks,
 
 		addCleanupRequest: t.addCleanupRequest,
@@ -172,14 +160,16 @@ func (t *Transaction) resumeAttempt(txnData *jsonSerializedAttempt) error {
 	}
 
 	t.attempt = &transactionAttempt{
-		expiryTime:       t.expiryTime,
-		txnStartTime:     t.startTime,
-		operationTimeout: t.operationTimeout,
-		durabilityLevel:  t.durabilityLevel,
-		transactionID:    t.transactionID,
-		serialUnstaging:  t.serialUnstaging,
-		explicitAtrs:     t.explicitATRs,
-		atrLocation:      t.atrLocation,
+		expiryTime:          t.expiryTime,
+		txnStartTime:        t.startTime,
+		operationTimeout:    t.operationTimeout,
+		durabilityLevel:     t.durabilityLevel,
+		transactionID:       t.transactionID,
+		disableCompoundOps:  t.disableCompoundOps,
+		serialUnstaging:     t.serialUnstaging,
+		explicitAtrs:        t.explicitATRs,
+		atrLocation:         t.atrLocation,
+		bucketAgentProvider: t.bucketAgentProvider,
 
 		id:                  attemptUUID,
 		state:               txnState,
@@ -189,7 +179,6 @@ func (t *Transaction) resumeAttempt(txnData *jsonSerializedAttempt) error {
 		atrScopeName:        atrScope,
 		atrCollectionName:   atrCollection,
 		atrKey:              atrKey,
-		expiryOvertimeMode:  false,
 		hooks:               t.hooks,
 
 		addCleanupRequest: t.addCleanupRequest,
@@ -325,6 +314,42 @@ func (t *Transaction) Rollback(cb RollbackCallback) error {
 	}
 
 	return t.attempt.Rollback(cb)
+}
+
+// HasExpired indicates whether this attempt has expired.
+func (t *Transaction) HasExpired() bool {
+	if t.attempt == nil {
+		return false
+	}
+
+	return t.attempt.HasExpired()
+}
+
+// CanCommit indicates whether this attempt can still be committed.
+func (t *Transaction) CanCommit() bool {
+	if t.attempt == nil {
+		return false
+	}
+
+	return t.attempt.CanCommit()
+}
+
+// ShouldRollback indicates if this attempt should be rolled back.
+func (t *Transaction) ShouldRollback() bool {
+	if t.attempt == nil {
+		return false
+	}
+
+	return t.attempt.ShouldRollback()
+}
+
+// ShouldRetry indicates if this attempt thinks we can retry.
+func (t *Transaction) ShouldRetry() bool {
+	if t.attempt == nil {
+		return false
+	}
+
+	return t.attempt.ShouldRetry()
 }
 
 // SerializeAttempt will serialize the current transaction attempt, allowing it

@@ -1,6 +1,9 @@
 package transactions
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 var (
 	// ErrNoAttempt indicates no attempt was started before an operation was performed.
@@ -48,6 +51,12 @@ var (
 	// ErrForwardCompatibilityFailure indicates an operation failed due to involving a document in another transaction
 	// which contains features this transaction does not support.
 	ErrForwardCompatibilityFailure = errors.New("forward compatibility error")
+
+	// ErrDocumentNotFound indicates that a document was not found.
+	ErrDocumentNotFound = errors.New("document not found")
+
+	// ErrDocumentAlreadyExists indicates that a document already existed.
+	ErrDocumentAlreadyExists = errors.New("document already exists")
 )
 
 // TransactionOperationFailedError is used when a transaction operation fails.
@@ -61,10 +70,17 @@ type TransactionOperationFailedError struct {
 }
 
 func (tfe TransactionOperationFailedError) Error() string {
-	if tfe.errorCause == nil {
-		return "transaction operation failed"
+	errStr := "transaction operation failed"
+	errStr += " | " + fmt.Sprintf(
+		"shouldRetry:%v, shouldRollback:%v, shouldRaise:%d, class:%d",
+		tfe.shouldRetry,
+		!tfe.shouldNotRollback,
+		tfe.shouldRaise,
+		tfe.errorClass)
+	if tfe.errorCause != nil {
+		errStr += " | " + tfe.errorCause.Error()
 	}
-	return "transaction operation failed | " + tfe.errorCause.Error()
+	return errStr
 }
 
 func (tfe TransactionOperationFailedError) Unwrap() error {
@@ -89,4 +105,9 @@ func (tfe TransactionOperationFailedError) ToRaise() ErrorReason {
 // ErrorClass is the class of error which caused this error.
 func (tfe TransactionOperationFailedError) ErrorClass() ErrorClass {
 	return tfe.errorClass
+}
+
+type classifiedError struct {
+	Source error
+	Class  ErrorClass
 }

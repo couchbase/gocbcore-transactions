@@ -294,7 +294,7 @@ const (
 	hookInsert             = "insert"
 	hookReplace            = "replace"
 	hookRemove             = "remove"
-	hookBeforeCommit       = "commit"
+	hookCommit             = "commit"
 	hookAbortGetATR        = "abortGetAtr"
 	hookRollbackDoc        = "rollbackDoc"
 	hookDeleteInserted     = "deleteInserted"
@@ -302,10 +302,12 @@ const (
 	hookRemoveDoc          = "removeDoc"
 	hookCommitDoc          = "commitDoc"
 
+	hookWWC = "writeWriteConflict"
+
 	hookATRCommit                    = "atrCommit"
 	hookATRCommitAmbiguityResolution = "atrCommitAmbiguityResolution"
 	hookATRAbort                     = "atrAbort"
-	hookATRRollbackComplete          = "atrRollbackComplete"
+	hookATRRollback                  = "atrRollbackComplete"
 	hookATRPending                   = "atrPending"
 	hookATRComplete                  = "atrComplete"
 )

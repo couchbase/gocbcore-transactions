@@ -1,5 +1,10 @@
 package transactions
 
+var crc32cMacro = []byte("\"${Mutation.value_crc32c}\"")
+var revidMacro = []byte("\"${$document.revid}\"")
+var exptimeMacro = []byte("\"${$document.exptime}\"")
+var casMacro = []byte("\"${$document.CAS}\"")
+
 // AttemptState represents the current State of a transaction
 type AttemptState int
 
@@ -11,26 +16,32 @@ const (
 	// the transaction is currently pending.
 	AttemptStatePending = AttemptState(2)
 
+	// AttemptStateCommitting indicates that the transaction is now trying to become
+	// committed, if we stay in this state, it implies ambiguity.
+	AttemptStateCommitting = AttemptState(3)
+
 	// AttemptStateCommitted indicates that the transaction is now logically committed
 	// but the unstaging of documents is still underway.
-	AttemptStateCommitted = AttemptState(3)
+	AttemptStateCommitted = AttemptState(4)
 
 	// AttemptStateCompleted indicates that the transaction has been fully completed
 	// and no longer has work to perform.
-	AttemptStateCompleted = AttemptState(4)
+	AttemptStateCompleted = AttemptState(5)
 
 	// AttemptStateAborted indicates that the transaction was aborted.
-	AttemptStateAborted = AttemptState(5)
+	AttemptStateAborted = AttemptState(6)
 
 	// AttemptStateRolledBack indicates that the transaction was not committed and instead
 	// was rolled back in its entirety.
-	AttemptStateRolledBack = AttemptState(6)
+	AttemptStateRolledBack = AttemptState(7)
 )
 
 // ErrorReason is the reason why a transaction should be failed.
 // Internal: This should never be used and is not supported.
 type ErrorReason uint8
 
+// NOTE: The errors within this section are critically ordered, as the order of
+// precedence used when merging errors together is based on this.
 const (
 	// ErrorReasonTransactionFailed indicates the transaction should be failed because it failed.
 	ErrorReasonTransactionFailed ErrorReason = iota
@@ -83,6 +94,14 @@ const (
 	// ErrorClassFailExpiry indicates an error occurred because the transaction expired.
 	ErrorClassFailExpiry
 
-	// ErrorClassFailATRFull indicates an error occurred because the ATR is full.
-	ErrorClassFailATRFull
+	// ErrorClassFailOutOfSpace indicates an error occurred because the ATR is full.
+	ErrorClassFailOutOfSpace
+)
+
+const (
+	transactionStateBitShouldNotCommit       = 1 << 0
+	transactionStateBitShouldNotRollback     = 1 << 1
+	transactionStateBitShouldNotRetry        = 1 << 2
+	transactionStateBitHasExpired            = 1 << 3
+	transactionStateBitPreExpiryAutoRollback = 1 << 4
 )

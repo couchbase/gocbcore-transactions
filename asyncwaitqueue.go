@@ -4,13 +4,21 @@ import (
 	"sync"
 )
 
-type atomicWaitQueue struct {
+type asyncWaitGroup struct {
 	lock    sync.Mutex
 	count   int
 	waiters []func()
 }
 
-func (q *atomicWaitQueue) Add(n int) {
+func (q *asyncWaitGroup) IsEmpty() bool {
+	q.lock.Lock()
+	isEmpty := q.count == 0
+	q.lock.Unlock()
+
+	return isEmpty
+}
+
+func (q *asyncWaitGroup) Add(n int) {
 	var waiters []func()
 
 	q.lock.Lock()
@@ -26,11 +34,11 @@ func (q *atomicWaitQueue) Add(n int) {
 	}
 }
 
-func (q *atomicWaitQueue) Done() {
+func (q *asyncWaitGroup) Done() {
 	q.Add(-1)
 }
 
-func (q *atomicWaitQueue) Wait(fn func()) {
+func (q *asyncWaitGroup) Wait(fn func()) {
 	q.lock.Lock()
 	if q.count == 0 {
 		q.lock.Unlock()

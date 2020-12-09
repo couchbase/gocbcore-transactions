@@ -14,6 +14,7 @@ type MutationToken struct {
 // transaction may require multiple attempts before being successful.
 type Attempt struct {
 	State             AttemptState
+	StateIsAmbiguous  bool
 	ID                string
 	MutationState     []MutationToken
 	AtrID             []byte
@@ -25,10 +26,12 @@ type Attempt struct {
 	// unstaged, or if a later cleanup job will be responsible.
 	UnstagingComplete bool
 
-	// Internal: This should never be used and is not supported.
-	Internal struct {
-		Expired bool
-	}
+	// Expired indicates whether this attempt expired during execution.
+	Expired bool
+
+	// PreExpiryAutoRollback indicates whether an auto-rollback occured
+	// before the transaction was expired.
+	PreExpiryAutoRollback bool
 }
 
 // Result represents the result of a transaction which was executed.

@@ -116,10 +116,11 @@ type Config struct {
 	// Internal specifies a set of options for internal use.
 	// Internal: This should never be used and is not supported.
 	Internal struct {
-		Hooks           TransactionHooks
-		CleanUpHooks    CleanUpHooks
-		SerialUnstaging bool
-		ExplicitATRs    bool
+		Hooks              TransactionHooks
+		CleanUpHooks       CleanUpHooks
+		DisableCompoundOps bool
+		SerialUnstaging    bool
+		ExplicitATRs       bool
 	}
 }
 
@@ -143,4 +144,8 @@ type PerTransactionConfig struct {
 
 	// KeyValueTimeout specifies the timeout used for durable KV writes.
 	KvDurableTimeout time.Duration
+
+	// BucketAgentProvider provides a function which returns an agent for
+	// a particular bucket by name.
+	BucketAgentProvider BucketAgentProviderFn
 }

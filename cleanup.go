@@ -266,8 +266,27 @@ func (c *stdCleaner) processQ() {
 	}()
 }
 
+func (c *stdCleaner) checkForwardCompatability(
+	stage forwardCompatStage,
+	fc map[string][]ForwardCompatibilityEntry,
+	cb func(error),
+) {
+	isCompat, _, _, err := checkForwardCompatability(stage, fc)
+	if err != nil {
+		cb(err)
+		return
+	}
+
+	if !isCompat {
+		cb(ErrForwardCompatibilityFailure)
+		return
+	}
+
+	cb(nil)
+}
+
 func (c *stdCleaner) CleanupAttempt(atrAgent *gocbcore.Agent, req *CleanupRequest, regular bool, cb func(attempt CleanupAttempt)) {
-	checkForwardCompatability(forwardCompatStageGetsCleanupEntry, req.ForwardCompat, func(shouldRetry bool, retryInterval time.Duration, err error) {
+	c.checkForwardCompatability(forwardCompatStageGetsCleanupEntry, req.ForwardCompat, func(err error) {
 		if err != nil {
 			cb(CleanupAttempt{
 				Success:           false,

@@ -85,6 +85,7 @@ func (t *Transactions) BeginTransaction(perConfig *PerTransactionConfig) (*Trans
 	durabilityLevel := t.config.DurabilityLevel
 	operationTimeout := t.config.KeyValueTimeout
 	customATRLocation := t.config.CustomATRLocation
+	bucketAgentProvider := t.config.BucketAgentProvider
 
 	if perConfig != nil {
 		if perConfig.ExpirationTime != 0 {
@@ -99,21 +100,26 @@ func (t *Transactions) BeginTransaction(perConfig *PerTransactionConfig) (*Trans
 		if perConfig.CustomATRLocation.Agent != nil {
 			customATRLocation = perConfig.CustomATRLocation
 		}
+		if perConfig.BucketAgentProvider != nil {
+			bucketAgentProvider = perConfig.BucketAgentProvider
+		}
 	}
 
 	now := time.Now()
 	return &Transaction{
-		parent:            t,
-		expiryTime:        now.Add(expirationTime),
-		startTime:         now,
-		durabilityLevel:   durabilityLevel,
-		transactionID:     transactionUUID,
-		operationTimeout:  operationTimeout,
-		atrLocation:       customATRLocation,
-		addCleanupRequest: t.cleaner.AddRequest,
-		hooks:             t.config.Internal.Hooks,
-		serialUnstaging:   t.config.Internal.SerialUnstaging,
-		explicitATRs:      t.config.Internal.ExplicitATRs,
+		parent:              t,
+		expiryTime:          now.Add(expirationTime),
+		startTime:           now,
+		durabilityLevel:     durabilityLevel,
+		transactionID:       transactionUUID,
+		operationTimeout:    operationTimeout,
+		atrLocation:         customATRLocation,
+		addCleanupRequest:   t.cleaner.AddRequest,
+		hooks:               t.config.Internal.Hooks,
+		disableCompoundOps:  t.config.Internal.DisableCompoundOps,
+		serialUnstaging:     t.config.Internal.SerialUnstaging,
+		explicitATRs:        t.config.Internal.ExplicitATRs,
+		bucketAgentProvider: bucketAgentProvider,
 	}, nil
 }
 
@@ -178,17 +184,19 @@ func (t *Transactions) ResumeTransactionAttempt(txnBytes []byte) (*Transaction, 
 
 	now := time.Now()
 	txn := &Transaction{
-		parent:            t,
-		expiryTime:        now.Add(expirationTime),
-		startTime:         now,
-		durabilityLevel:   durabilityLevel,
-		transactionID:     transactionUUID,
-		operationTimeout:  operationTimeout,
-		atrLocation:       atrLocation,
-		addCleanupRequest: t.cleaner.AddRequest,
-		hooks:             t.config.Internal.Hooks,
-		serialUnstaging:   t.config.Internal.SerialUnstaging,
-		explicitATRs:      t.config.Internal.ExplicitATRs,
+		parent:              t,
+		expiryTime:          now.Add(expirationTime),
+		startTime:           now,
+		durabilityLevel:     durabilityLevel,
+		transactionID:       transactionUUID,
+		operationTimeout:    operationTimeout,
+		atrLocation:         atrLocation,
+		addCleanupRequest:   t.cleaner.AddRequest,
+		hooks:               t.config.Internal.Hooks,
+		disableCompoundOps:  t.config.Internal.DisableCompoundOps,
+		serialUnstaging:     t.config.Internal.SerialUnstaging,
+		explicitATRs:        t.config.Internal.ExplicitATRs,
+		bucketAgentProvider: t.config.BucketAgentProvider,
 	}
 
 	err = txn.resumeAttempt(&txnData)

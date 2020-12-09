@@ -5,6 +5,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/pkg/errors"
+)
+
+type forwardCompatBehaviour string
+
+const (
+	forwardCompatBehaviourRetry forwardCompatBehaviour = "r"
+	forwardCompatBehaviourFail  forwardCompatBehaviour = "f"
 )
 
 type forwardCompatExtension string
@@ -43,6 +52,25 @@ type ForwardCompatibilityEntry struct {
 
 var supportedforwardCompatExtensions = []forwardCompatExtension{forwardCompatExtensionTransactionID, forwardCompatExtensionDeferredCommit}
 
+func jsonForwardCompatToForwardCompat(fc map[string][]jsonForwardCompatibilityEntry) map[string][]ForwardCompatibilityEntry {
+	if fc == nil {
+		return nil
+	}
+	forwardCompat := make(map[string][]ForwardCompatibilityEntry)
+
+	for k, entries := range fc {
+		if _, ok := forwardCompat[k]; !ok {
+			forwardCompat[k] = make([]ForwardCompatibilityEntry, len(entries))
+		}
+
+		for i, entry := range entries {
+			forwardCompat[k][i] = ForwardCompatibilityEntry(entry)
+		}
+	}
+
+	return forwardCompat
+}
+
 func checkForwardCompatProtocol(protocolVersion string) (bool, error) {
 	if protocolVersion == "" {
 		return false, nil
@@ -50,11 +78,11 @@ func checkForwardCompatProtocol(protocolVersion string) (bool, error) {
 
 	protocol := strings.Split(protocolVersion, ".")
 	if len(protocol) != 2 {
-		return false, fmt.Errorf("invalid protocol: %s", protocolVersion)
+		return false, fmt.Errorf("invalid protocol string: %s", protocolVersion)
 	}
 	major, err := strconv.Atoi(protocol[0])
 	if err != nil {
-		return false, err
+		return false, errors.Wrapf(err, "invalid protocol string: %s", protocolVersion)
 	}
 	if protocolMajor < major {
 		return false, nil
@@ -62,7 +90,7 @@ func checkForwardCompatProtocol(protocolVersion string) (bool, error) {
 	if protocolMajor == major {
 		minor, err := strconv.Atoi(protocol[1])
 		if err != nil {
-			return false, err
+			return false, errors.Wrapf(err, "invalid protocol string: %s", protocolVersion)
 		}
 		if protocolMinor < minor {
 			return false, nil
@@ -86,19 +114,19 @@ func checkForwardCompatExtension(extension string) bool {
 	return false
 }
 
-func checkForwardCompatability(stage forwardCompatStage, fc map[string][]ForwardCompatibilityEntry,
-	cb func(shouldRetry bool, retryInterval time.Duration, err error)) {
+func checkForwardCompatability(
+	stage forwardCompatStage,
+	fc map[string][]ForwardCompatibilityEntry,
+) (isCompatOut bool, shouldRetryOut bool, retryWaitOut time.Duration, errOut error) {
 	if fc == nil || len(fc) == 0 {
-		cb(false, 0, nil)
-		return
+		return true, false, 0, nil
 	}
 
 	if checks, ok := fc[string(stage)]; ok {
 		for _, c := range checks {
 			protocolOk, err := checkForwardCompatProtocol(c.ProtocolVersion)
 			if err != nil {
-				cb(false, 0, err)
-				return
+				return false, false, 0, err
 			}
 
 			if protocolOk {
@@ -110,22 +138,15 @@ func checkForwardCompatability(stage forwardCompatStage, fc map[string][]Forward
 			}
 
 			// If we get here then neither protocol or extension are ok.
-			if c.Behaviour == "r" {
-				if c.RetryInterval > 0 {
-					time.AfterFunc(time.Duration(c.RetryInterval)*time.Millisecond, func() {
-						cb(true, time.Duration(c.RetryInterval)*time.Millisecond, ErrForwardCompatibilityFailure)
-					})
-					return
-				}
-
-				cb(true, 0, ErrForwardCompatibilityFailure)
-				return
-			} else if c.Behaviour == "f" {
-				cb(false, 0, ErrForwardCompatibilityFailure)
-				return
+			switch forwardCompatBehaviour(c.Behaviour) {
+			case forwardCompatBehaviourRetry:
+				retryWait := time.Duration(c.RetryInterval) * time.Millisecond
+				return false, true, retryWait, nil
+			default:
+				return false, false, 0, nil
 			}
 		}
 	}
 
-	cb(false, 0, nil)
+	return true, false, 0, nil
 }
