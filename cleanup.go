@@ -267,7 +267,7 @@ func (c *stdCleaner) processQ() {
 }
 
 func (c *stdCleaner) CleanupAttempt(atrAgent *gocbcore.Agent, req *CleanupRequest, regular bool, cb func(attempt CleanupAttempt)) {
-	checkForwardCompatbility(forwardCompatStageGetsCleanupEntry, req.ForwardCompat, func(shouldRetry bool, retryInterval time.Duration, err error) {
+	checkForwardCompatability(forwardCompatStageGetsCleanupEntry, req.ForwardCompat, func(shouldRetry bool, retryInterval time.Duration, err error) {
 		if err != nil {
 			cb(CleanupAttempt{
 				Success:           false,

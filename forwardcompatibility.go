@@ -86,7 +86,7 @@ func checkForwardCompatExtension(extension string) bool {
 	return false
 }
 
-func checkForwardCompatbility(stage forwardCompatStage, fc map[string][]ForwardCompatibilityEntry,
+func checkForwardCompatability(stage forwardCompatStage, fc map[string][]ForwardCompatibilityEntry,
 	cb func(shouldRetry bool, retryInterval time.Duration, err error)) {
 	if fc == nil || len(fc) == 0 {
 		cb(false, 0, nil)

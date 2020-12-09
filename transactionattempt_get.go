@@ -33,7 +33,7 @@ func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 				forwardCompat = result.Meta.ForwardCompat
 			}
 
-			t.checkForwardCompatbility(forwardCompatStageGets, forwardCompat, func(err error) {
+			t.checkForwardCompatability(forwardCompatStageGets, forwardCompat, func(err error) {
 				if err != nil {
 					cb(nil, err)
 					return
@@ -196,7 +196,7 @@ func (t *transactionAttempt) get(opts GetOptions, resolvingATREntry string, cb G
 						return
 					}
 
-					t.checkForwardCompatbility(forwardCompatStageGetsReadingATR, jsonForwardCompatToForwardCompat(attempt.ForwardCompat), func(err error) {
+					t.checkForwardCompatability(forwardCompatStageGetsReadingATR, jsonForwardCompatToForwardCompat(attempt.ForwardCompat), func(err error) {
 						if err != nil {
 							cb(nil, err)
 							return

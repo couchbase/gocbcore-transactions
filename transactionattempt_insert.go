@@ -311,7 +311,7 @@ func (t *transactionAttempt) getForInsert(opts InsertOptions, cb func(*GetResult
 				forwardCompat = jsonForwardCompatToForwardCompat(txnMeta.ForwardCompat)
 			}
 
-			t.checkForwardCompatbility(forwardCompatStageWWCInsertingGet, forwardCompat, func(err error) {
+			t.checkForwardCompatability(forwardCompatStageWWCInsertingGet, forwardCompat, func(err error) {
 				if err != nil {
 					cb(nil, err)
 					return

@@ -622,7 +622,7 @@ func (t *transactionAttempt) writeWriteConflictPoll(res *GetResult, existingMuta
 			forwardCompat = res.Meta.ForwardCompat
 		}
 
-		t.checkForwardCompatbility(stage, forwardCompat, func(err error) {
+		t.checkForwardCompatability(stage, forwardCompat, func(err error) {
 			if err != nil {
 				// We've already enhanced this error
 				cb(err)
@@ -722,9 +722,9 @@ func (t *transactionAttempt) createCleanUpRequest() *CleanupRequest {
 	}
 }
 
-func (t *transactionAttempt) checkForwardCompatbility(stage forwardCompatStage, fc map[string][]ForwardCompatibilityEntry,
+func (t *transactionAttempt) checkForwardCompatability(stage forwardCompatStage, fc map[string][]ForwardCompatibilityEntry,
 	cb func(error)) {
-	checkForwardCompatbility(stage, fc, func(shouldRetry bool, retryInterval time.Duration, err error) {
+	checkForwardCompatability(stage, fc, func(shouldRetry bool, retryInterval time.Duration, err error) {
 		if err == nil {
 			cb(nil)
 			return
