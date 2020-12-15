@@ -13,7 +13,7 @@ import (
 )
 
 func TestSomething(t *testing.T) {
-	cluster, err := gocb.Connect("couchbase://172.23.111.148", gocb.ClusterOptions{
+	cluster, err := gocb.Connect("couchbase://10.144.210.101/", gocb.ClusterOptions{
 		Username: "Administrator",
 		Password: "password",
 	})
@@ -24,8 +24,9 @@ func TestSomething(t *testing.T) {
 
 	// Do the setup stuff
 
-	_, err = cluster.Query("DELETE FROM default", nil)
+	err = cluster.Buckets().FlushBucket("default", nil)
 	assert.NoError(t, err, "delete-all failed")
+	time.Sleep(1 * time.Second)
 
 	/* CASES TO TEST FOR
 	INSERT = INSERT
@@ -304,6 +305,7 @@ func TestSomething(t *testing.T) {
 		CollectionName: testCollectionName,
 		Key:            []byte(`insertToReplaceDoc`),
 	})
+	assert.NoError(t, err, "insertToReplaceDoc get2 failed")
 	assert.EqualValues(t, insertToReplaceInsertRes.Cas, insertToReplaceGet2Res.Cas, "insertToReplaceDoc insert and get cas did not match")
 	assert.EqualValues(t, insertToReplaceInsertRes.Meta, insertToReplaceGet2Res.Meta, "insertToReplaceDoc insert and get meta did not match")
 	log.Printf("insertToReplaceDoc get2 result: %+v", insertToReplaceGet2Res)
@@ -322,6 +324,7 @@ func TestSomething(t *testing.T) {
 		CollectionName: testCollectionName,
 		Key:            []byte(`insertToRemoveDoc`),
 	})
+	assert.NoError(t, err, "insertToRemoveDoc get2 failed")
 	assert.EqualValues(t, insertToRemoveInsertRes.Cas, insertToRemoveGet2Res.Cas, "insertToRemoveDoc insert and get cas did not match")
 	assert.EqualValues(t, insertToRemoveInsertRes.Meta, insertToRemoveGet2Res.Meta, "insertToRemoveDoc insert and get meta did not match")
 	log.Printf("insertToRemoveDoc get2 result: %+v", insertToRemoveGet2Res)
@@ -349,6 +352,7 @@ func TestSomething(t *testing.T) {
 		CollectionName: testCollectionName,
 		Key:            []byte(`replaceToReplaceDoc`),
 	})
+	assert.NoError(t, err, "replaceToReplaceDoc get2 failed")
 	assert.EqualValues(t, replaceToReplaceReplaceRes.Cas, replaceToReplaceGet2Res.Cas, "replaceToReplaceDoc replace and get cas did not match")
 	assert.EqualValues(t, replaceToReplaceReplaceRes.Meta, replaceToReplaceGet2Res.Meta, "replaceToReplaceDoc replace and get meta did not match")
 	log.Printf("replaceToReplaceDoc get2 result: %+v", replaceToReplaceGet2Res)
@@ -367,6 +371,7 @@ func TestSomething(t *testing.T) {
 		CollectionName: testCollectionName,
 		Key:            []byte(`replaceToRemoveDoc`),
 	})
+	assert.NoError(t, err, "replaceToRemoveDoc get2 failed")
 	assert.EqualValues(t, replaceToRemoveReplaceRes.Cas, replaceToRemoveGet2Res.Cas, "replaceToRemoveDoc replace and get cas did not match")
 	assert.EqualValues(t, replaceToRemoveReplaceRes.Meta, replaceToRemoveGet2Res.Meta, "replaceToRemoveDoc replace and get meta did not match")
 	log.Printf("replaceToRemoveDoc get2 result: %+v", replaceToRemoveGet2Res)
@@ -569,10 +574,7 @@ func TestSomething(t *testing.T) {
 	assertStagedDoc("removeToRemoveDoc", jsonMutationRemove, nil, false)
 
 	err = testBlkCommit(txn)
-	if err != nil {
-		log.Printf("Commit failed: %+v", err)
-		panic(err)
-	}
+	assert.NoError(t, err, "commit failed")
 
 	assertStagedDoc("insertDoc", "", nil, false)
 	assertStagedDoc("replaceDoc", "", nil, false)
