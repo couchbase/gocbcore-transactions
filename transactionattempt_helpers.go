@@ -429,13 +429,13 @@ func (t *transactionAttempt) getTxnState(
 
 	atrAgent, err := t.bucketAgentProvider(bucketName)
 	if err != nil {
-		ecCb(nil, t.classifyError(err))
+		ecCb(nil, classifyError(err))
 		return
 	}
 
 	t.hooks.BeforeCheckATREntryForBlockingDoc([]byte(atrDocID), func(err error) {
 		if err != nil {
-			ecCb(nil, t.classifyHookError(err))
+			ecCb(nil, classifyHookError(err))
 			return
 		}
 
@@ -458,13 +458,13 @@ func (t *transactionAttempt) getTxnState(
 			Deadline: deadline,
 		}, func(result *gocbcore.LookupInResult, err error) {
 			if err != nil {
-				ecCb(nil, t.classifyError(err))
+				ecCb(nil, classifyError(err))
 				return
 			}
 
 			err = result.Ops[0].Err
 			if err != nil {
-				ecCb(nil, t.classifyError(err))
+				ecCb(nil, classifyError(err))
 				return
 			}
 
@@ -479,7 +479,7 @@ func (t *transactionAttempt) getTxnState(
 			ecCb(txnAttempt, nil)
 		})
 		if err != nil {
-			ecCb(nil, t.classifyError(err))
+			ecCb(nil, classifyError(err))
 			return
 		}
 	})

@@ -70,14 +70,15 @@ func (t *transactionAttempt) operationFailed(def operationFailedDef) *Transactio
 	return err
 }
 
-func (t *transactionAttempt) classifyHookError(err error) *classifiedError {
+func classifyHookError(err error) *classifiedError {
+	// TODO(brett19): Remove this function
 	// We currently have to classify the errors that are returned from the hooks, but
 	// we should really just directly return the classifications and make the source
 	// some special internal source showing it came from a hook...
-	return t.classifyError(err)
+	return classifyError(err)
 }
 
-func (t *transactionAttempt) classifyError(err error) *classifiedError {
+func classifyError(err error) *classifiedError {
 	ec := ErrorClassFailOther
 	if errors.Is(err, ErrDocAlreadyInTransaction) || errors.Is(err, ErrWriteWriteConflict) {
 		ec = ErrorClassFailWriteWriteConflict

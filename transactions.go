@@ -12,8 +12,9 @@ import (
 // Manager is the top level wrapper object for all transactions
 // handling.  It also manages the cleanup process in the background.
 type Manager struct {
-	config  Config
-	cleaner Cleaner
+	config      Config
+	cleaner     Cleaner
+	lostCleanup lostTransactionCleaner
 }
 
 // Init will initialize the transactions library and return a Manager
@@ -56,6 +57,9 @@ func Init(config *Config) (*Manager, error) {
 	if config.CleanupQueueSize == 0 {
 		config.CleanupQueueSize = 100000
 	}
+	if config.Internal.NumATRs == 0 {
+		config.Internal.NumATRs = 1024
+	}
 
 	t := &Manager{
 		config: *config,
@@ -65,6 +69,12 @@ func Init(config *Config) (*Manager, error) {
 		t.cleaner = startCleanupThread(config)
 	} else {
 		t.cleaner = &noopCleaner{}
+	}
+
+	if config.CleanupLostAttempts {
+		t.lostCleanup = startLostTransactionCleaner(config)
+	} else {
+		t.lostCleanup = &noopLostTransactionCleaner{}
 	}
 
 	return t, nil
@@ -114,7 +124,7 @@ func (t *Manager) BeginTransaction(perConfig *PerTransactionConfig) (*Transactio
 		transactionID:       transactionUUID,
 		operationTimeout:    operationTimeout,
 		atrLocation:         customATRLocation,
-		addCleanupRequest:   t.cleaner.AddRequest,
+		addCleanupRequest:   t.addCleanupRequest,
 		hooks:               t.config.Internal.Hooks,
 		disableCompoundOps:  t.config.Internal.DisableCompoundOps,
 		serialUnstaging:     t.config.Internal.SerialUnstaging,
@@ -191,7 +201,7 @@ func (t *Manager) ResumeTransactionAttempt(txnBytes []byte) (*Transaction, error
 		transactionID:       transactionUUID,
 		operationTimeout:    operationTimeout,
 		atrLocation:         atrLocation,
-		addCleanupRequest:   t.cleaner.AddRequest,
+		addCleanupRequest:   t.addCleanupRequest,
 		hooks:               t.config.Internal.Hooks,
 		disableCompoundOps:  t.config.Internal.DisableCompoundOps,
 		serialUnstaging:     t.config.Internal.SerialUnstaging,
@@ -211,8 +221,14 @@ func (t *Manager) ResumeTransactionAttempt(txnBytes []byte) (*Transaction, error
 // background tasks associated with it.
 func (t *Manager) Close() error {
 	t.cleaner.Close()
+	t.lostCleanup.Close()
 
 	return nil
+}
+
+func (t *Manager) addCleanupRequest(req *CleanupRequest) bool {
+	t.lostCleanup.AddBucket(req.AtrBucketName)
+	return t.cleaner.AddRequest(req)
 }
 
 // ManagerInternal exposes internal methods that are useful for testing and/or

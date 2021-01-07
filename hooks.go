@@ -56,11 +56,11 @@ type CleanUpHooks interface {
 // ClientRecordHooks provides a number of internal hooks used for testing.
 // Internal: This should never be used and is not supported.
 type ClientRecordHooks interface {
-	BeforeCreateRecord() error
-	BeforeRemoveClient() error
-	BeforeUpdateCAS() error
-	BeforeGetRecord() error
-	BeforeUpdateRecord() error
+	BeforeCreateRecord(cb func(error))
+	BeforeRemoveClient(cb func(error))
+	BeforeUpdateCAS(cb func(error))
+	BeforeGetRecord(cb func(error))
+	BeforeUpdateRecord(cb func(error))
 }
 
 // DefaultHooks is default set of noop hooks used within the library.
@@ -285,6 +285,31 @@ func (dh *DefaultCleanupHooks) BeforeRemoveDoc(id []byte, cb func(error)) {
 
 // BeforeATRRemove happens before we remove an ATR.
 func (dh *DefaultCleanupHooks) BeforeATRRemove(id []byte, cb func(error)) {
+	cb(nil)
+}
+
+// DefaultClientRecordHooks is default set of noop hooks used within the library.
+// Internal: This should never be used and is not supported.
+type DefaultClientRecordHooks struct {
+}
+
+func (dh *DefaultClientRecordHooks) BeforeCreateRecord(cb func(error)) {
+	cb(nil)
+}
+
+func (dh *DefaultClientRecordHooks) BeforeRemoveClient(cb func(error)) {
+	cb(nil)
+}
+
+func (dh *DefaultClientRecordHooks) BeforeUpdateCAS(cb func(error)) {
+	cb(nil)
+}
+
+func (dh *DefaultClientRecordHooks) BeforeGetRecord(cb func(error)) {
+	cb(nil)
+}
+
+func (dh *DefaultClientRecordHooks) BeforeUpdateRecord(cb func(error)) {
 	cb(nil)
 }
 

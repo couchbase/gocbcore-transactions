@@ -11,6 +11,10 @@ import (
 func (t *transactionAttempt) Insert(opts InsertOptions, cb StoreCallback) error {
 	return t.insert(opts, func(res *GetResult, err *TransactionOperationFailedError) {
 		if err != nil {
+			if err.shouldNotRollback {
+				t.ensureCleanUpRequest()
+			}
+
 			cb(nil, err)
 			return
 		}
@@ -224,7 +228,7 @@ func (t *transactionAttempt) stageInsert(
 
 		t.hooks.BeforeStagedInsert(key, func(err error) {
 			if err != nil {
-				ecCb(nil, t.classifyHookError(err))
+				ecCb(nil, classifyHookError(err))
 				return
 			}
 
@@ -297,7 +301,7 @@ func (t *transactionAttempt) stageInsert(
 				Flags:                  flags,
 			}, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
-					ecCb(nil, t.classifyError(err))
+					ecCb(nil, classifyError(err))
 					return
 				}
 
@@ -307,7 +311,7 @@ func (t *transactionAttempt) stageInsert(
 
 					t.hooks.AfterStagedInsertComplete(key, func(err error) {
 						if err != nil {
-							ecCb(nil, t.classifyHookError(err))
+							ecCb(nil, classifyHookError(err))
 							return
 						}
 
@@ -324,7 +328,7 @@ func (t *transactionAttempt) stageInsert(
 				})
 			})
 			if err != nil {
-				ecCb(nil, t.classifyError(err))
+				ecCb(nil, classifyError(err))
 			}
 		})
 	})
@@ -367,7 +371,7 @@ func (t *transactionAttempt) getMetaForConflictedInsert(
 
 	t.hooks.BeforeGetDocInExistsDuringStagedInsert(key, func(err error) {
 		if err != nil {
-			ecCb(0, nil, t.classifyHookError(err))
+			ecCb(0, nil, classifyHookError(err))
 			return
 		}
 
@@ -391,7 +395,7 @@ func (t *transactionAttempt) getMetaForConflictedInsert(
 			Flags:    memd.SubdocDocFlagAccessDeleted,
 		}, func(result *gocbcore.LookupInResult, err error) {
 			if err != nil {
-				ecCb(0, nil, t.classifyError(err))
+				ecCb(0, nil, classifyError(err))
 				return
 			}
 
@@ -435,7 +439,7 @@ func (t *transactionAttempt) getMetaForConflictedInsert(
 			}, nil)
 		})
 		if err != nil {
-			ecCb(0, nil, t.classifyError(err))
+			ecCb(0, nil, classifyError(err))
 			return
 		}
 	})

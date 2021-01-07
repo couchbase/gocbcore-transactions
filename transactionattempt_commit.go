@@ -250,7 +250,7 @@ func (t *transactionAttempt) ensureMutation(
 		Flags:    memd.SubdocDocFlagAccessDeleted,
 	}, func(result *gocbcore.LookupInResult, err error) {
 		if err != nil {
-			ecCb(t.classifyError(err))
+			ecCb(classifyError(err))
 			return
 		}
 
@@ -272,7 +272,7 @@ func (t *transactionAttempt) ensureMutation(
 		}
 
 		if result.Ops[0].Err != nil {
-			ecCb(t.classifyError(result.Ops[0].Err))
+			ecCb(classifyError(result.Ops[0].Err))
 			return
 		}
 
@@ -280,7 +280,7 @@ func (t *transactionAttempt) ensureMutation(
 		ecCb(nil)
 	})
 	if err != nil {
-		ecCb(t.classifyError(err))
+		ecCb(classifyError(err))
 		return
 	}
 }
@@ -368,7 +368,7 @@ func (t *transactionAttempt) commitStagedReplace(
 
 		t.hooks.BeforeDocCommitted(mutation.Key, func(err error) {
 			if err != nil {
-				ecCb(nil, t.classifyHookError(err))
+				ecCb(nil, classifyHookError(err))
 				return
 			}
 
@@ -419,26 +419,26 @@ func (t *transactionAttempt) commitStagedReplace(
 				DurabilityLevelTimeout: duraTimeout,
 			}, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
-					ecCb(nil, t.classifyError(err))
+					ecCb(nil, classifyError(err))
 					return
 				}
 
 				for _, op := range result.Ops {
 					if op.Err != nil {
-						ecCb(nil, t.classifyError(op.Err))
+						ecCb(nil, classifyError(op.Err))
 						return
 					}
 				}
 
 				t.hooks.AfterDocCommittedBeforeSavingCAS(mutation.Key, func(err error) {
 					if err != nil {
-						ecCb(nil, t.classifyHookError(err))
+						ecCb(nil, classifyHookError(err))
 						return
 					}
 
 					t.hooks.AfterDocCommitted(mutation.Key, func(err error) {
 						if err != nil {
-							ecCb(nil, t.classifyHookError(err))
+							ecCb(nil, classifyHookError(err))
 							return
 						}
 
@@ -450,7 +450,7 @@ func (t *transactionAttempt) commitStagedReplace(
 				})
 			})
 			if err != nil {
-				ecCb(nil, t.classifyError(err))
+				ecCb(nil, classifyError(err))
 				return
 			}
 		})
@@ -535,7 +535,7 @@ func (t *transactionAttempt) commitStagedInsert(
 
 		t.hooks.BeforeDocCommitted(mutation.Key, func(err error) {
 			if err != nil {
-				ecCb(nil, t.classifyHookError(err))
+				ecCb(nil, classifyHookError(err))
 				return
 			}
 
@@ -556,19 +556,19 @@ func (t *transactionAttempt) commitStagedInsert(
 				DurabilityLevelTimeout: duraTimeout,
 			}, func(result *gocbcore.StoreResult, err error) {
 				if err != nil {
-					ecCb(nil, t.classifyError(err))
+					ecCb(nil, classifyError(err))
 					return
 				}
 
 				t.hooks.AfterDocCommittedBeforeSavingCAS(mutation.Key, func(err error) {
 					if err != nil {
-						ecCb(nil, t.classifyHookError(err))
+						ecCb(nil, classifyHookError(err))
 						return
 					}
 
 					t.hooks.AfterDocCommitted(mutation.Key, func(err error) {
 						if err != nil {
-							ecCb(nil, t.classifyHookError(err))
+							ecCb(nil, classifyHookError(err))
 							return
 						}
 
@@ -580,7 +580,7 @@ func (t *transactionAttempt) commitStagedInsert(
 				})
 			})
 			if err != nil {
-				ecCb(nil, t.classifyError(err))
+				ecCb(nil, classifyError(err))
 				return
 			}
 		})
@@ -657,7 +657,7 @@ func (t *transactionAttempt) commitStagedRemove(
 
 		t.hooks.BeforeDocRemoved(mutation.Key, func(err error) {
 			if err != nil {
-				ecCb(nil, t.classifyHookError(err))
+				ecCb(nil, classifyHookError(err))
 				return
 			}
 
@@ -678,19 +678,19 @@ func (t *transactionAttempt) commitStagedRemove(
 				DurabilityLevelTimeout: duraTimeout,
 			}, func(result *gocbcore.DeleteResult, err error) {
 				if err != nil {
-					ecCb(nil, t.classifyError(err))
+					ecCb(nil, classifyError(err))
 					return
 				}
 
 				t.hooks.AfterDocRemovedPreRetry(mutation.Key, func(err error) {
 					if err != nil {
-						ecCb(nil, t.classifyHookError(err))
+						ecCb(nil, classifyHookError(err))
 						return
 					}
 
 					t.hooks.AfterDocRemovedPostRetry(mutation.Key, func(err error) {
 						if err != nil {
-							ecCb(nil, t.classifyHookError(err))
+							ecCb(nil, classifyHookError(err))
 							return
 						}
 
@@ -702,7 +702,7 @@ func (t *transactionAttempt) commitStagedRemove(
 				})
 			})
 			if err != nil {
-				ecCb(nil, t.classifyError(err))
+				ecCb(nil, classifyError(err))
 				return
 			}
 		})

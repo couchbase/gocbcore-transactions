@@ -11,6 +11,10 @@ import (
 func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
 	return t.get(opts, func(res *GetResult, err *TransactionOperationFailedError) {
 		if err != nil {
+			if err.shouldNotRollback {
+				t.ensureCleanUpRequest()
+			}
+
 			cb(nil, err)
 			return
 		}
@@ -359,7 +363,7 @@ func (t *transactionAttempt) fetchDocWithMeta(
 
 	t.hooks.BeforeDocGet(key, func(err error) {
 		if err != nil {
-			ecCb(nil, t.classifyHookError(err))
+			ecCb(nil, classifyHookError(err))
 			return
 		}
 
@@ -393,7 +397,7 @@ func (t *transactionAttempt) fetchDocWithMeta(
 			Flags:    memd.SubdocDocFlagAccessDeleted,
 		}, func(result *gocbcore.LookupInResult, err error) {
 			if err != nil {
-				ecCb(nil, t.classifyError(err))
+				ecCb(nil, classifyError(err))
 				return
 			}
 
@@ -406,7 +410,7 @@ func (t *transactionAttempt) fetchDocWithMeta(
 			}
 
 			if result.Ops[0].Err != nil {
-				ecCb(nil, t.classifyError(result.Ops[0].Err))
+				ecCb(nil, classifyError(result.Ops[0].Err))
 				return
 			}
 
@@ -448,7 +452,7 @@ func (t *transactionAttempt) fetchDocWithMeta(
 			}, nil)
 		})
 		if err != nil {
-			ecCb(nil, t.classifyError(err))
+			ecCb(nil, classifyError(err))
 		}
 	})
 }

@@ -227,7 +227,7 @@ func (t *transactionAttempt) removeStagedInsert(
 
 		t.hooks.BeforeRollbackDeleteInserted(mutation.Key, func(err error) {
 			if err != nil {
-				ecCb(t.classifyHookError(err))
+				ecCb(classifyHookError(err))
 				return
 			}
 
@@ -252,20 +252,20 @@ func (t *transactionAttempt) removeStagedInsert(
 				},
 			}, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
-					ecCb(t.classifyError(err))
+					ecCb(classifyError(err))
 					return
 				}
 
 				for _, op := range result.Ops {
 					if op.Err != nil {
-						ecCb(t.classifyError(op.Err))
+						ecCb(classifyError(op.Err))
 						return
 					}
 				}
 
 				t.hooks.AfterRollbackDeleteInserted(mutation.Key, func(err error) {
 					if err != nil {
-						ecCb(t.classifyHookError(err))
+						ecCb(classifyHookError(err))
 						return
 					}
 
@@ -273,7 +273,7 @@ func (t *transactionAttempt) removeStagedInsert(
 				})
 			})
 			if err != nil {
-				ecCb(t.classifyError(err))
+				ecCb(classifyError(err))
 				return
 			}
 		})
@@ -357,7 +357,7 @@ func (t *transactionAttempt) removeStagedRemoveReplace(
 
 		t.hooks.BeforeDocRolledBack(mutation.Key, func(err error) {
 			if err != nil {
-				ecCb(t.classifyHookError(err))
+				ecCb(classifyHookError(err))
 				return
 			}
 
@@ -381,20 +381,20 @@ func (t *transactionAttempt) removeStagedRemoveReplace(
 				},
 			}, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
-					ecCb(t.classifyError(err))
+					ecCb(classifyError(err))
 					return
 				}
 
 				for _, op := range result.Ops {
 					if op.Err != nil {
-						ecCb(t.classifyError(op.Err))
+						ecCb(classifyError(op.Err))
 						return
 					}
 				}
 
 				t.hooks.AfterRollbackReplaceOrRemove(mutation.Key, func(err error) {
 					if err != nil {
-						ecCb(t.classifyHookError(err))
+						ecCb(classifyHookError(err))
 						return
 					}
 
@@ -402,7 +402,7 @@ func (t *transactionAttempt) removeStagedRemoveReplace(
 				})
 			})
 			if err != nil {
-				ecCb(t.classifyError(err))
+				ecCb(classifyError(err))
 				return
 			}
 		})

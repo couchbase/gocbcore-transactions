@@ -145,7 +145,7 @@ func (t *transactionAttempt) setATRPendingLocked(
 
 		t.hooks.BeforeATRPending(func(err error) {
 			if err != nil {
-				ecCb(t.classifyHookError(err))
+				ecCb(classifyHookError(err))
 				return
 			}
 
@@ -203,20 +203,20 @@ func (t *transactionAttempt) setATRPendingLocked(
 				Flags:                  memd.SubdocDocFlagMkDoc,
 			}, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
-					ecCb(t.classifyError(err))
+					ecCb(classifyError(err))
 					return
 				}
 
 				for _, op := range result.Ops {
 					if op.Err != nil {
-						ecCb(t.classifyError(op.Err))
+						ecCb(classifyError(op.Err))
 						return
 					}
 				}
 
 				t.hooks.AfterATRPending(func(err error) {
 					if err != nil {
-						ecCb(t.classifyHookError(err))
+						ecCb(classifyHookError(err))
 						return
 					}
 
@@ -224,7 +224,7 @@ func (t *transactionAttempt) setATRPendingLocked(
 				})
 			})
 			if err != nil {
-				ecCb(t.classifyError(err))
+				ecCb(classifyError(err))
 				return
 			}
 		})
@@ -330,7 +330,7 @@ func (t *transactionAttempt) resolveATRCommitConflictLocked(
 
 		t.hooks.BeforeATRCommitAmbiguityResolution(func(err error) {
 			if err != nil {
-				ecCb(t.classifyHookError(err))
+				ecCb(classifyHookError(err))
 				return
 			}
 
@@ -354,12 +354,12 @@ func (t *transactionAttempt) resolveATRCommitConflictLocked(
 				Flags:    memd.SubdocDocFlagNone,
 			}, func(result *gocbcore.LookupInResult, err error) {
 				if err != nil {
-					ecCb(t.classifyError(err))
+					ecCb(classifyError(err))
 					return
 				}
 
 				if result.Ops[0].Err != nil {
-					ecCb(t.classifyError(err))
+					ecCb(classifyError(err))
 					return
 				}
 
@@ -404,7 +404,7 @@ func (t *transactionAttempt) resolveATRCommitConflictLocked(
 				}
 			})
 			if err != nil {
-				ecCb(t.classifyError(err))
+				ecCb(classifyError(err))
 				return
 			}
 		})
@@ -548,7 +548,7 @@ func (t *transactionAttempt) setATRCommittedLocked(
 
 		t.hooks.BeforeATRCommit(func(err error) {
 			if err != nil {
-				ecCb(t.classifyHookError(err))
+				ecCb(classifyHookError(err))
 				return
 			}
 
@@ -601,20 +601,20 @@ func (t *transactionAttempt) setATRCommittedLocked(
 				Deadline:               deadline,
 			}, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
-					ecCb(t.classifyError(err))
+					ecCb(classifyError(err))
 					return
 				}
 
 				for _, op := range result.Ops {
 					if op.Err != nil {
-						ecCb(t.classifyError(op.Err))
+						ecCb(classifyError(op.Err))
 						return
 					}
 				}
 
 				t.hooks.AfterATRCommit(func(err error) {
 					if err != nil {
-						ecCb(t.classifyHookError(err))
+						ecCb(classifyHookError(err))
 						return
 					}
 
@@ -622,7 +622,7 @@ func (t *transactionAttempt) setATRCommittedLocked(
 				})
 			})
 			if err != nil {
-				ecCb(t.classifyError(err))
+				ecCb(classifyError(err))
 				return
 			}
 		})
@@ -693,7 +693,7 @@ func (t *transactionAttempt) setATRCompletedLocked(
 
 		t.hooks.BeforeATRComplete(func(err error) {
 			if err != nil {
-				ecCb(t.classifyHookError(err))
+				ecCb(classifyHookError(err))
 				return
 			}
 
@@ -742,20 +742,20 @@ func (t *transactionAttempt) setATRCompletedLocked(
 				Flags:                  memd.SubdocDocFlagNone,
 			}, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
-					ecCb(t.classifyError(err))
+					ecCb(classifyError(err))
 					return
 				}
 
 				for _, op := range result.Ops {
 					if op.Err != nil {
-						ecCb(t.classifyError(op.Err))
+						ecCb(classifyError(op.Err))
 						return
 					}
 				}
 
 				t.hooks.AfterATRComplete(func(err error) {
 					if err != nil {
-						ecCb(t.classifyHookError(err))
+						ecCb(classifyHookError(err))
 						return
 					}
 
@@ -763,7 +763,7 @@ func (t *transactionAttempt) setATRCompletedLocked(
 				})
 			})
 			if err != nil {
-				ecCb(t.classifyError(err))
+				ecCb(classifyError(err))
 				return
 			}
 		})
@@ -875,12 +875,12 @@ func (t *transactionAttempt) resolveATRAbortConflictLocked(
 			Flags:    memd.SubdocDocFlagNone,
 		}, func(result *gocbcore.LookupInResult, err error) {
 			if err != nil {
-				ecCb(t.classifyError(err))
+				ecCb(classifyError(err))
 				return
 			}
 
 			if result.Ops[0].Err != nil {
-				ecCb(t.classifyError(err))
+				ecCb(classifyError(err))
 				return
 			}
 
@@ -919,7 +919,7 @@ func (t *transactionAttempt) resolveATRAbortConflictLocked(
 			}
 		})
 		if err != nil {
-			ecCb(t.classifyError(err))
+			ecCb(classifyError(err))
 			return
 		}
 	})
@@ -1046,7 +1046,7 @@ func (t *transactionAttempt) setATRAbortedLocked(
 
 		t.hooks.BeforeATRAborted(func(err error) {
 			if err != nil {
-				ecCb(t.classifyHookError(err))
+				ecCb(classifyHookError(err))
 				return
 			}
 
@@ -1099,20 +1099,20 @@ func (t *transactionAttempt) setATRAbortedLocked(
 				Deadline:               deadline,
 			}, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
-					ecCb(t.classifyError(err))
+					ecCb(classifyError(err))
 					return
 				}
 
 				for _, op := range result.Ops {
 					if op.Err != nil {
-						ecCb(t.classifyError(op.Err))
+						ecCb(classifyError(op.Err))
 						return
 					}
 				}
 
 				t.hooks.AfterATRAborted(func(err error) {
 					if err != nil {
-						ecCb(t.classifyHookError(err))
+						ecCb(classifyHookError(err))
 						return
 					}
 
@@ -1120,7 +1120,7 @@ func (t *transactionAttempt) setATRAbortedLocked(
 				})
 			})
 			if err != nil {
-				ecCb(t.classifyError(err))
+				ecCb(classifyError(err))
 				return
 			}
 		})
@@ -1205,7 +1205,7 @@ func (t *transactionAttempt) setATRRolledBackLocked(
 
 		t.hooks.BeforeATRRolledBack(func(err error) {
 			if err != nil {
-				ecCb(t.classifyHookError(err))
+				ecCb(classifyHookError(err))
 				return
 			}
 
@@ -1254,20 +1254,20 @@ func (t *transactionAttempt) setATRRolledBackLocked(
 				Flags:                  memd.SubdocDocFlagNone,
 			}, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
-					ecCb(t.classifyError(err))
+					ecCb(classifyError(err))
 					return
 				}
 
 				for _, op := range result.Ops {
 					if op.Err != nil {
-						ecCb(t.classifyError(op.Err))
+						ecCb(classifyError(op.Err))
 						return
 					}
 				}
 
 				t.hooks.AfterATRRolledBack(func(err error) {
 					if err != nil {
-						ecCb(t.classifyHookError(err))
+						ecCb(classifyHookError(err))
 						return
 					}
 
@@ -1275,7 +1275,7 @@ func (t *transactionAttempt) setATRRolledBackLocked(
 				})
 			})
 			if err != nil {
-				ecCb(t.classifyError(err))
+				ecCb(classifyError(err))
 				return
 			}
 		})

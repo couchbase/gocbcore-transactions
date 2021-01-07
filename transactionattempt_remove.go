@@ -12,6 +12,10 @@ import (
 func (t *transactionAttempt) Remove(opts RemoveOptions, cb StoreCallback) error {
 	return t.remove(opts, func(res *GetResult, err *TransactionOperationFailedError) {
 		if err != nil {
+			if err.shouldNotRollback {
+				t.ensureCleanUpRequest()
+			}
+
 			cb(nil, err)
 			return
 		}
@@ -230,7 +234,7 @@ func (t *transactionAttempt) stageRemove(
 
 		t.hooks.BeforeStagedRemove(key, func(err error) {
 			if err != nil {
-				ecCb(nil, t.classifyHookError(err))
+				ecCb(nil, classifyHookError(err))
 				return
 			}
 
@@ -317,7 +321,7 @@ func (t *transactionAttempt) stageRemove(
 				Deadline:               deadline,
 			}, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
-					ecCb(nil, t.classifyError(err))
+					ecCb(nil, classifyError(err))
 					return
 				}
 
@@ -327,7 +331,7 @@ func (t *transactionAttempt) stageRemove(
 
 					t.hooks.AfterStagedRemoveComplete(key, func(err error) {
 						if err != nil {
-							ecCb(nil, t.classifyHookError(err))
+							ecCb(nil, classifyHookError(err))
 							return
 						}
 
@@ -344,7 +348,7 @@ func (t *transactionAttempt) stageRemove(
 				})
 			})
 			if err != nil {
-				ecCb(nil, t.classifyError(err))
+				ecCb(nil, classifyError(err))
 				return
 			}
 		})
@@ -426,7 +430,7 @@ func (t *transactionAttempt) stageRemoveOfInsert(
 
 	t.hooks.BeforeStagedRemove(key, func(err error) {
 		if err != nil {
-			ecCb(nil, t.classifyHookError(err))
+			ecCb(nil, classifyHookError(err))
 			return
 		}
 
@@ -455,13 +459,13 @@ func (t *transactionAttempt) stageRemoveOfInsert(
 			Deadline:               deadline,
 		}, func(result *gocbcore.MutateInResult, err error) {
 			if err != nil {
-				ecCb(nil, t.classifyError(err))
+				ecCb(nil, classifyError(err))
 				return
 			}
 
 			t.hooks.AfterStagedRemoveComplete(key, func(err error) {
 				if err != nil {
-					ecCb(nil, t.classifyHookError(err))
+					ecCb(nil, classifyHookError(err))
 					return
 				}
 
@@ -477,7 +481,7 @@ func (t *transactionAttempt) stageRemoveOfInsert(
 			})
 		})
 		if err != nil {
-			ecCb(nil, t.classifyError(err))
+			ecCb(nil, classifyError(err))
 			return
 		}
 	})

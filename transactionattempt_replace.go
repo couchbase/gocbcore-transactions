@@ -11,6 +11,10 @@ import (
 func (t *transactionAttempt) Replace(opts ReplaceOptions, cb StoreCallback) error {
 	return t.replace(opts, func(res *GetResult, err *TransactionOperationFailedError) {
 		if err != nil {
+			if err.shouldNotRollback {
+				t.ensureCleanUpRequest()
+			}
+
 			cb(nil, err)
 			return
 		}
@@ -218,7 +222,7 @@ func (t *transactionAttempt) stageReplace(
 
 		t.hooks.BeforeStagedReplace(key, func(err error) {
 			if err != nil {
-				ecCb(nil, t.classifyHookError(err))
+				ecCb(nil, classifyHookError(err))
 				return
 			}
 
@@ -305,7 +309,7 @@ func (t *transactionAttempt) stageReplace(
 				Deadline:               deadline,
 			}, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
-					ecCb(nil, t.classifyError(err))
+					ecCb(nil, classifyError(err))
 					return
 				}
 
@@ -315,7 +319,7 @@ func (t *transactionAttempt) stageReplace(
 
 					t.hooks.AfterStagedReplaceComplete(key, func(err error) {
 						if err != nil {
-							ecCb(nil, t.classifyHookError(err))
+							ecCb(nil, classifyHookError(err))
 							return
 						}
 
@@ -332,7 +336,7 @@ func (t *transactionAttempt) stageReplace(
 				})
 			})
 			if err != nil {
-				ecCb(nil, t.classifyError(err))
+				ecCb(nil, classifyError(err))
 				return
 			}
 		})

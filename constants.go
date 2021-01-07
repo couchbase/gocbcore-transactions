@@ -6,6 +6,7 @@ var crc32cMacro = []byte("\"${Mutation.value_crc32c}\"")
 var revidMacro = []byte("\"${$document.revid}\"")
 var exptimeMacro = []byte("\"${$document.exptime}\"")
 var casMacro = []byte("\"${$document.CAS}\"")
+var hlcMacro = "$vbucket.HLC"
 
 // AttemptState represents the current State of a transaction
 type AttemptState int

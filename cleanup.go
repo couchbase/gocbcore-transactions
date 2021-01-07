@@ -4,6 +4,7 @@ import (
 	"container/heap"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -125,7 +126,10 @@ func startCleanupThread(config *Config) *stdCleaner {
 		durabilityLevel:     config.DurabilityLevel,
 	}
 
-	go cleaner.processQ()
+	// No point in running this if we can't get agents.
+	if config.BucketAgentProvider != nil {
+		go cleaner.processQ()
+	}
 
 	return cleaner
 }
@@ -136,6 +140,8 @@ func (c *stdCleaner) AddRequest(req *CleanupRequest) bool {
 	if c.q.Len() == int(c.qSize) {
 		return false
 	}
+
+	fmt.Printf("ADDING REQ: %s: %s\n", req.AtrID, req.readyTime)
 
 	heap.Push(&c.q, req)
 
@@ -261,15 +267,20 @@ func (c *stdCleaner) processQ() {
 					return
 				}
 
+				waitCh := make(chan struct{}, 1)
 				c.CleanupAttempt(agent, req, true, func(attempt CleanupAttempt) {
-					if !attempt.Success {
-						select {
-						case <-time.After(10 * time.Second):
-							c.AddRequest(req)
-						case <-c.stop:
+					go func() {
+						if !attempt.Success {
+							select {
+							case <-time.After(10 * time.Second):
+								c.AddRequest(req)
+							case <-c.stop:
+							}
 						}
-					}
+					}()
+					waitCh <- struct{}{}
 				})
+				<-waitCh
 			}
 		}
 	}()
@@ -349,6 +360,7 @@ func (c *stdCleaner) CleanupAttempt(atrAgent *gocbcore.Agent, req *CleanupReques
 func (c *stdCleaner) cleanupATR(agent *gocbcore.Agent, req *CleanupRequest, cb func(error)) {
 	c.hooks.BeforeATRRemove(req.AtrID, func(err error) {
 		if err != nil {
+			fmt.Println("BEFOREATRREMOVE ERRORROROR")
 			if errors.Is(err, gocbcore.ErrPathNotFound) {
 				cb(nil)
 				return
