@@ -1,5 +1,7 @@
 package transactions
 
+import "fmt"
+
 var crc32cMacro = []byte("\"${Mutation.value_crc32c}\"")
 var revidMacro = []byte("\"${$document.revid}\"")
 var exptimeMacro = []byte("\"${$document.exptime}\"")
@@ -56,6 +58,21 @@ const (
 	ErrorReasonTransactionFailedPostCommit
 )
 
+func errorReasonToString(reason ErrorReason) string {
+	switch reason {
+	case ErrorReasonTransactionFailed:
+		return "failed"
+	case ErrorReasonTransactionExpired:
+		return "expired"
+	case ErrorReasonTransactionCommitAmbiguous:
+		return "commit_ambiguous"
+	case ErrorReasonTransactionFailedPostCommit:
+		return "failed_post_commit"
+	default:
+		return fmt.Sprintf("unknown:%d", reason)
+	}
+}
+
 // ErrorClass describes the reason that a transaction error occurred.
 // Internal: This should never be used and is not supported.
 type ErrorClass uint8
@@ -97,6 +114,37 @@ const (
 	// ErrorClassFailOutOfSpace indicates an error occurred because the ATR is full.
 	ErrorClassFailOutOfSpace
 )
+
+func errorClassToString(class ErrorClass) string {
+	switch class {
+	case ErrorClassFailOther:
+		return "other"
+	case ErrorClassFailTransient:
+		return "transient"
+	case ErrorClassFailDocNotFound:
+		return "document_not_found"
+	case ErrorClassFailDocAlreadyExists:
+		return "document_already_exists"
+	case ErrorClassFailPathNotFound:
+		return "path_not_found"
+	case ErrorClassFailPathAlreadyExists:
+		return "path_already_exists"
+	case ErrorClassFailWriteWriteConflict:
+		return "write_write_conflict"
+	case ErrorClassFailCasMismatch:
+		return "cas_mismatch"
+	case ErrorClassFailHard:
+		return "hard"
+	case ErrorClassFailAmbiguous:
+		return "ambiguous"
+	case ErrorClassFailExpiry:
+		return "expiry"
+	case ErrorClassFailOutOfSpace:
+		return "out_of_space"
+	default:
+		return fmt.Sprintf("unknown:%d", class)
+	}
+}
 
 const (
 	transactionStateBitShouldNotCommit       = 1 << 0

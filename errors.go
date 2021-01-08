@@ -1,6 +1,7 @@
 package transactions
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 )
@@ -67,6 +68,25 @@ type TransactionOperationFailedError struct {
 	errorCause        error
 	shouldRaise       ErrorReason
 	errorClass        ErrorClass
+}
+
+type tfeJSON struct {
+	Retry    bool   `json:"retry"`
+	Rollback bool   `json:"rollback"`
+	Raise    string `json:"raise"`
+	Class    string `json:"class"`
+	Cause    string `json:"cause"`
+}
+
+// MarshalJSON will marshal this error for the wire.
+func (tfe TransactionOperationFailedError) MarshalJSON() ([]byte, error) {
+	return json.Marshal(tfeJSON{
+		Retry:    !tfe.shouldNotRetry,
+		Rollback: !tfe.shouldNotRollback,
+		Raise:    errorReasonToString(tfe.shouldRaise),
+		Class:    errorClassToString(tfe.errorClass),
+		Cause:    tfe.errorCause.Error(),
+	})
 }
 
 func (tfe TransactionOperationFailedError) Error() string {
