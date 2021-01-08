@@ -80,11 +80,11 @@ type Config struct {
 	CustomATRLocation ATRLocation
 
 	// ExpirationTime sets the maximum time that transactions created
-	// by this Transactions object can run for, before expiring.
+	// by this Manager object can run for, before expiring.
 	ExpirationTime time.Duration
 
 	// DurabilityLevel specifies the durability level that should be used
-	// for all write operations performed by this Transactions object.
+	// for all write operations performed by this Manager object.
 	DurabilityLevel DurabilityLevel
 
 	// KeyValueTimeout specifies the default timeout used for all KV writes.

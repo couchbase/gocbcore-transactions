@@ -9,16 +9,16 @@ import (
 	"github.com/google/uuid"
 )
 
-// Transactions is the top level wrapper object for all transactions
+// Manager is the top level wrapper object for all transactions
 // handling.  It also manages the cleanup process in the background.
-type Transactions struct {
+type Manager struct {
 	config  Config
 	cleaner Cleaner
 }
 
-// Init will initialize the transactions library and return a Transactions
+// Init will initialize the transactions library and return a Manager
 // object which can be used to perform transactions.
-func Init(config *Config) (*Transactions, error) {
+func Init(config *Config) (*Manager, error) {
 	defaultConfig := &Config{
 		ExpirationTime:        10000 * time.Millisecond,
 		DurabilityLevel:       DurabilityLevelMajority,
@@ -57,7 +57,7 @@ func Init(config *Config) (*Transactions, error) {
 		config.CleanupQueueSize = 100000
 	}
 
-	t := &Transactions{
+	t := &Manager{
 		config: *config,
 	}
 
@@ -71,14 +71,14 @@ func Init(config *Config) (*Transactions, error) {
 }
 
 // Config returns the config that was used during the initialization
-// of this Transactions object.
-func (t *Transactions) Config() Config {
+// of this Manager object.
+func (t *Manager) Config() Config {
 	return t.config
 }
 
 // BeginTransaction will begin a new transaction.  The returned object can be used
 // to begin a new attempt and subsequently perform operations before finally committing.
-func (t *Transactions) BeginTransaction(perConfig *PerTransactionConfig) (*Transaction, error) {
+func (t *Manager) BeginTransaction(perConfig *PerTransactionConfig) (*Transaction, error) {
 	transactionUUID := uuid.New().String()
 
 	expirationTime := t.config.ExpirationTime
@@ -125,7 +125,7 @@ func (t *Transactions) BeginTransaction(perConfig *PerTransactionConfig) (*Trans
 
 // ResumeTransactionAttempt allows the resumption of an existing transaction attempt
 // which was previously serialized, potentially by a different transaction client.
-func (t *Transactions) ResumeTransactionAttempt(txnBytes []byte) (*Transaction, error) {
+func (t *Manager) ResumeTransactionAttempt(txnBytes []byte) (*Transaction, error) {
 	var txnData jsonSerializedAttempt
 	err := json.Unmarshal(txnBytes, &txnData)
 	if err != nil {
@@ -207,24 +207,24 @@ func (t *Transactions) ResumeTransactionAttempt(txnBytes []byte) (*Transaction, 
 	return txn, nil
 }
 
-// Close will shut down this Transactions object, shutting down all
+// Close will shut down this Manager object, shutting down all
 // background tasks associated with it.
-func (t *Transactions) Close() error {
+func (t *Manager) Close() error {
 	t.cleaner.Close()
 
 	return nil
 }
 
-// TransactionsInternal exposes internal methods that are useful for testing and/or
+// ManagerInternal exposes internal methods that are useful for testing and/or
 // other forms of internal use.
-type TransactionsInternal struct {
-	parent *Transactions
+type ManagerInternal struct {
+	parent *Manager
 }
 
-// Internal returns an TransactionsInternal object which can be used for specialized
+// Internal returns an ManagerInternal object which can be used for specialized
 // internal use cases.
-func (t *Transactions) Internal() *TransactionsInternal {
-	return &TransactionsInternal{
+func (t *Manager) Internal() *ManagerInternal {
+	return &ManagerInternal{
 		parent: t,
 	}
 }
@@ -241,7 +241,7 @@ type CreateGetResultOptions struct {
 
 // CreateGetResult creates a false GetResult which can be used with Replace/Remove operations
 // where the original GetResult is no longer available.
-func (t *TransactionsInternal) CreateGetResult(opts CreateGetResultOptions) *GetResult {
+func (t *ManagerInternal) CreateGetResult(opts CreateGetResultOptions) *GetResult {
 	return &GetResult{
 		agent:          opts.Agent,
 		scopeName:      opts.ScopeName,
@@ -255,11 +255,11 @@ func (t *TransactionsInternal) CreateGetResult(opts CreateGetResultOptions) *Get
 }
 
 // ForceCleanupQueue forces the transactions client cleanup queue to drain without waiting for expirations.
-func (t *TransactionsInternal) ForceCleanupQueue(cb func([]CleanupAttempt)) {
+func (t *ManagerInternal) ForceCleanupQueue(cb func([]CleanupAttempt)) {
 	t.parent.cleaner.ForceCleanupQueue(cb)
 }
 
 // CleanupQueueLength returns the current length of the client cleanup queue.
-func (t *TransactionsInternal) CleanupQueueLength() int32 {
+func (t *ManagerInternal) CleanupQueueLength() int32 {
 	return t.parent.cleaner.QueueLength()
 }

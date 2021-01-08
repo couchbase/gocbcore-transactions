@@ -15,7 +15,7 @@ type addCleanupRequest func(req *CleanupRequest) bool
 // Transaction represents a single active transaction, it can be used to
 // stage mutations and finally commit them.
 type Transaction struct {
-	parent *Transactions
+	parent *Manager
 
 	expiryTime          time.Time
 	startTime           time.Time
