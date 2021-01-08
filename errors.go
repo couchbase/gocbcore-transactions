@@ -62,7 +62,7 @@ var (
 // TransactionOperationFailedError is used when a transaction operation fails.
 // Internal: This should never be used and is not supported.
 type TransactionOperationFailedError struct {
-	shouldRetry       bool
+	shouldNotRetry    bool
 	shouldNotRollback bool
 	errorCause        error
 	shouldRaise       ErrorReason
@@ -73,7 +73,7 @@ func (tfe TransactionOperationFailedError) Error() string {
 	errStr := "transaction operation failed"
 	errStr += " | " + fmt.Sprintf(
 		"shouldRetry:%v, shouldRollback:%v, shouldRaise:%d, class:%d",
-		tfe.shouldRetry,
+		!tfe.shouldNotRetry,
 		!tfe.shouldNotRollback,
 		tfe.shouldRaise,
 		tfe.errorClass)
@@ -89,7 +89,7 @@ func (tfe TransactionOperationFailedError) Unwrap() error {
 
 // Retry signals whether a new attempt should be made at rollback.
 func (tfe TransactionOperationFailedError) Retry() bool {
-	return tfe.shouldRetry
+	return !tfe.shouldNotRetry
 }
 
 // Rollback signals whether the attempt should be auto-rolled back.

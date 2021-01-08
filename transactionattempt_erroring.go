@@ -45,7 +45,7 @@ func (t *transactionAttempt) applyStateBits(stateBits uint32) {
 
 func (t *transactionAttempt) operationFailed(def operationFailedDef) *TransactionOperationFailedError {
 	err := &TransactionOperationFailedError{
-		shouldRetry:       !def.ShouldNotRetry,
+		shouldNotRetry:    def.ShouldNotRetry,
 		shouldNotRollback: def.ShouldNotRollback,
 		errorCause:        def.Cerr.Source,
 		errorClass:        def.Cerr.Class,
