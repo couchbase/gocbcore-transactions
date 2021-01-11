@@ -93,16 +93,6 @@ func (t *transactionAttempt) setATRPendingLocked(
 				ShouldNotRollback: false,
 				Reason:            ErrorReasonTransactionExpired,
 			}))
-		case ErrorClassFailDocNotFound:
-			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: ErrAtrNotFound,
-					Class:  ErrorClassFailDocNotFound,
-				},
-				ShouldNotRetry:    true,
-				ShouldNotRollback: true,
-				Reason:            ErrorReasonTransactionFailed,
-			}))
 		case ErrorClassFailOutOfSpace:
 			cb(t.operationFailed(operationFailedDef{
 				Cerr: &classifiedError{
