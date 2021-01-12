@@ -73,7 +73,7 @@ func NewCleaner(config *Config) Cleaner {
 		qSize:               config.CleanupQueueSize,
 		stop:                make(chan struct{}),
 		bucketAgentProvider: config.BucketAgentProvider,
-		q:                   make(delayQueue, 0, config.CleanupQueueSize),
+		q:                   make(priorityQueue, 0, config.CleanupQueueSize),
 		operationTimeout:    config.KeyValueTimeout,
 		durabilityLevel:     config.DurabilityLevel,
 	}
@@ -106,7 +106,7 @@ func (nc *noopCleaner) Close() {}
 type stdCleaner struct {
 	hooks               CleanUpHooks
 	qSize               uint32
-	q                   delayQueue
+	q                   priorityQueue
 	qLock               sync.Mutex
 	stop                chan struct{}
 	bucketAgentProvider BucketAgentProviderFn
@@ -120,7 +120,7 @@ func startCleanupThread(config *Config) *stdCleaner {
 		qSize:               config.CleanupQueueSize,
 		stop:                make(chan struct{}),
 		bucketAgentProvider: config.BucketAgentProvider,
-		q:                   make(delayQueue, 0, config.CleanupQueueSize),
+		q:                   make(priorityQueue, 0, config.CleanupQueueSize),
 		operationTimeout:    config.KeyValueTimeout,
 		durabilityLevel:     config.DurabilityLevel,
 	}
@@ -138,6 +138,7 @@ func (c *stdCleaner) AddRequest(req *CleanupRequest) bool {
 	}
 
 	heap.Push(&c.q, req)
+
 	return true
 }
 
@@ -145,6 +146,14 @@ func (c *stdCleaner) PopRequest() *CleanupRequest {
 	c.qLock.Lock()
 	defer c.qLock.Unlock()
 	if c.q.Len() == 0 {
+		return nil
+	}
+
+	peek := c.q.Peek()
+	if peek == nil {
+		return nil
+	}
+	if !peek.(*CleanupRequest).ready() {
 		return nil
 	}
 
@@ -163,7 +172,7 @@ func (c *stdCleaner) ForceCleanupQueue(cb func([]CleanupAttempt)) {
 		if c.q.Len() == 0 {
 			break
 		}
-		req := c.q.ForcePop()
+		req := heap.Pop(&c.q)
 		if req == nil {
 			break
 		}
