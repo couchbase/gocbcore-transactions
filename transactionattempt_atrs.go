@@ -568,7 +568,7 @@ func (t *transactionAttempt) setATRCommittedLocked(
 
 				return gocbcore.SubDocOp{
 					Op:    op,
-					Flags: memd.SubdocFlagMkDirP | flags,
+					Flags: flags,
 					Path:  "attempts." + t.id + "." + fieldName,
 					Value: bytes,
 				}
