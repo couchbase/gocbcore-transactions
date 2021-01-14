@@ -293,22 +293,27 @@ func (dh *DefaultCleanupHooks) BeforeATRRemove(id []byte, cb func(error)) {
 type DefaultClientRecordHooks struct {
 }
 
+// BeforeCreateRecord happens before we create a cleanup client record.
 func (dh *DefaultClientRecordHooks) BeforeCreateRecord(cb func(error)) {
 	cb(nil)
 }
 
+// BeforeRemoveClient happens before we remove a cleanup client record.
 func (dh *DefaultClientRecordHooks) BeforeRemoveClient(cb func(error)) {
 	cb(nil)
 }
 
+// BeforeUpdateCAS happens before we update a CAS.
 func (dh *DefaultClientRecordHooks) BeforeUpdateCAS(cb func(error)) {
 	cb(nil)
 }
 
+// BeforeGetRecord happens before we get a cleanup client record.
 func (dh *DefaultClientRecordHooks) BeforeGetRecord(cb func(error)) {
 	cb(nil)
 }
 
+// BeforeUpdateRecord happens before we update a cleanup client record.
 func (dh *DefaultClientRecordHooks) BeforeUpdateRecord(cb func(error)) {
 	cb(nil)
 }

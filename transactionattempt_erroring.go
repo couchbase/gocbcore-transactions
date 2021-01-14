@@ -71,7 +71,6 @@ func (t *transactionAttempt) operationFailed(def operationFailedDef) *Transactio
 }
 
 func classifyHookError(err error) *classifiedError {
-	// TODO(brett19): Remove this function
 	// We currently have to classify the errors that are returned from the hooks, but
 	// we should really just directly return the classifications and make the source
 	// some special internal source showing it came from a hook...

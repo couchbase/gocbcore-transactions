@@ -2,12 +2,13 @@ package transactions
 
 import (
 	"errors"
-	"github.com/couchbase/gocb/v2"
-	"github.com/couchbase/gocbcore/v9"
-	"github.com/google/uuid"
 	"log"
 	"testing"
 	"time"
+
+	"github.com/couchbase/gocb/v2"
+	"github.com/couchbase/gocbcore/v9"
+	"github.com/google/uuid"
 )
 
 func TestParseCas(t *testing.T) {
@@ -123,7 +124,7 @@ func TestLostCleanupProcessATR(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	wait := make(chan []CleanupAttempt)
-	cleaner.ProcessATR(agent, string(a.AtrID), func(attempts []CleanupAttempt) {
+	cleaner.ProcessATR(agent, string(a.AtrID), func(attempts []CleanupAttempt, stats ProcessATRStats) {
 		wait <- attempts
 	})
 

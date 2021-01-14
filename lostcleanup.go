@@ -4,14 +4,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/couchbase/gocbcore/v9"
-	"github.com/couchbase/gocbcore/v9/memd"
-	"github.com/google/uuid"
 	"math"
 	"sort"
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/couchbase/gocbcore/v9"
+	"github.com/couchbase/gocbcore/v9/memd"
+	"github.com/google/uuid"
 )
 
 var clientRecordKey = []byte("_txn:client-record")
@@ -61,7 +62,7 @@ type ProcessATRStats struct {
 	NumEntriesExpired int
 }
 
-// lostTransactionCleaner is responsible for cleaning up lost transactions.
+// LostTransactionCleaner is responsible for cleaning up lost transactions.
 // Internal: This should never be used and is not supported.
 type LostTransactionCleaner interface {
 	ProcessClient(agent *gocbcore.Agent, uuid string, cb func(*ClientRecordDetails, error))
@@ -862,7 +863,7 @@ func parseMutationCAS(in string) (int64, error) {
 	offsetIndex := 2 // for the initial "0x"
 	result := int64(0)
 
-	for octetIndex := 7; octetIndex >= 0; octetIndex -= 1 {
+	for octetIndex := 7; octetIndex >= 0; octetIndex-- {
 		char1 := in[offsetIndex+(octetIndex*2)]
 		char2 := in[offsetIndex+(octetIndex*2)+1]
 
