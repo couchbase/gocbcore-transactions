@@ -68,6 +68,7 @@ func (t *transactionAttempt) replace(
 					t.stageInsert(
 						agent, scopeName, collectionName, key,
 						value, cas,
+						true,
 						func(result *GetResult, err *TransactionOperationFailedError) {
 							endAndCb(result, err)
 						})
