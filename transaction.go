@@ -23,6 +23,7 @@ type Transaction struct {
 	durabilityLevel     DurabilityLevel
 	serialUnstaging     bool
 	disableCompoundOps  bool
+	disableCBD3838Fix   bool
 	explicitATRs        bool
 	atrLocation         ATRLocation
 	bucketAgentProvider BucketAgentProviderFn
@@ -59,6 +60,7 @@ func (t *Transaction) NewAttempt() error {
 		durabilityLevel:     t.durabilityLevel,
 		transactionID:       t.transactionID,
 		disableCompoundOps:  t.disableCompoundOps,
+		disableCBD3838Fix:   t.disableCBD3838Fix,
 		serialUnstaging:     t.serialUnstaging,
 		explicitAtrs:        t.explicitATRs,
 		atrLocation:         t.atrLocation,
@@ -166,6 +168,7 @@ func (t *Transaction) resumeAttempt(txnData *jsonSerializedAttempt) error {
 		durabilityLevel:     t.durabilityLevel,
 		transactionID:       t.transactionID,
 		disableCompoundOps:  t.disableCompoundOps,
+		disableCBD3838Fix:   t.disableCBD3838Fix,
 		serialUnstaging:     t.serialUnstaging,
 		explicitAtrs:        t.explicitATRs,
 		atrLocation:         t.atrLocation,

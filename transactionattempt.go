@@ -20,6 +20,7 @@ type transactionAttempt struct {
 	id                  string
 	hooks               TransactionHooks
 	disableCompoundOps  bool
+	disableCBD3838Fix   bool
 	serialUnstaging     bool
 	explicitAtrs        bool
 	atrLocation         ATRLocation

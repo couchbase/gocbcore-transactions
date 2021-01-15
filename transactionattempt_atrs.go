@@ -221,10 +221,6 @@ func (t *transactionAttempt) setATRPendingLocked(
 	})
 }
 
-// TXNG53Workaround is a var to control a workaround
-// BUG(TXNG-53): Workaround for ATR Commit ambiguity resolution
-const TXNG53Workaround = true
-
 func (t *transactionAttempt) resolveATRCommitConflictLocked(
 	ambiguityResolution bool,
 	cb func(*TransactionOperationFailedError),
@@ -287,7 +283,7 @@ func (t *transactionAttempt) resolveATRCommitConflictLocked(
 				Reason:            errorReason,
 			}))
 		case ErrorClassFailHard:
-			if TXNG53Workaround {
+			if t.disableCBD3838Fix {
 				errorReason = ErrorReasonTransactionFailed
 			}
 
@@ -298,7 +294,7 @@ func (t *transactionAttempt) resolveATRCommitConflictLocked(
 				Reason:            errorReason,
 			}))
 		default:
-			if TXNG53Workaround {
+			if t.disableCBD3838Fix {
 				// With TXNG53, this appears to be a divergence from the spec in Java?
 				t.resolveATRCommitConflictLocked(ambiguityResolution, cb)
 			} else {
@@ -366,7 +362,7 @@ func (t *transactionAttempt) resolveATRCommitConflictLocked(
 				case jsonAtrStateCommitted:
 					ecCb(nil)
 				case jsonAtrStatePending:
-					if TXNG53Workaround {
+					if t.disableCBD3838Fix {
 						// With TXNG53, we can get here while pending, so we need to loop
 						// back around until that bug gets fixed in FIT.
 						t.setATRCommittedLocked(ambiguityResolution, cb)
@@ -418,7 +414,7 @@ func (t *transactionAttempt) setATRCommittedLocked(
 
 		switch cerr.Class {
 		case ErrorClassFailAmbiguous:
-			if TXNG53Workaround {
+			if t.disableCBD3838Fix {
 				ambiguityResolution = true
 				t.resolveATRCommitConflictLocked(ambiguityResolution, cb)
 			} else {
@@ -434,7 +430,7 @@ func (t *transactionAttempt) setATRCommittedLocked(
 				errorReason = ErrorReasonTransactionExpired
 			}
 
-			if TXNG53Workaround {
+			if t.disableCBD3838Fix {
 				errorReason = ErrorReasonTransactionExpired
 			}
 

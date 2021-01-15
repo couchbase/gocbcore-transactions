@@ -128,6 +128,7 @@ type Config struct {
 		CleanUpHooks       CleanUpHooks
 		ClientRecordHooks  ClientRecordHooks
 		DisableCompoundOps bool
+		DisableCBD3838Fix  bool
 		SerialUnstaging    bool
 		ExplicitATRs       bool
 		NumATRs            int
