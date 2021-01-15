@@ -101,25 +101,19 @@ func TestLostCleanupProcessATR(t *testing.T) {
 
 	a := txn.Attempt()
 
-	cleaner := NewLostTransactionCleaner(&Config{
-		DurabilityLevel: DurabilityLevelNone,
-		BucketAgentProvider: func(bucketName string) (*gocbcore.Agent, error) {
-			// We can always return just this one agent as we only actually
-			// use a single bucket for this entire test.
-			return agent, nil
-		},
-		ExpirationTime:  500 * time.Millisecond,
-		KeyValueTimeout: 2500 * time.Millisecond,
-		Internal: struct {
-			Hooks              TransactionHooks
-			CleanUpHooks       CleanUpHooks
-			ClientRecordHooks  ClientRecordHooks
-			DisableCompoundOps bool
-			SerialUnstaging    bool
-			ExplicitATRs       bool
-			NumATRs            int
-		}{Hooks: nil, CleanUpHooks: &DefaultCleanupHooks{}, ClientRecordHooks: &DefaultClientRecordHooks{}},
-	})
+	config := &Config{}
+	config.DurabilityLevel = DurabilityLevelNone
+	config.BucketAgentProvider = func(bucketName string) (*gocbcore.Agent, error) {
+		// We can always return just this one agent as we only actually
+		// use a single bucket for this entire test.
+		return agent, nil
+	}
+	config.ExpirationTime = 500 * time.Millisecond
+	config.KeyValueTimeout = 2500 * time.Millisecond
+	config.Internal.Hooks = nil
+	config.Internal.CleanUpHooks = &DefaultCleanupHooks{}
+	config.Internal.ClientRecordHooks = &DefaultClientRecordHooks{}
+	cleaner := NewLostTransactionCleaner(config)
 
 	time.Sleep(2 * time.Second)
 
@@ -238,31 +232,21 @@ func TestLostCleanupProcessClient(t *testing.T) {
 	a := txn.Attempt()
 
 	clientUUID := uuid.New().String()
-	cleaner := newStdLostTransactionCleaner(&Config{
-		DurabilityLevel: DurabilityLevelNone,
-		BucketAgentProvider: func(bucketName string) (*gocbcore.Agent, error) {
-			// We can always return just this one agent as we only actually
-			// use a single bucket for this entire test.
-			return agent, nil
-		},
-		CleanupWindow:   1 * time.Second,
-		ExpirationTime:  500 * time.Millisecond,
-		KeyValueTimeout: 2500 * time.Millisecond,
-		Internal: struct {
-			Hooks              TransactionHooks
-			CleanUpHooks       CleanUpHooks
-			ClientRecordHooks  ClientRecordHooks
-			DisableCompoundOps bool
-			SerialUnstaging    bool
-			ExplicitATRs       bool
-			NumATRs            int
-		}{
-			Hooks:             nil,
-			CleanUpHooks:      &DefaultCleanupHooks{},
-			ClientRecordHooks: &DefaultClientRecordHooks{},
-			NumATRs:           1024,
-		},
-	})
+	config := &Config{}
+	config.DurabilityLevel = DurabilityLevelNone
+	config.BucketAgentProvider = func(bucketName string) (*gocbcore.Agent, error) {
+		// We can always return just this one agent as we only actually
+		// use a single bucket for this entire test.
+		return agent, nil
+	}
+	config.CleanupWindow = 1 * time.Second
+	config.ExpirationTime = 500 * time.Millisecond
+	config.KeyValueTimeout = 2500 * time.Millisecond
+	config.Internal.Hooks = nil
+	config.Internal.CleanUpHooks = &DefaultCleanupHooks{}
+	config.Internal.ClientRecordHooks = &DefaultClientRecordHooks{}
+	config.Internal.NumATRs = 1024
+	cleaner := newStdLostTransactionCleaner(config)
 	cleaner.buckets = map[string]struct{}{
 		bucket.Name(): {},
 	}
@@ -443,31 +427,21 @@ func TestLostCleanupCleansUpExpiredClients(t *testing.T) {
 	}
 
 	clientUUID := uuid.New().String()
-	cleaner := newStdLostTransactionCleaner(&Config{
-		DurabilityLevel: DurabilityLevelNone,
-		BucketAgentProvider: func(bucketName string) (*gocbcore.Agent, error) {
-			// We can always return just this one agent as we only actually
-			// use a single bucket for this entire test.
-			return agent, nil
-		},
-		CleanupWindow:   1 * time.Second,
-		ExpirationTime:  500 * time.Millisecond,
-		KeyValueTimeout: 2500 * time.Millisecond,
-		Internal: struct {
-			Hooks              TransactionHooks
-			CleanUpHooks       CleanUpHooks
-			ClientRecordHooks  ClientRecordHooks
-			DisableCompoundOps bool
-			SerialUnstaging    bool
-			ExplicitATRs       bool
-			NumATRs            int
-		}{
-			Hooks:             nil,
-			CleanUpHooks:      &DefaultCleanupHooks{},
-			ClientRecordHooks: &DefaultClientRecordHooks{},
-			NumATRs:           1024,
-		},
-	})
+	config := &Config{}
+	config.DurabilityLevel = DurabilityLevelNone
+	config.BucketAgentProvider = func(bucketName string) (*gocbcore.Agent, error) {
+		// We can always return just this one agent as we only actually
+		// use a single bucket for this entire test.
+		return agent, nil
+	}
+	config.CleanupWindow = 1 * time.Second
+	config.ExpirationTime = 500 * time.Millisecond
+	config.KeyValueTimeout = 2500 * time.Millisecond
+	config.Internal.Hooks = nil
+	config.Internal.CleanUpHooks = &DefaultCleanupHooks{}
+	config.Internal.ClientRecordHooks = &DefaultClientRecordHooks{}
+	config.Internal.NumATRs = 1024
+	cleaner := newStdLostTransactionCleaner(config)
 	time.Sleep(1 * time.Second)
 
 	wait := make(chan error, 1)
