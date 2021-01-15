@@ -19,8 +19,15 @@ const (
 type forwardCompatExtension string
 
 const (
-	forwardCompatExtensionTransactionID  forwardCompatExtension = "TI"
-	forwardCompatExtensionDeferredCommit forwardCompatExtension = "DC"
+	forwardCompatExtensionTransactionID            forwardCompatExtension = "TI"
+	forwardCompatExtensionDeferredCommit           forwardCompatExtension = "DC"
+	forwardCompatExtensionTimeOptUnstaging         forwardCompatExtension = "TO"
+	forwardCompatExtensionMemoryOptUnstaging       forwardCompatExtension = "MO"
+	forwardCompatExtensionCustomMetadataCollection forwardCompatExtension = "CM"
+	forwardCompatExtensionBinaryMetadata           forwardCompatExtension = "BM"
+	forwardCompatExtensionQuery                    forwardCompatExtension = "QU"
+	forwardCompatExtensionStoreDurability          forwardCompatExtension = "SD"
+	forwardCompatExtensionBFCBD3787                forwardCompatExtension = "BF3787"
 )
 
 type forwardCompatStage string
@@ -50,7 +57,15 @@ type ForwardCompatibilityEntry struct {
 	RetryInterval     int    `json:"ra,omitempty"`
 }
 
-var supportedforwardCompatExtensions = []forwardCompatExtension{forwardCompatExtensionTransactionID, forwardCompatExtensionDeferredCommit}
+var supportedforwardCompatExtensions = []forwardCompatExtension{
+	forwardCompatExtensionTransactionID,
+	forwardCompatExtensionMemoryOptUnstaging,
+	forwardCompatExtensionCustomMetadataCollection,
+	forwardCompatExtensionBinaryMetadata,
+	forwardCompatExtensionQuery,
+	forwardCompatExtensionStoreDurability,
+	forwardCompatExtensionBFCBD3787,
+}
 
 func jsonForwardCompatToForwardCompat(fc map[string][]jsonForwardCompatibilityEntry) map[string][]ForwardCompatibilityEntry {
 	if fc == nil {
