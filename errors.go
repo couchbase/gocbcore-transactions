@@ -131,3 +131,33 @@ type classifiedError struct {
 	Source error
 	Class  ErrorClass
 }
+
+type writeWriteConflictError struct {
+	BucketName     string
+	ScopeName      string
+	CollectionName string
+	DocumentKey    []byte
+	Source         error
+}
+
+func (wwce writeWriteConflictError) Error() string {
+	errStr := "write write conflict"
+	errStr += " | " + fmt.Sprintf(
+		"bucket:%s, scope:%s, collection:%s, key:%s",
+		wwce.BucketName,
+		wwce.ScopeName,
+		wwce.CollectionName,
+		wwce.DocumentKey)
+	if wwce.Source != nil {
+		errStr += " | " + wwce.Source.Error()
+	}
+	return errStr
+}
+
+func (wwce writeWriteConflictError) Is(err error) bool {
+	return err == ErrWriteWriteConflict
+}
+
+func (wwce writeWriteConflictError) Unwrap() error {
+	return wwce.Source
+}

@@ -232,6 +232,10 @@ func (t *transactionAttempt) mavRead(
 					}
 
 					t.getTxnState(
+						agent.BucketName(),
+						scopeName,
+						collectionName,
+						key,
 						doc.TxnMeta.ATR.BucketName,
 						doc.TxnMeta.ATR.ScopeName,
 						doc.TxnMeta.ATR.CollectionName,

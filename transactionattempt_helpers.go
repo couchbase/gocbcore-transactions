@@ -3,6 +3,7 @@ package transactions
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -390,9 +391,13 @@ func (t *transactionAttempt) checkForwardCompatability(
 }
 
 func (t *transactionAttempt) getTxnState(
-	bucketName string,
-	scopeName string,
-	collectionName string,
+	srcBucketName string,
+	srcScopeName string,
+	srcCollectionName string,
+	srcDocID []byte,
+	atrBucketName string,
+	atrScopeName string,
+	atrCollectionName string,
 	atrDocID string,
 	attemptID string,
 	forceNonFatal bool,
@@ -423,8 +428,14 @@ func (t *transactionAttempt) getTxnState(
 		default:
 			cb(nil, t.operationFailed(operationFailedDef{
 				Cerr: &classifiedError{
-					Source: cerr.Source,
-					Class:  ErrorClassFailWriteWriteConflict,
+					Source: &writeWriteConflictError{
+						Source:         cerr.Source,
+						BucketName:     srcBucketName,
+						ScopeName:      srcScopeName,
+						CollectionName: srcCollectionName,
+						DocumentKey:    srcDocID,
+					},
+					Class: ErrorClassFailWriteWriteConflict,
 				},
 				CanStillCommit:    forceNonFatal,
 				ShouldNotRetry:    false,
@@ -434,7 +445,7 @@ func (t *transactionAttempt) getTxnState(
 		}
 	}
 
-	atrAgent, err := t.bucketAgentProvider(bucketName)
+	atrAgent, err := t.bucketAgentProvider(atrBucketName)
 	if err != nil {
 		ecCb(nil, classifyError(err))
 		return
@@ -452,8 +463,8 @@ func (t *transactionAttempt) getTxnState(
 		}
 
 		_, err = atrAgent.LookupIn(gocbcore.LookupInOptions{
-			ScopeName:      scopeName,
-			CollectionName: collectionName,
+			ScopeName:      atrScopeName,
+			CollectionName: atrCollectionName,
 			Key:            []byte(atrDocID),
 			Ops: []gocbcore.SubDocOp{
 				{
@@ -560,8 +571,19 @@ func (t *transactionAttempt) writeWriteConflictPoll(
 			// If the deadline expired, lets just immediately return.
 			cb(t.operationFailed(operationFailedDef{
 				Cerr: &classifiedError{
-					Source: errors.Wrap(ErrWriteWriteConflict, "deadline expired before WWC was resolved"),
-					Class:  ErrorClassFailWriteWriteConflict,
+					Source: &writeWriteConflictError{
+						Source: fmt.Errorf(
+							"deadline expired before WWC was resolved on %s.%s.%s.%s",
+							meta.ATR.BucketName,
+							meta.ATR.ScopeName,
+							meta.ATR.CollectionName,
+							meta.ATR.DocID),
+						BucketName:     agent.BucketName(),
+						ScopeName:      scopeName,
+						CollectionName: collectionName,
+						DocumentKey:    key,
+					},
+					Class: ErrorClassFailWriteWriteConflict,
 				},
 				ShouldNotRetry:    false,
 				ShouldNotRollback: false,
@@ -588,6 +610,10 @@ func (t *transactionAttempt) writeWriteConflictPoll(
 				}
 
 				t.getTxnState(
+					agent.BucketName(),
+					scopeName,
+					collectionName,
+					key,
 					meta.ATR.BucketName,
 					meta.ATR.ScopeName,
 					meta.ATR.CollectionName,
