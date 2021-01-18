@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"sort"
 	"strconv"
@@ -860,6 +861,10 @@ func atrsToHandle(index int, numActive int, numAtrs int) []string {
 // Looks like: "0x000058a71dd25c15"
 // Want:        0x155CD21DA7580000   (1539336197457313792 in base10, an epoch time in millionths of a second)
 func parseMutationCAS(in string) (int64, error) {
+	if len(in) < 18 {
+		log.Printf("Invalid mutation cas value seen in cleanup: %s", in)
+		return 0, errors.New("invalid cas value provided")
+	}
 	offsetIndex := 2 // for the initial "0x"
 	result := int64(0)
 
