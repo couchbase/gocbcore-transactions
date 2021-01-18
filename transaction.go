@@ -22,6 +22,7 @@ type Transaction struct {
 	operationTimeout    time.Duration
 	durabilityLevel     DurabilityLevel
 	serialUnstaging     bool
+	enableNonFatalGets  bool
 	disableCompoundOps  bool
 	disableCBD3838Fix   bool
 	explicitATRs        bool
@@ -59,6 +60,7 @@ func (t *Transaction) NewAttempt() error {
 		operationTimeout:    t.operationTimeout,
 		durabilityLevel:     t.durabilityLevel,
 		transactionID:       t.transactionID,
+		enableNonFatalGets:  t.enableNonFatalGets,
 		disableCompoundOps:  t.disableCompoundOps,
 		disableCBD3838Fix:   t.disableCBD3838Fix,
 		serialUnstaging:     t.serialUnstaging,
@@ -167,6 +169,7 @@ func (t *Transaction) resumeAttempt(txnData *jsonSerializedAttempt) error {
 		operationTimeout:    t.operationTimeout,
 		durabilityLevel:     t.durabilityLevel,
 		transactionID:       t.transactionID,
+		enableNonFatalGets:  t.enableNonFatalGets,
 		disableCompoundOps:  t.disableCompoundOps,
 		disableCBD3838Fix:   t.disableCBD3838Fix,
 		serialUnstaging:     t.serialUnstaging,

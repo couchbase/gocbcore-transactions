@@ -148,7 +148,7 @@ func (t *transactionAttempt) resolveConflictedInsert(
 				return
 			}
 
-			t.checkForwardCompatability(forwardCompatStageWWCInsertingGet, meta.ForwardCompat, func(err *TransactionOperationFailedError) {
+			t.checkForwardCompatability(forwardCompatStageWWCInsertingGet, meta.ForwardCompat, false, func(err *TransactionOperationFailedError) {
 				if err != nil {
 					cb(nil, err)
 					return

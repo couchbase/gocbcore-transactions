@@ -330,6 +330,7 @@ func (t *transactionAttempt) recordStagedMutation(
 func (t *transactionAttempt) checkForwardCompatability(
 	stage forwardCompatStage,
 	fc map[string][]ForwardCompatibilityEntry,
+	forceNonFatal bool,
 	cb func(*TransactionOperationFailedError),
 ) {
 	isCompat, shouldRetry, retryWait, err := checkForwardCompatability(stage, fc)
@@ -339,6 +340,7 @@ func (t *transactionAttempt) checkForwardCompatability(
 				Source: err,
 				Class:  ErrorClassFailOther,
 			},
+			CanStillCommit:    forceNonFatal,
 			ShouldNotRetry:    false,
 			ShouldNotRollback: false,
 			Reason:            ErrorReasonTransactionFailed,
@@ -354,6 +356,7 @@ func (t *transactionAttempt) checkForwardCompatability(
 						Source: ErrForwardCompatibilityFailure,
 						Class:  ErrorClassFailOther,
 					},
+					CanStillCommit:    forceNonFatal,
 					ShouldNotRetry:    false,
 					ShouldNotRollback: false,
 					Reason:            ErrorReasonTransactionFailed,
@@ -374,6 +377,7 @@ func (t *transactionAttempt) checkForwardCompatability(
 				Source: ErrForwardCompatibilityFailure,
 				Class:  ErrorClassFailOther,
 			},
+			CanStillCommit:    forceNonFatal,
 			ShouldNotRetry:    true,
 			ShouldNotRollback: false,
 			Reason:            ErrorReasonTransactionFailed,
@@ -391,6 +395,7 @@ func (t *transactionAttempt) getTxnState(
 	collectionName string,
 	atrDocID string,
 	attemptID string,
+	forceNonFatal bool,
 	cb func(*jsonAtrAttempt, *TransactionOperationFailedError),
 ) {
 	ecCb := func(res *jsonAtrAttempt, cerr *classifiedError) {
@@ -410,6 +415,7 @@ func (t *transactionAttempt) getTxnState(
 					Source: cerr.Source,
 					Class:  ErrorClassFailOther,
 				},
+				CanStillCommit:    forceNonFatal,
 				ShouldNotRetry:    true,
 				ShouldNotRollback: false,
 				Reason:            ErrorReasonTransactionFailed,
@@ -420,6 +426,7 @@ func (t *transactionAttempt) getTxnState(
 					Source: cerr.Source,
 					Class:  ErrorClassFailWriteWriteConflict,
 				},
+				CanStillCommit:    forceNonFatal,
 				ShouldNotRetry:    false,
 				ShouldNotRollback: false,
 				Reason:            ErrorReasonTransactionFailed,
@@ -563,7 +570,7 @@ func (t *transactionAttempt) writeWriteConflictPoll(
 			return
 		}
 
-		t.checkForwardCompatability(stage, meta.ForwardCompat, func(err *TransactionOperationFailedError) {
+		t.checkForwardCompatability(stage, meta.ForwardCompat, false, func(err *TransactionOperationFailedError) {
 			if err != nil {
 				cb(err)
 				return
@@ -586,6 +593,7 @@ func (t *transactionAttempt) writeWriteConflictPoll(
 					meta.ATR.CollectionName,
 					meta.ATR.DocID,
 					meta.AttemptID,
+					false,
 					func(attempt *jsonAtrAttempt, err *TransactionOperationFailedError) {
 						if err != nil {
 							cb(err)

@@ -27,6 +27,8 @@ func (t *transactionAttempt) get(
 	opts GetOptions,
 	cb func(*GetResult, *TransactionOperationFailedError),
 ) error {
+	forceNonFatal := t.enableNonFatalGets
+
 	t.beginOpAndLock(func(unlock func(), endOp func()) {
 		endAndCb := func(result *GetResult, err *TransactionOperationFailedError) {
 			endOp()
@@ -53,7 +55,7 @@ func (t *transactionAttempt) get(
 				return
 			}
 
-			t.mavRead(opts.Agent, opts.ScopeName, opts.CollectionName, opts.Key, opts.NoRYOW, "", func(result *GetResult, err *TransactionOperationFailedError) {
+			t.mavRead(opts.Agent, opts.ScopeName, opts.CollectionName, opts.Key, opts.NoRYOW, "", forceNonFatal, func(result *GetResult, err *TransactionOperationFailedError) {
 				if err != nil {
 					endAndCb(nil, err)
 					return
@@ -66,6 +68,7 @@ func (t *transactionAttempt) get(
 								Source: err,
 								Class:  ErrorClassFailOther,
 							},
+							CanStillCommit:    forceNonFatal,
 							ShouldNotRetry:    true,
 							ShouldNotRollback: true,
 							Reason:            ErrorReasonTransactionFailed,
@@ -89,226 +92,239 @@ func (t *transactionAttempt) mavRead(
 	key []byte,
 	disableRYOW bool,
 	resolvingATREntry string,
+	forceNonFatal bool,
 	cb func(*GetResult, *TransactionOperationFailedError),
 ) {
-	t.fetchDocWithMeta(agent, scopeName, collectionName, key, func(doc *getDoc, err *TransactionOperationFailedError) {
-		if err != nil {
-			cb(nil, err)
-			return
-		}
-
-		if disableRYOW {
-			if doc.TxnMeta != nil && doc.TxnMeta.ID.Attempt == t.id {
-				// This is going to be a RYOW, we can just clear the TxnMeta which
-				// will cause us to fall into the block below.
-				doc.TxnMeta = nil
-			}
-		}
-
-		// Doc not involved in another transaction.
-		if doc.TxnMeta == nil {
-			if doc.Deleted {
-				cb(nil, t.operationFailed(operationFailedDef{
-					Cerr: &classifiedError{
-						Source: ErrDocumentNotFound,
-						Class:  ErrorClassFailDocNotFound,
-					},
-					CanStillCommit:    true,
-					ShouldNotRetry:    true,
-					ShouldNotRollback: false,
-					Reason:            ErrorReasonTransactionFailed,
-				}))
-				return
-			}
-
-			cb(&GetResult{
-				agent:          agent,
-				scopeName:      scopeName,
-				collectionName: collectionName,
-				key:            key,
-				Value:          doc.Body,
-				Cas:            doc.Cas,
-				Meta:           nil,
-			}, nil)
-			return
-		}
-
-		if doc.TxnMeta.ID.Attempt == t.id {
-			switch doc.TxnMeta.Operation.Type {
-			case jsonMutationInsert:
-				fallthrough
-			case jsonMutationReplace:
-				cb(&GetResult{
-					agent:          agent,
-					scopeName:      scopeName,
-					collectionName: collectionName,
-					key:            key,
-					Value:          doc.TxnMeta.Operation.Staged,
-					Cas:            doc.Cas,
-				}, nil)
-			case jsonMutationRemove:
-				cb(nil, t.operationFailed(operationFailedDef{
-					Cerr: &classifiedError{
-						Source: ErrDocumentNotFound,
-						Class:  ErrorClassFailDocNotFound,
-					},
-					CanStillCommit:    true,
-					ShouldNotRetry:    true,
-					ShouldNotRollback: false,
-					Reason:            ErrorReasonTransactionFailed,
-				}))
-			default:
-				cb(nil, t.operationFailed(operationFailedDef{
-					Cerr: &classifiedError{
-						Source: nil,
-						Class:  ErrorClassFailOther,
-					},
-					ShouldNotRetry:    false,
-					ShouldNotRollback: false,
-					Reason:            ErrorReasonTransactionFailed,
-				}))
-			}
-			return
-		}
-
-		if doc.TxnMeta.ID.Attempt == resolvingATREntry {
-			if doc.Deleted {
-				cb(nil, t.operationFailed(operationFailedDef{
-					Cerr: &classifiedError{
-						Source: ErrDocumentNotFound,
-						Class:  ErrorClassFailDocNotFound,
-					},
-					CanStillCommit:    true,
-					ShouldNotRetry:    true,
-					ShouldNotRollback: false,
-					Reason:            ErrorReasonTransactionFailed,
-				}))
-				return
-			}
-
-			cb(&GetResult{
-				agent:          agent,
-				scopeName:      scopeName,
-				collectionName: collectionName,
-				key:            key,
-				Value:          doc.Body,
-				Cas:            doc.Cas,
-			}, nil)
-			return
-		}
-
-		docFc := jsonForwardCompatToForwardCompat(doc.TxnMeta.ForwardCompat)
-		docMeta := &MutableItemMeta{
-			TransactionID: doc.TxnMeta.ID.Transaction,
-			AttemptID:     doc.TxnMeta.ID.Attempt,
-			ATR: MutableItemMetaATR{
-				BucketName:     doc.TxnMeta.ATR.BucketName,
-				ScopeName:      doc.TxnMeta.ATR.ScopeName,
-				CollectionName: doc.TxnMeta.ATR.CollectionName,
-				DocID:          doc.TxnMeta.ATR.DocID,
-			},
-			ForwardCompat: docFc,
-		}
-
-		t.checkForwardCompatability(forwardCompatStageGets, docFc, func(err *TransactionOperationFailedError) {
+	t.fetchDocWithMeta(
+		agent,
+		scopeName,
+		collectionName,
+		key,
+		forceNonFatal,
+		func(doc *getDoc, err *TransactionOperationFailedError) {
 			if err != nil {
 				cb(nil, err)
 				return
 			}
 
-			t.getTxnState(
-				doc.TxnMeta.ATR.BucketName,
-				doc.TxnMeta.ATR.ScopeName,
-				doc.TxnMeta.ATR.CollectionName,
-				doc.TxnMeta.ATR.DocID,
-				doc.TxnMeta.ID.Attempt,
-				func(attempt *jsonAtrAttempt, err *TransactionOperationFailedError) {
+			if disableRYOW {
+				if doc.TxnMeta != nil && doc.TxnMeta.ID.Attempt == t.id {
+					// This is going to be a RYOW, we can just clear the TxnMeta which
+					// will cause us to fall into the block below.
+					doc.TxnMeta = nil
+				}
+			}
+
+			// Doc not involved in another transaction.
+			if doc.TxnMeta == nil {
+				if doc.Deleted {
+					cb(nil, t.operationFailed(operationFailedDef{
+						Cerr: &classifiedError{
+							Source: ErrDocumentNotFound,
+							Class:  ErrorClassFailDocNotFound,
+						},
+						CanStillCommit:    true,
+						ShouldNotRetry:    true,
+						ShouldNotRollback: false,
+						Reason:            ErrorReasonTransactionFailed,
+					}))
+					return
+				}
+
+				cb(&GetResult{
+					agent:          agent,
+					scopeName:      scopeName,
+					collectionName: collectionName,
+					key:            key,
+					Value:          doc.Body,
+					Cas:            doc.Cas,
+					Meta:           nil,
+				}, nil)
+				return
+			}
+
+			if doc.TxnMeta.ID.Attempt == t.id {
+				switch doc.TxnMeta.Operation.Type {
+				case jsonMutationInsert:
+					fallthrough
+				case jsonMutationReplace:
+					cb(&GetResult{
+						agent:          agent,
+						scopeName:      scopeName,
+						collectionName: collectionName,
+						key:            key,
+						Value:          doc.TxnMeta.Operation.Staged,
+						Cas:            doc.Cas,
+					}, nil)
+				case jsonMutationRemove:
+					cb(nil, t.operationFailed(operationFailedDef{
+						Cerr: &classifiedError{
+							Source: ErrDocumentNotFound,
+							Class:  ErrorClassFailDocNotFound,
+						},
+						CanStillCommit:    true,
+						ShouldNotRetry:    true,
+						ShouldNotRollback: false,
+						Reason:            ErrorReasonTransactionFailed,
+					}))
+				default:
+					cb(nil, t.operationFailed(operationFailedDef{
+						Cerr: &classifiedError{
+							Source: nil,
+							Class:  ErrorClassFailOther,
+						},
+						CanStillCommit:    forceNonFatal,
+						ShouldNotRetry:    false,
+						ShouldNotRollback: false,
+						Reason:            ErrorReasonTransactionFailed,
+					}))
+				}
+				return
+			}
+
+			if doc.TxnMeta.ID.Attempt == resolvingATREntry {
+				if doc.Deleted {
+					cb(nil, t.operationFailed(operationFailedDef{
+						Cerr: &classifiedError{
+							Source: ErrDocumentNotFound,
+							Class:  ErrorClassFailDocNotFound,
+						},
+						CanStillCommit:    true,
+						ShouldNotRetry:    true,
+						ShouldNotRollback: false,
+						Reason:            ErrorReasonTransactionFailed,
+					}))
+					return
+				}
+
+				cb(&GetResult{
+					agent:          agent,
+					scopeName:      scopeName,
+					collectionName: collectionName,
+					key:            key,
+					Value:          doc.Body,
+					Cas:            doc.Cas,
+				}, nil)
+				return
+			}
+
+			docFc := jsonForwardCompatToForwardCompat(doc.TxnMeta.ForwardCompat)
+			docMeta := &MutableItemMeta{
+				TransactionID: doc.TxnMeta.ID.Transaction,
+				AttemptID:     doc.TxnMeta.ID.Attempt,
+				ATR: MutableItemMetaATR{
+					BucketName:     doc.TxnMeta.ATR.BucketName,
+					ScopeName:      doc.TxnMeta.ATR.ScopeName,
+					CollectionName: doc.TxnMeta.ATR.CollectionName,
+					DocID:          doc.TxnMeta.ATR.DocID,
+				},
+				ForwardCompat: docFc,
+			}
+
+			t.checkForwardCompatability(
+				forwardCompatStageGets,
+				docFc,
+				forceNonFatal,
+				func(err *TransactionOperationFailedError) {
 					if err != nil {
 						cb(nil, err)
 						return
 					}
 
-					if attempt == nil {
-						// The ATR entry is missing, it's likely that we just raced the other transaction
-						// cleaning up it's documents and then cleaning itself up.  Lets run ATR resolution.
-						t.mavRead(agent, scopeName, collectionName, key, disableRYOW, doc.TxnMeta.ID.Attempt, cb)
-						return
-					}
+					t.getTxnState(
+						doc.TxnMeta.ATR.BucketName,
+						doc.TxnMeta.ATR.ScopeName,
+						doc.TxnMeta.ATR.CollectionName,
+						doc.TxnMeta.ATR.DocID,
+						doc.TxnMeta.ID.Attempt,
+						forceNonFatal,
+						func(attempt *jsonAtrAttempt, err *TransactionOperationFailedError) {
+							if err != nil {
+								cb(nil, err)
+								return
+							}
 
-					atmptFc := jsonForwardCompatToForwardCompat(attempt.ForwardCompat)
-					t.checkForwardCompatability(forwardCompatStageGetsReadingATR, atmptFc, func(err *TransactionOperationFailedError) {
-						if err != nil {
-							cb(nil, err)
-							return
-						}
+							if attempt == nil {
+								// The ATR entry is missing, it's likely that we just raced the other transaction
+								// cleaning up it's documents and then cleaning itself up.  Lets run ATR resolution.
+								t.mavRead(agent, scopeName, collectionName, key, disableRYOW, doc.TxnMeta.ID.Attempt, forceNonFatal, cb)
+								return
+							}
 
-						state := jsonAtrState(attempt.State)
-						if state == jsonAtrStateCommitted || state == jsonAtrStateCompleted {
-							switch doc.TxnMeta.Operation.Type {
-							case jsonMutationInsert:
-								fallthrough
-							case jsonMutationReplace:
+							atmptFc := jsonForwardCompatToForwardCompat(attempt.ForwardCompat)
+							t.checkForwardCompatability(forwardCompatStageGetsReadingATR, atmptFc, forceNonFatal, func(err *TransactionOperationFailedError) {
+								if err != nil {
+									cb(nil, err)
+									return
+								}
+
+								state := jsonAtrState(attempt.State)
+								if state == jsonAtrStateCommitted || state == jsonAtrStateCompleted {
+									switch doc.TxnMeta.Operation.Type {
+									case jsonMutationInsert:
+										fallthrough
+									case jsonMutationReplace:
+										cb(&GetResult{
+											agent:          agent,
+											scopeName:      scopeName,
+											collectionName: collectionName,
+											key:            key,
+											Value:          doc.TxnMeta.Operation.Staged,
+											Cas:            doc.Cas,
+											Meta:           docMeta,
+										}, nil)
+									case jsonMutationRemove:
+										cb(nil, t.operationFailed(operationFailedDef{
+											Cerr: &classifiedError{
+												Source: ErrDocumentNotFound,
+												Class:  ErrorClassFailDocNotFound,
+											},
+											CanStillCommit:    true,
+											ShouldNotRetry:    true,
+											ShouldNotRollback: false,
+											Reason:            ErrorReasonTransactionFailed,
+										}))
+									default:
+										cb(nil, t.operationFailed(operationFailedDef{
+											Cerr: &classifiedError{
+												Source: nil,
+												Class:  ErrorClassFailOther,
+											},
+											ShouldNotRetry:    false,
+											ShouldNotRollback: false,
+											Reason:            ErrorReasonTransactionFailed,
+										}))
+									}
+									return
+								}
+
+								if doc.Deleted {
+									cb(nil, t.operationFailed(operationFailedDef{
+										Cerr: &classifiedError{
+											Source: ErrDocumentNotFound,
+											Class:  ErrorClassFailDocNotFound,
+										},
+										CanStillCommit:    true,
+										ShouldNotRetry:    true,
+										ShouldNotRollback: false,
+										Reason:            ErrorReasonTransactionFailed,
+									}))
+									return
+								}
+
 								cb(&GetResult{
 									agent:          agent,
 									scopeName:      scopeName,
 									collectionName: collectionName,
 									key:            key,
-									Value:          doc.TxnMeta.Operation.Staged,
+									Value:          doc.Body,
 									Cas:            doc.Cas,
 									Meta:           docMeta,
 								}, nil)
-							case jsonMutationRemove:
-								cb(nil, t.operationFailed(operationFailedDef{
-									Cerr: &classifiedError{
-										Source: ErrDocumentNotFound,
-										Class:  ErrorClassFailDocNotFound,
-									},
-									CanStillCommit:    true,
-									ShouldNotRetry:    true,
-									ShouldNotRollback: false,
-									Reason:            ErrorReasonTransactionFailed,
-								}))
-							default:
-								cb(nil, t.operationFailed(operationFailedDef{
-									Cerr: &classifiedError{
-										Source: nil,
-										Class:  ErrorClassFailOther,
-									},
-									ShouldNotRetry:    false,
-									ShouldNotRollback: false,
-									Reason:            ErrorReasonTransactionFailed,
-								}))
-							}
-							return
-						}
-
-						if doc.Deleted {
-							cb(nil, t.operationFailed(operationFailedDef{
-								Cerr: &classifiedError{
-									Source: ErrDocumentNotFound,
-									Class:  ErrorClassFailDocNotFound,
-								},
-								CanStillCommit:    true,
-								ShouldNotRetry:    true,
-								ShouldNotRollback: false,
-								Reason:            ErrorReasonTransactionFailed,
-							}))
-							return
-						}
-
-						cb(&GetResult{
-							agent:          agent,
-							scopeName:      scopeName,
-							collectionName: collectionName,
-							key:            key,
-							Value:          doc.Body,
-							Cas:            doc.Cas,
-							Meta:           docMeta,
-						}, nil)
-					})
+							})
+						})
 				})
 		})
-	})
 }
 
 func (t *transactionAttempt) fetchDocWithMeta(
@@ -316,6 +332,7 @@ func (t *transactionAttempt) fetchDocWithMeta(
 	scopeName string,
 	collectionName string,
 	key []byte,
+	forceNonFatal bool,
 	cb func(*getDoc, *TransactionOperationFailedError),
 ) {
 	ecCb := func(doc *getDoc, cerr *classifiedError) {
@@ -339,6 +356,7 @@ func (t *transactionAttempt) fetchDocWithMeta(
 		case ErrorClassFailTransient:
 			cb(nil, t.operationFailed(operationFailedDef{
 				Cerr:              cerr,
+				CanStillCommit:    forceNonFatal,
 				ShouldNotRetry:    false,
 				ShouldNotRollback: false,
 				Reason:            ErrorReasonTransactionFailed,
@@ -346,6 +364,7 @@ func (t *transactionAttempt) fetchDocWithMeta(
 		case ErrorClassFailHard:
 			cb(nil, t.operationFailed(operationFailedDef{
 				Cerr:              cerr,
+				CanStillCommit:    forceNonFatal,
 				ShouldNotRetry:    true,
 				ShouldNotRollback: true,
 				Reason:            ErrorReasonTransactionFailed,
@@ -353,6 +372,7 @@ func (t *transactionAttempt) fetchDocWithMeta(
 		default:
 			cb(nil, t.operationFailed(operationFailedDef{
 				Cerr:              cerr,
+				CanStillCommit:    forceNonFatal,
 				ShouldNotRetry:    true,
 				ShouldNotRollback: false,
 				Reason:            ErrorReasonTransactionFailed,

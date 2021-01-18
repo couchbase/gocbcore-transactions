@@ -19,6 +19,7 @@ type transactionAttempt struct {
 	transactionID       string
 	id                  string
 	hooks               TransactionHooks
+	enableNonFatalGets  bool
 	disableCompoundOps  bool
 	disableCBD3838Fix   bool
 	serialUnstaging     bool

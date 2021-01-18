@@ -127,6 +127,7 @@ type Config struct {
 		Hooks              TransactionHooks
 		CleanUpHooks       CleanUpHooks
 		ClientRecordHooks  ClientRecordHooks
+		EnableNonFatalGets bool
 		DisableCompoundOps bool
 		DisableCBD3838Fix  bool
 		SerialUnstaging    bool
