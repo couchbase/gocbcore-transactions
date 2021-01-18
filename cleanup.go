@@ -4,7 +4,6 @@ import (
 	"container/heap"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"sync"
 	"time"
 
@@ -140,8 +139,6 @@ func (c *stdCleaner) AddRequest(req *CleanupRequest) bool {
 	if c.q.Len() == int(c.qSize) {
 		return false
 	}
-
-	fmt.Printf("ADDING REQ: %s: %s\n", req.AtrID, req.readyTime)
 
 	heap.Push(&c.q, req)
 
@@ -360,7 +357,6 @@ func (c *stdCleaner) CleanupAttempt(atrAgent *gocbcore.Agent, req *CleanupReques
 func (c *stdCleaner) cleanupATR(agent *gocbcore.Agent, req *CleanupRequest, cb func(error)) {
 	c.hooks.BeforeATRRemove(req.AtrID, func(err error) {
 		if err != nil {
-			fmt.Println("BEFOREATRREMOVE ERRORROROR")
 			if errors.Is(err, gocbcore.ErrPathNotFound) {
 				cb(nil)
 				return
