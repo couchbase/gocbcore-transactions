@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
+	"github.com/couchbase/gocbcore/v9"
 )
 
 var (
@@ -70,22 +72,20 @@ type TransactionOperationFailedError struct {
 	errorClass        ErrorClass
 }
 
-type tfeJSON struct {
-	Retry    bool   `json:"retry"`
-	Rollback bool   `json:"rollback"`
-	Raise    string `json:"raise"`
-	Class    string `json:"class"`
-	Cause    string `json:"cause"`
-}
-
 // MarshalJSON will marshal this error for the wire.
 func (tfe TransactionOperationFailedError) MarshalJSON() ([]byte, error) {
-	return json.Marshal(tfeJSON{
+	return json.Marshal(struct {
+		Retry    bool            `json:"retry"`
+		Rollback bool            `json:"rollback"`
+		Raise    string          `json:"raise"`
+		Class    string          `json:"class"`
+		Cause    json.RawMessage `json:"cause"`
+	}{
 		Retry:    !tfe.shouldNotRetry,
 		Rollback: !tfe.shouldNotRollback,
 		Raise:    errorReasonToString(tfe.shouldRaise),
 		Class:    errorClassToString(tfe.errorClass),
-		Cause:    tfe.errorCause.Error(),
+		Cause:    marshalErrorToJSON(tfe.errorCause),
 	})
 }
 
@@ -140,6 +140,24 @@ type writeWriteConflictError struct {
 	Source         error
 }
 
+func (wwce writeWriteConflictError) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Msg            string          `json:"msg"`
+		Cause          json.RawMessage `json:"cause"`
+		BucketName     string          `json:"bucket"`
+		ScopeName      string          `json:"scope"`
+		CollectionName string          `json:"collection"`
+		DocumentKey    string          `json:"document_key"`
+	}{
+		Msg:            "write write conflict",
+		Cause:          marshalErrorToJSON(wwce.Source),
+		BucketName:     wwce.BucketName,
+		ScopeName:      wwce.ScopeName,
+		CollectionName: wwce.CollectionName,
+		DocumentKey:    string(wwce.DocumentKey),
+	})
+}
+
 func (wwce writeWriteConflictError) Error() string {
 	errStr := "write write conflict"
 	errStr += " | " + fmt.Sprintf(
@@ -160,4 +178,30 @@ func (wwce writeWriteConflictError) Is(err error) bool {
 
 func (wwce writeWriteConflictError) Unwrap() error {
 	return wwce.Source
+}
+
+func marshalErrorToJSON(err error) json.RawMessage {
+	// BUG(TXNG-78): Remove gocbcore error serialization workaround.
+	// We currently need to manually serialize these because gocbcore has a bug that
+	// causes JSON serialization of its errors to loose information.
+	if coreErr, ok := err.(*gocbcore.KeyValueError); ok {
+		var coreErrFields map[string]interface{}
+		if coreErrData, err := json.Marshal(coreErr); err == nil {
+			if err := json.Unmarshal(coreErrData, &coreErrFields); err == nil {
+				coreErrFields["msg"] = coreErr.InnerError.Error()
+				if errData, err := json.Marshal(coreErr); err == nil {
+					return errData
+				}
+			}
+		}
+	}
+
+	if marshaler, ok := err.(json.Marshaler); ok {
+		if data, err := marshaler.MarshalJSON(); err == nil {
+			return json.RawMessage(data)
+		}
+	}
+
+	data, _ := json.Marshal(err.Error())
+	return json.RawMessage(data)
 }
