@@ -78,13 +78,11 @@ func (tfe TransactionOperationFailedError) MarshalJSON() ([]byte, error) {
 		Retry    bool            `json:"retry"`
 		Rollback bool            `json:"rollback"`
 		Raise    string          `json:"raise"`
-		Class    string          `json:"class"`
 		Cause    json.RawMessage `json:"cause"`
 	}{
 		Retry:    !tfe.shouldNotRetry,
 		Rollback: !tfe.shouldNotRollback,
 		Raise:    errorReasonToString(tfe.shouldRaise),
-		Class:    errorClassToString(tfe.errorClass),
 		Cause:    marshalErrorToJSON(tfe.errorCause),
 	})
 }
