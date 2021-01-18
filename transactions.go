@@ -54,6 +54,9 @@ func Init(config *Config) (*Manager, error) {
 	if config.Internal.CleanUpHooks == nil {
 		config.Internal.CleanUpHooks = &DefaultCleanupHooks{}
 	}
+	if config.Internal.ClientRecordHooks == nil {
+		config.Internal.ClientRecordHooks = &DefaultClientRecordHooks{}
+	}
 	if config.CleanupQueueSize == 0 {
 		config.CleanupQueueSize = 100000
 	}
