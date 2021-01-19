@@ -41,8 +41,6 @@ func (t *transactionAttempt) remove(
 			return
 		}
 
-		unlock()
-
 		agent := opts.Document.agent
 		scopeName := opts.Document.scopeName
 		collectionName := opts.Document.collectionName
@@ -52,6 +50,7 @@ func (t *transactionAttempt) remove(
 
 		t.checkExpiredAtomic(hookRemove, key, false, func(cerr *classifiedError) {
 			if cerr != nil {
+				unlock()
 				endAndCb(nil, t.operationFailed(operationFailedDef{
 					Cerr:              cerr,
 					ShouldNotRetry:    true,
@@ -62,6 +61,8 @@ func (t *transactionAttempt) remove(
 			}
 
 			_, existingMutation := t.getStagedMutationLocked(agent.BucketName(), scopeName, collectionName, key)
+			unlock()
+
 			if existingMutation != nil {
 				switch existingMutation.OpType {
 				case StagedMutationInsert:

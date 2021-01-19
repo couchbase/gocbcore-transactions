@@ -40,8 +40,6 @@ func (t *transactionAttempt) replace(
 			return
 		}
 
-		unlock()
-
 		agent := opts.Document.agent
 		scopeName := opts.Document.scopeName
 		collectionName := opts.Document.collectionName
@@ -52,6 +50,7 @@ func (t *transactionAttempt) replace(
 
 		t.checkExpiredAtomic(hookReplace, key, false, func(cerr *classifiedError) {
 			if cerr != nil {
+				unlock()
 				endAndCb(nil, t.operationFailed(operationFailedDef{
 					Cerr:              cerr,
 					ShouldNotRetry:    true,
@@ -62,6 +61,8 @@ func (t *transactionAttempt) replace(
 			}
 
 			_, existingMutation := t.getStagedMutationLocked(agent.BucketName(), scopeName, collectionName, key)
+			unlock()
+
 			if existingMutation != nil {
 				switch existingMutation.OpType {
 				case StagedMutationInsert:

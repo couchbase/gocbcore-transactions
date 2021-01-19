@@ -40,8 +40,6 @@ func (t *transactionAttempt) insert(
 			return
 		}
 
-		unlock()
-
 		agent := opts.Agent
 		scopeName := opts.ScopeName
 		collectionName := opts.CollectionName
@@ -50,6 +48,7 @@ func (t *transactionAttempt) insert(
 
 		t.checkExpiredAtomic(hookInsert, key, false, func(cerr *classifiedError) {
 			if cerr != nil {
+				unlock()
 				endAndCb(nil, t.operationFailed(operationFailedDef{
 					Cerr:              cerr,
 					ShouldNotRetry:    true,
@@ -60,6 +59,8 @@ func (t *transactionAttempt) insert(
 			}
 
 			_, existingMutation := t.getStagedMutationLocked(agent.BucketName(), scopeName, collectionName, key)
+			unlock()
+
 			if existingMutation != nil {
 				switch existingMutation.OpType {
 				case StagedMutationRemove:
