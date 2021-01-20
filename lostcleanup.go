@@ -255,6 +255,11 @@ func (ltc *stdLostTransactionCleaner) unregisterClientRecord(bucket, uuid string
 			return
 		}
 
+		var opDeadline time.Time
+		if ltc.operationTimeout > 0 {
+			opDeadline = time.Now().Add(ltc.operationTimeout)
+		}
+
 		_, err = agent.MutateIn(gocbcore.MutateInOptions{
 			Key: clientRecordKey,
 			Ops: []gocbcore.SubDocOp{
@@ -264,7 +269,7 @@ func (ltc *stdLostTransactionCleaner) unregisterClientRecord(bucket, uuid string
 					Path:  "records.clients." + uuid,
 				},
 			},
-			Deadline: time.Now().Add(ltc.operationTimeout),
+			Deadline: opDeadline,
 		}, func(result *gocbcore.MutateInResult, err error) {
 			if err != nil {
 				if errors.Is(err, gocbcore.ErrDocumentNotFound) || errors.Is(err, gocbcore.ErrPathNotFound) {
@@ -365,6 +370,11 @@ func (ltc *stdLostTransactionCleaner) ProcessClient(agent *gocbcore.Agent, uuid 
 			}
 		}
 
+		var deadline time.Time
+		if ltc.operationTimeout > 0 {
+			deadline = time.Now().Add(ltc.operationTimeout)
+		}
+
 		_, err = agent.LookupIn(gocbcore.LookupInOptions{
 			Key: clientRecordKey,
 			Ops: []gocbcore.SubDocOp{
@@ -379,7 +389,7 @@ func (ltc *stdLostTransactionCleaner) ProcessClient(agent *gocbcore.Agent, uuid 
 					Flags: memd.SubdocFlagXattrPath,
 				},
 			},
-			Deadline: time.Now().Add(ltc.operationTimeout),
+			Deadline: deadline,
 		}, func(result *gocbcore.LookupInResult, err error) {
 			if err != nil {
 				ec := classifyError(err)
@@ -544,6 +554,7 @@ func (ltc *stdLostTransactionCleaner) ProcessATR(agent *gocbcore.Agent, atrID st
 						Removes:           removes,
 						State:             st,
 						ForwardCompat:     jsonForwardCompatToForwardCompat(attempt.ForwardCompat),
+						DurabilityLevel:   durabilityLevelFromShorthand(attempt.DurabilityLevel),
 					}
 
 					waitCh := make(chan CleanupAttempt, 1)
@@ -568,6 +579,11 @@ func (ltc *stdLostTransactionCleaner) getATR(agent *gocbcore.Agent, atrID string
 			return
 		}
 
+		var deadline time.Time
+		if ltc.operationTimeout > 0 {
+			deadline = time.Now().Add(ltc.operationTimeout)
+		}
+
 		_, err = agent.LookupIn(gocbcore.LookupInOptions{
 			Key: []byte(atrID),
 			Ops: []gocbcore.SubDocOp{
@@ -582,6 +598,7 @@ func (ltc *stdLostTransactionCleaner) getATR(agent *gocbcore.Agent, atrID string
 					Flags: memd.SubdocFlagXattrPath,
 				},
 			},
+			Deadline: deadline,
 		}, func(result *gocbcore.LookupInResult, err error) {
 			if err != nil {
 				cb(nil, 0, err)
@@ -765,7 +782,9 @@ func (ltc *stdLostTransactionCleaner) processClientRecord(agent *gocbcore.Agent,
 			})
 		}
 
-		opts.Deadline = time.Now().Add(ltc.operationTimeout)
+		if ltc.operationTimeout > 0 {
+			opts.Deadline = time.Now().Add(ltc.operationTimeout)
+		}
 		_, err = agent.MutateIn(opts, func(result *gocbcore.MutateInResult, err error) {
 			if err != nil {
 				cb(err)
@@ -794,6 +813,11 @@ func (ltc *stdLostTransactionCleaner) createClientRecord(agent *gocbcore.Agent, 
 			}
 		}
 
+		var deadline time.Time
+		if ltc.operationTimeout > 0 {
+			deadline = time.Now().Add(ltc.operationTimeout)
+		}
+
 		_, err = agent.MutateIn(gocbcore.MutateInOptions{
 			Key: clientRecordKey,
 			Ops: []gocbcore.SubDocOp{
@@ -811,7 +835,7 @@ func (ltc *stdLostTransactionCleaner) createClientRecord(agent *gocbcore.Agent, 
 				},
 			},
 			Flags:    memd.SubdocDocFlagAddDoc,
-			Deadline: time.Now().Add(ltc.operationTimeout),
+			Deadline: deadline,
 		}, func(result *gocbcore.MutateInResult, err error) {
 			if err != nil {
 				ec := classifyError(err)

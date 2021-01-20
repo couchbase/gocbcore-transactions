@@ -23,6 +23,7 @@ func ProtocolExtensions() []string {
 		"EXT_BINARY_METADATA",
 		"EXT_CUSTOM_METADATA_COLLECTION",
 		"BF_CBD_3787",
+		"EXT_STORE_DURABILITY",
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/couchbase/gocbcore/v8"
 	"sync"
 	"time"
 
@@ -25,6 +26,7 @@ type CleanupRequest struct {
 	Removes           []DocRecord
 	State             AttemptState
 	ForwardCompat     map[string][]ForwardCompatibilityEntry
+	DurabilityLevel   DurabilityLevel
 
 	readyTime time.Time
 }
@@ -269,12 +271,14 @@ func (c *stdCleaner) processQ() {
 			case req := <-q:
 				agent, err := c.bucketAgentProvider(req.AtrBucketName)
 				if err != nil {
-					logDebugf("Failed to get agent for request: %s, err: %v", req.String(), err)
-					select {
-					case <-time.After(10 * time.Second):
-						c.AddRequest(req)
-					case <-c.stop:
-					}
+					go func() {
+						logDebugf("Failed to get agent for request: %s, err: %v", req.String(), err)
+						select {
+						case <-time.After(10 * time.Second):
+							c.AddRequest(req)
+						case <-c.stop:
+						}
+					}()
 					return
 				}
 
@@ -406,11 +410,19 @@ func (c *stdCleaner) cleanupATR(agent *gocbcore.Agent, req *CleanupRequest, cb f
 			Flags: memd.SubdocFlagXattrPath,
 		})
 
+		if req.DurabilityLevel == DurabilityLevelUnknown {
+			req.DurabilityLevel = c.durabilityLevel
+		}
+		deadline, duraTimeout := mutationTimeouts(c.operationTimeout, req.DurabilityLevel)
+
 		_, err = agent.MutateIn(gocbcore.MutateInOptions{
-			Key:            req.AtrID,
-			ScopeName:      req.AtrScopeName,
-			CollectionName: req.AtrCollectionName,
-			Ops:            specs,
+			Key:                    req.AtrID,
+			ScopeName:              req.AtrScopeName,
+			CollectionName:         req.AtrCollectionName,
+			Ops:                    specs,
+			Deadline:               deadline,
+			DurabilityLevel:        durabilityLevelToMemd(req.DurabilityLevel),
+			DurabilityLevelTimeout: duraTimeout,
 		}, func(result *gocbcore.MutateInResult, err error) {
 			if err != nil {
 				if errors.Is(err, gocbcore.ErrPathNotFound) {
@@ -434,11 +446,19 @@ func (c *stdCleaner) cleanupATR(agent *gocbcore.Agent, req *CleanupRequest, cb f
 }
 
 func (c *stdCleaner) cleanupDocs(req *CleanupRequest, cb func(error)) {
+	var memdDuraLevel memd.DurabilityLevel
+	if req.DurabilityLevel > DurabilityLevelUnknown {
+		// We want to ensure that we don't panic here, if the durability level is unknown then we'll just not set
+		// a durability level.
+		memdDuraLevel = durabilityLevelToMemd(req.DurabilityLevel)
+	}
+	deadline, duraTimeout := mutationTimeouts(c.operationTimeout, req.DurabilityLevel)
+
 	switch req.State {
 	case AttemptStateCommitted:
 
 		waitCh := make(chan error, 1)
-		c.commitInsRepDocs(req.AttemptID, req.Inserts, func(err error) {
+		c.commitInsRepDocs(req.AttemptID, req.Inserts, deadline, memdDuraLevel, duraTimeout, func(err error) {
 			waitCh <- err
 		})
 		err := <-waitCh
@@ -448,7 +468,7 @@ func (c *stdCleaner) cleanupDocs(req *CleanupRequest, cb func(error)) {
 		}
 
 		waitCh = make(chan error, 1)
-		c.commitInsRepDocs(req.AttemptID, req.Replaces, func(err error) {
+		c.commitInsRepDocs(req.AttemptID, req.Replaces, deadline, memdDuraLevel, duraTimeout, func(err error) {
 			waitCh <- err
 		})
 		err = <-waitCh
@@ -458,7 +478,7 @@ func (c *stdCleaner) cleanupDocs(req *CleanupRequest, cb func(error)) {
 		}
 
 		waitCh = make(chan error, 1)
-		c.commitRemDocs(req.AttemptID, req.Removes, func(err error) {
+		c.commitRemDocs(req.AttemptID, req.Removes, deadline, memdDuraLevel, duraTimeout, func(err error) {
 			waitCh <- err
 		})
 		err = <-waitCh
@@ -470,7 +490,7 @@ func (c *stdCleaner) cleanupDocs(req *CleanupRequest, cb func(error)) {
 		cb(nil)
 	case AttemptStateAborted:
 		waitCh := make(chan error, 3)
-		c.rollbackInsDocs(req.AttemptID, req.Inserts, func(err error) {
+		c.rollbackInsDocs(req.AttemptID, req.Inserts, deadline, memdDuraLevel, duraTimeout, func(err error) {
 			waitCh <- err
 		})
 		err := <-waitCh
@@ -480,7 +500,7 @@ func (c *stdCleaner) cleanupDocs(req *CleanupRequest, cb func(error)) {
 		}
 
 		waitCh = make(chan error, 1)
-		c.rollbackRepRemDocs(req.AttemptID, req.Replaces, func(err error) {
+		c.rollbackRepRemDocs(req.AttemptID, req.Replaces, deadline, memdDuraLevel, duraTimeout, func(err error) {
 			waitCh <- err
 		})
 		err = <-waitCh
@@ -490,7 +510,7 @@ func (c *stdCleaner) cleanupDocs(req *CleanupRequest, cb func(error)) {
 		}
 
 		waitCh = make(chan error, 1)
-		c.rollbackRepRemDocs(req.AttemptID, req.Removes, func(err error) {
+		c.rollbackRepRemDocs(req.AttemptID, req.Removes, deadline, memdDuraLevel, duraTimeout, func(err error) {
 			waitCh <- err
 		})
 		err = <-waitCh
@@ -513,7 +533,8 @@ func (c *stdCleaner) cleanupDocs(req *CleanupRequest, cb func(error)) {
 	}
 }
 
-func (c *stdCleaner) rollbackRepRemDocs(attemptID string, docs []DocRecord, cb func(err error)) {
+func (c *stdCleaner) rollbackRepRemDocs(attemptID string, docs []DocRecord, deadline time.Time, durability memd.DurabilityLevel,
+	duraTimeout time.Duration, cb func(err error)) {
 	var overallErr error
 
 	for _, doc := range docs {
@@ -555,7 +576,10 @@ func (c *stdCleaner) rollbackRepRemDocs(attemptID string, docs []DocRecord, cb f
 							Flags: memd.SubdocFlagXattrPath,
 						},
 					},
-					Flags: memd.SubdocDocFlagAccessDeleted,
+					Flags:                  memd.SubdocDocFlagAccessDeleted,
+					Deadline:               deadline,
+					DurabilityLevel:        durability,
+					DurabilityLevelTimeout: duraTimeout,
 				}, func(result *gocbcore.MutateInResult, err error) {
 					if err != nil {
 						logDebugf("Failed to rollback for bucket: %s, collection: %s, scope: %s, id: %s, err: %v",
@@ -583,7 +607,8 @@ func (c *stdCleaner) rollbackRepRemDocs(attemptID string, docs []DocRecord, cb f
 	cb(overallErr)
 }
 
-func (c *stdCleaner) rollbackInsDocs(attemptID string, docs []DocRecord, cb func(err error)) {
+func (c *stdCleaner) rollbackInsDocs(attemptID string, docs []DocRecord, deadline time.Time, durability memd.DurabilityLevel,
+	duraTimeout time.Duration, cb func(err error)) {
 	var overallErr error
 
 	for _, doc := range docs {
@@ -626,7 +651,10 @@ func (c *stdCleaner) rollbackInsDocs(attemptID string, docs []DocRecord, cb func
 								Flags: memd.SubdocFlagXattrPath,
 							},
 						},
-						Flags: memd.SubdocDocFlagAccessDeleted,
+						Flags:                  memd.SubdocDocFlagAccessDeleted,
+						Deadline:               deadline,
+						DurabilityLevel:        durability,
+						DurabilityLevelTimeout: duraTimeout,
 					}, func(result *gocbcore.MutateInResult, err error) {
 						if err != nil {
 							logDebugf("Failed to rollback for bucket: %s, collection: %s, scope: %s, id: %s, err: %v",
@@ -643,10 +671,13 @@ func (c *stdCleaner) rollbackInsDocs(attemptID string, docs []DocRecord, cb func
 					}
 				} else {
 					_, err := agent.Delete(gocbcore.DeleteOptions{
-						Key:            doc.ID,
-						ScopeName:      doc.ScopeName,
-						CollectionName: doc.CollectionName,
-						Cas:            getRes.Cas,
+						Key:                    doc.ID,
+						ScopeName:              doc.ScopeName,
+						CollectionName:         doc.CollectionName,
+						Cas:                    getRes.Cas,
+						Deadline:               deadline,
+						DurabilityLevel:        durability,
+						DurabilityLevelTimeout: duraTimeout,
 					}, func(result *gocbcore.DeleteResult, err error) {
 						if err != nil {
 							logDebugf("Failed to rollback for bucket: %s, collection: %s, scope: %s, id: %s, err: %v",
@@ -674,7 +705,8 @@ func (c *stdCleaner) rollbackInsDocs(attemptID string, docs []DocRecord, cb func
 	cb(overallErr)
 }
 
-func (c *stdCleaner) commitRemDocs(attemptID string, docs []DocRecord, cb func(err error)) {
+func (c *stdCleaner) commitRemDocs(attemptID string, docs []DocRecord, deadline time.Time, durability memd.DurabilityLevel,
+	duraTimeout time.Duration, cb func(err error)) {
 	var overallErr error
 	for _, doc := range docs {
 		waitCh := make(chan error, 1)
@@ -709,10 +741,13 @@ func (c *stdCleaner) commitRemDocs(attemptID string, docs []DocRecord, cb func(e
 				}
 
 				_, err = agent.Delete(gocbcore.DeleteOptions{
-					Key:            doc.ID,
-					ScopeName:      doc.ScopeName,
-					CollectionName: doc.CollectionName,
-					Cas:            getRes.Cas,
+					Key:                    doc.ID,
+					ScopeName:              doc.ScopeName,
+					CollectionName:         doc.CollectionName,
+					Cas:                    getRes.Cas,
+					Deadline:               deadline,
+					DurabilityLevel:        durability,
+					DurabilityLevelTimeout: duraTimeout,
 				}, func(result *gocbcore.DeleteResult, err error) {
 					if err != nil {
 						logDebugf("Failed to commit for bucket: %s, collection: %s, scope: %s, id: %s, err: %v",
@@ -738,7 +773,8 @@ func (c *stdCleaner) commitRemDocs(attemptID string, docs []DocRecord, cb func(e
 	cb(overallErr)
 }
 
-func (c *stdCleaner) commitInsRepDocs(attemptID string, docs []DocRecord, cb func(err error)) {
+func (c *stdCleaner) commitInsRepDocs(attemptID string, docs []DocRecord, deadline time.Time, durability memd.DurabilityLevel,
+	duraTimeout time.Duration, cb func(err error)) {
 	var overallErr error
 
 	for _, doc := range docs {
@@ -770,10 +806,13 @@ func (c *stdCleaner) commitInsRepDocs(attemptID string, docs []DocRecord, cb fun
 
 				if getRes.Deleted {
 					_, err := agent.Set(gocbcore.SetOptions{
-						Value:          getRes.Body,
-						Key:            doc.ID,
-						ScopeName:      doc.ScopeName,
-						CollectionName: doc.CollectionName,
+						Value:                  getRes.Body,
+						Key:                    doc.ID,
+						ScopeName:              doc.ScopeName,
+						CollectionName:         doc.CollectionName,
+						Deadline:               deadline,
+						DurabilityLevel:        durability,
+						DurabilityLevelTimeout: duraTimeout,
 					}, func(result *gocbcore.StoreResult, err error) {
 						if err != nil {
 							logDebugf("Failed to commit for bucket: %s, collection: %s, scope: %s, id: %s, err: %v",
@@ -806,6 +845,9 @@ func (c *stdCleaner) commitInsRepDocs(attemptID string, docs []DocRecord, cb fun
 								Value: getRes.Body,
 							},
 						},
+						Deadline:               deadline,
+						DurabilityLevel:        durability,
+						DurabilityLevelTimeout: duraTimeout,
 					}, func(result *gocbcore.MutateInResult, err error) {
 						if err != nil {
 							logDebugf("Failed to commit for bucket: %s, collection: %s, scope: %s, id: %s, err: %v",
@@ -840,6 +882,11 @@ func (c *stdCleaner) perDoc(crc32MatchStaging bool, attemptID string, dr DocReco
 			return
 		}
 
+		var deadline time.Time
+		if c.operationTimeout > 0 {
+			deadline = time.Now().Add(c.operationTimeout)
+		}
+
 		_, err = agent.LookupIn(gocbcore.LookupInOptions{
 			ScopeName:      dr.ScopeName,
 			CollectionName: dr.CollectionName,
@@ -856,8 +903,8 @@ func (c *stdCleaner) perDoc(crc32MatchStaging bool, attemptID string, dr DocReco
 					Flags: memd.SubdocFlagXattrPath,
 				},
 			},
-			// Deadline: deadline, TODO
-			Flags: memd.SubdocDocFlagAccessDeleted,
+			Deadline: deadline,
+			Flags:    memd.SubdocDocFlagAccessDeleted,
 		}, func(result *gocbcore.LookupInResult, err error) {
 			if err != nil {
 				if errors.Is(err, gocbcore.ErrDocumentNotFound) {

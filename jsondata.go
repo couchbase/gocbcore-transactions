@@ -46,6 +46,8 @@ type jsonAtrAttempt struct {
 	Replaces []jsonAtrMutation `json:"rep,omitempty"`
 	Removes  []jsonAtrMutation `json:"rem,omitempty"`
 
+	DurabilityLevel string `json:"d,omitempty"`
+
 	ForwardCompat map[string][]jsonForwardCompatibilityEntry `json:"fc,omitempty"`
 }
 

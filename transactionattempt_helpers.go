@@ -708,6 +708,7 @@ func (t *transactionAttempt) ensureCleanUpRequest() {
 		State:             t.state,
 		readyTime:         t.expiryTime,
 		ForwardCompat:     nil, // Let's just be explicit about this, it'll change in the future anyway.
+		DurabilityLevel:   t.durabilityLevel,
 	}
 
 	t.lock.UnlockSync()

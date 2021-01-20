@@ -173,6 +173,7 @@ func (t *transactionAttempt) setATRPendingLocked(
 					Path:  "",
 					Value: []byte{0},
 				},
+				atrFieldOp("d", durabilityLevelToShorthand(t.durabilityLevel), memd.SubdocFlagXattrPath),
 			}
 			if marshalErr != nil {
 				ecCb(&classifiedError{
