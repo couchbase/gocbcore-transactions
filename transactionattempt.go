@@ -28,15 +28,14 @@ type transactionAttempt struct {
 	bucketAgentProvider BucketAgentProviderFn
 
 	// mutable state
-	state               AttemptState
-	stateBits           uint32
-	stagedMutations     []*stagedMutation
-	finalMutationTokens []MutationToken
-	atrAgent            *gocbcore.Agent
-	atrScopeName        string
-	atrCollectionName   string
-	atrKey              []byte
-	previousErrors      []*TransactionOperationFailedError
+	state             AttemptState
+	stateBits         uint32
+	stagedMutations   []*stagedMutation
+	atrAgent          *gocbcore.Agent
+	atrScopeName      string
+	atrCollectionName string
+	atrKey            []byte
+	previousErrors    []*TransactionOperationFailedError
 
 	unstagingComplete bool
 
@@ -56,7 +55,6 @@ func (t *transactionAttempt) State() Attempt {
 
 	state.State = t.state
 	state.ID = t.id
-	state.MutationState = t.finalMutationTokens
 
 	if stateBits&transactionStateBitHasExpired != 0 {
 		state.Expired = true
