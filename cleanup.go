@@ -266,15 +266,15 @@ func (c *stdCleaner) processQ() {
 
 				waitCh := make(chan struct{}, 1)
 				c.CleanupAttempt(agent, req, true, func(attempt CleanupAttempt) {
-					go func() {
-						if !attempt.Success {
+					if !attempt.Success {
+						go func() {
 							select {
 							case <-time.After(10 * time.Second):
 								c.AddRequest(req)
 							case <-c.stop:
 							}
-						}
-					}()
+						}()
+					}
 					waitCh <- struct{}{}
 				})
 				<-waitCh
