@@ -9,6 +9,23 @@ import (
 	"github.com/pkg/errors"
 )
 
+// ProtocolVersion returns the protocol version that this library supports.
+func ProtocolVersion() string {
+	return "2.0"
+}
+
+// ProtocolExtensions returns a list strings representing the various features
+// that this specific version of the library supports within its protocol version.
+func ProtocolExtensions() []string {
+	return []string{
+		"EXT_TRANSACTION_ID",
+		"EXT_MEMORY_OPT_UNSTAGING",
+		"EXT_BINARY_METADATA",
+		"EXT_CUSTOM_METADATA_COLLECTION",
+		"BF_CBD_3787",
+	}
+}
+
 type forwardCompatBehaviour string
 
 const (
