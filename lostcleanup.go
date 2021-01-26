@@ -154,6 +154,8 @@ func (ltc *stdLostTransactionCleaner) start() {
 		case bucket := <-ltc.newBucketCh:
 			agent, err := ltc.bucketAgentProvider(bucket)
 			if err != nil {
+				logDebugf("Failed to fetch agent for %s:, err: %v",
+					bucket, err)
 				// We should probably do something here...
 				return
 			}
@@ -170,6 +172,7 @@ func (ltc *stdLostTransactionCleaner) AddBucket(bucket string) {
 	}
 	ltc.buckets[bucket] = struct{}{}
 	ltc.bucketsLock.Unlock()
+	logDebugf("Adding bucket %s to lost cleanup", bucket)
 	ltc.newBucketCh <- bucket
 }
 
@@ -210,6 +213,7 @@ func (ltc *stdLostTransactionCleaner) removeClient(uuid string, buckets map[stri
 
 			ltc.unregisterClientRecord(bucketName, uuid, deadline, func(unregErr error) {
 				if unregErr != nil {
+					logDebugf("Failed to unregister %s from cleanup record on from bucket %s", uuid, bucket)
 					err = unregErr
 				}
 				wg.Done()
@@ -317,6 +321,7 @@ func (ltc *stdLostTransactionCleaner) perBucket(agent *gocbcore.Agent) {
 func (ltc *stdLostTransactionCleaner) process(agent *gocbcore.Agent, cb func(error)) {
 	ltc.ProcessClient(agent, ltc.uuid, func(recordDetails *ClientRecordDetails, err error) {
 		if err != nil {
+			logDebugf("Failed to process client %s on bucket %s", ltc.uuid, agent.BucketName())
 			cb(err)
 			return
 		}
@@ -455,6 +460,7 @@ func (ltc *stdLostTransactionCleaner) ProcessClient(agent *gocbcore.Agent, uuid 
 func (ltc *stdLostTransactionCleaner) ProcessATR(agent *gocbcore.Agent, atrID string, cb func([]CleanupAttempt, ProcessATRStats)) {
 	ltc.getATR(agent, atrID, func(attempts map[string]jsonAtrAttempt, hlc int, err error) {
 		if err != nil {
+			logDebugf("Failed to get atr %s on bucket %s", atrID, agent.BucketName())
 			cb(nil, ProcessATRStats{})
 			return
 		}
@@ -831,6 +837,7 @@ func (ltc *stdLostTransactionCleaner) pollForBuckets() error {
 	if ltc.bucketListProvider != nil {
 		buckets, err := ltc.bucketListProvider()
 		if err != nil {
+			logDebugf("Failed to poll for buckets")
 			return err
 		}
 

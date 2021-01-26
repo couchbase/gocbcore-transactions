@@ -4,6 +4,7 @@ import (
 	"container/heap"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -32,6 +33,11 @@ func (cr *CleanupRequest) ready() bool {
 	return time.Now().After(cr.readyTime)
 }
 
+func (cr *CleanupRequest) String() string {
+	return fmt.Sprintf("bucket: %s, collection: %s, scope: %s, atr: %s, attempt: %s", cr.AtrBucketName, cr.AtrCollectionName,
+		cr.AtrScopeName, cr.AtrID, cr.AttemptID)
+}
+
 // DocRecord represents an individual document operation requiring cleanup.
 // Internal: This should never be used and is not supported.
 type DocRecord struct {
@@ -52,6 +58,11 @@ type CleanupAttempt struct {
 	AtrScopeName      string
 	AtrBucketName     string
 	Request           *CleanupRequest
+}
+
+func (ca CleanupAttempt) String() string {
+	return fmt.Sprintf("bucket: %s, collection: %s, scope: %s, atr: %s, attempt: %s", ca.AtrBucketName, ca.AtrCollectionName,
+		ca.AtrScopeName, ca.AtrID, ca.AttemptID)
 }
 
 // Cleaner is responsible for performing cleanup of completed transactions.
@@ -137,6 +148,8 @@ func (c *stdCleaner) AddRequest(req *CleanupRequest) bool {
 	c.qLock.Lock()
 	defer c.qLock.Unlock()
 	if c.q.Len() == int(c.qSize) {
+		logDebugf("Not queueing request for: %s, limit size reached",
+			req.String())
 		return false
 	}
 
@@ -256,6 +269,7 @@ func (c *stdCleaner) processQ() {
 			case req := <-q:
 				agent, err := c.bucketAgentProvider(req.AtrBucketName)
 				if err != nil {
+					logDebugf("Failed to get agent for request: %s, err: %v", req.String(), err)
 					select {
 					case <-time.After(10 * time.Second):
 						c.AddRequest(req)
@@ -264,10 +278,21 @@ func (c *stdCleaner) processQ() {
 					return
 				}
 
+				logTracef("Running cleanup for request: %s", req.String())
 				waitCh := make(chan struct{}, 1)
 				c.CleanupAttempt(agent, req, true, func(attempt CleanupAttempt) {
+
 					if !attempt.Success {
 						go func() {
+							age := time.Now().Sub(req.readyTime)
+							logDebugf("Cleanup attempt failed for entry: %s, age is %s",
+								attempt.String(), age)
+
+							if age > 2*time.Hour {
+								logWarnf("Cleanup request is %s old which could indicate a serious error - "+
+									"please raise with support.", age)
+							}
+
 							select {
 							case <-time.After(10 * time.Second):
 								c.AddRequest(req)
@@ -393,6 +418,7 @@ func (c *stdCleaner) cleanupATR(agent *gocbcore.Agent, req *CleanupRequest, cb f
 					return
 				}
 
+				logDebugf("Failed to cleanup ATR for request: %s, err: %v", req.String(), err)
 				cb(err)
 				return
 			}
@@ -532,6 +558,8 @@ func (c *stdCleaner) rollbackRepRemDocs(attemptID string, docs []DocRecord, cb f
 					Flags: memd.SubdocDocFlagAccessDeleted,
 				}, func(result *gocbcore.MutateInResult, err error) {
 					if err != nil {
+						logDebugf("Failed to rollback for bucket: %s, collection: %s, scope: %s, id: %s, err: %v",
+							doc.BucketName, doc.CollectionName, doc.ScopeName, doc.ID, err)
 						waitCh <- err
 						return
 					}
@@ -601,6 +629,8 @@ func (c *stdCleaner) rollbackInsDocs(attemptID string, docs []DocRecord, cb func
 						Flags: memd.SubdocDocFlagAccessDeleted,
 					}, func(result *gocbcore.MutateInResult, err error) {
 						if err != nil {
+							logDebugf("Failed to rollback for bucket: %s, collection: %s, scope: %s, id: %s, err: %v",
+								doc.BucketName, doc.CollectionName, doc.ScopeName, doc.ID, err)
 							waitCh <- err
 							return
 						}
@@ -619,6 +649,8 @@ func (c *stdCleaner) rollbackInsDocs(attemptID string, docs []DocRecord, cb func
 						Cas:            getRes.Cas,
 					}, func(result *gocbcore.DeleteResult, err error) {
 						if err != nil {
+							logDebugf("Failed to rollback for bucket: %s, collection: %s, scope: %s, id: %s, err: %v",
+								doc.BucketName, doc.CollectionName, doc.ScopeName, doc.ID, err)
 							waitCh <- err
 							return
 						}
@@ -683,6 +715,8 @@ func (c *stdCleaner) commitRemDocs(attemptID string, docs []DocRecord, cb func(e
 					Cas:            getRes.Cas,
 				}, func(result *gocbcore.DeleteResult, err error) {
 					if err != nil {
+						logDebugf("Failed to commit for bucket: %s, collection: %s, scope: %s, id: %s, err: %v",
+							doc.BucketName, doc.CollectionName, doc.ScopeName, doc.ID, err)
 						waitCh <- err
 						return
 					}
@@ -742,6 +776,8 @@ func (c *stdCleaner) commitInsRepDocs(attemptID string, docs []DocRecord, cb fun
 						CollectionName: doc.CollectionName,
 					}, func(result *gocbcore.StoreResult, err error) {
 						if err != nil {
+							logDebugf("Failed to commit for bucket: %s, collection: %s, scope: %s, id: %s, err: %v",
+								doc.BucketName, doc.CollectionName, doc.ScopeName, doc.ID, err)
 							waitCh <- err
 							return
 						}
@@ -772,6 +808,8 @@ func (c *stdCleaner) commitInsRepDocs(attemptID string, docs []DocRecord, cb fun
 						},
 					}, func(result *gocbcore.MutateInResult, err error) {
 						if err != nil {
+							logDebugf("Failed to commit for bucket: %s, collection: %s, scope: %s, id: %s, err: %v",
+								doc.BucketName, doc.CollectionName, doc.ScopeName, doc.ID, err)
 							waitCh <- err
 							return
 						}
@@ -828,6 +866,8 @@ func (c *stdCleaner) perDoc(crc32MatchStaging bool, attemptID string, dr DocReco
 					return
 				}
 
+				logDebugf("Failed to lookup doc for bucket: %s, collection: %s, scope: %s, id: %s, err: %v",
+					dr.BucketName, dr.CollectionName, dr.ScopeName, dr.ID, err)
 				cb(nil, err)
 				return
 			}
