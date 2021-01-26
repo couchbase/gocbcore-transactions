@@ -128,30 +128,69 @@ func (t *transactionAttempt) resolveConflictedInsert(
 	cb func(*GetResult, *TransactionOperationFailedError),
 ) {
 	t.getMetaForConflictedInsert(agent, scopeName, collectionName, key,
-		func(cas gocbcore.Cas, meta *MutableItemMeta, err *TransactionOperationFailedError) {
+		func(isTombstone bool, txnMeta *jsonTxnXattr, cas gocbcore.Cas, err *TransactionOperationFailedError) {
 			if err != nil {
 				cb(nil, err)
 				return
 			}
 
-			if meta == nil {
+			if txnMeta == nil {
+				// This doc isn't in a transaction
+				if !isTombstone {
+					cb(nil, t.operationFailed(operationFailedDef{
+						Cerr: &classifiedError{
+							Source: ErrDocumentAlreadyExists,
+							Class:  ErrorClassFailDocAlreadyExists,
+						},
+						ShouldNotRetry:    true,
+						ShouldNotRollback: false,
+						Reason:            ErrorReasonTransactionFailed,
+					}))
+					return
+				}
+
 				// There wasn't actually a staged mutation there.
 				t.stageInsert(agent, scopeName, collectionName, key, value, cas, replaceOfInsert, cb)
 				return
 			}
 
-			// We have guards in place within the write write conflict polling to prevent miss-use when
-			// an existing mutation must have been discovered before it's safe to overwrite.  This logic
-			// is unneccessary, as is the forwards compatibility check when resolving conflicted inserts
-			// so we can safely just ignore it.
-			if meta.TransactionID == t.transactionID && meta.AttemptID == t.id {
-				t.stageInsert(agent, scopeName, collectionName, key, value, cas, replaceOfInsert, cb)
-				return
+			meta := &MutableItemMeta{
+				TransactionID: txnMeta.ID.Transaction,
+				AttemptID:     txnMeta.ID.Attempt,
+				ATR: MutableItemMetaATR{
+					BucketName:     txnMeta.ATR.BucketName,
+					ScopeName:      txnMeta.ATR.ScopeName,
+					CollectionName: txnMeta.ATR.CollectionName,
+					DocID:          txnMeta.ATR.DocID,
+				},
+				ForwardCompat: jsonForwardCompatToForwardCompat(txnMeta.ForwardCompat),
 			}
 
 			t.checkForwardCompatability(forwardCompatStageWWCInsertingGet, meta.ForwardCompat, false, func(err *TransactionOperationFailedError) {
 				if err != nil {
 					cb(nil, err)
+					return
+				}
+
+				if txnMeta.Operation.Type != jsonMutationInsert {
+					cb(nil, t.operationFailed(operationFailedDef{
+						Cerr: &classifiedError{
+							Source: ErrDocumentAlreadyExists,
+							Class:  ErrorClassFailDocAlreadyExists,
+						},
+						ShouldNotRetry:    true,
+						ShouldNotRollback: false,
+						Reason:            ErrorReasonTransactionFailed,
+					}))
+					return
+				}
+
+				// We have guards in place within the write write conflict polling to prevent miss-use when
+				// an existing mutation must have been discovered before it's safe to overwrite.  This logic
+				// is unneccessary, as is the forwards compatibility check when resolving conflicted inserts
+				// so we can safely just ignore it.
+				if meta.TransactionID == t.transactionID && meta.AttemptID == t.id {
+					t.stageInsert(agent, scopeName, collectionName, key, value, cas, replaceOfInsert, cb)
 					return
 				}
 
@@ -161,7 +200,14 @@ func (t *transactionAttempt) resolveConflictedInsert(
 						return
 					}
 
-					t.stageInsert(agent, scopeName, collectionName, key, value, cas, replaceOfInsert, cb)
+					t.cleanupStagedInsert(agent, scopeName, collectionName, key, cas, isTombstone, func(cas gocbcore.Cas, err *TransactionOperationFailedError) {
+						if err != nil {
+							cb(nil, err)
+							return
+						}
+
+						t.stageInsert(agent, scopeName, collectionName, key, value, cas, replaceOfInsert, cb)
+					})
 				})
 			})
 		})
@@ -353,11 +399,11 @@ func (t *transactionAttempt) getMetaForConflictedInsert(
 	scopeName string,
 	collectionName string,
 	key []byte,
-	cb func(gocbcore.Cas, *MutableItemMeta, *TransactionOperationFailedError),
+	cb func(bool, *jsonTxnXattr, gocbcore.Cas, *TransactionOperationFailedError),
 ) {
-	ecCb := func(cas gocbcore.Cas, meta *MutableItemMeta, cerr *classifiedError) {
+	ecCb := func(isTombstone bool, meta *jsonTxnXattr, cas gocbcore.Cas, cerr *classifiedError) {
 		if cerr == nil {
-			cb(cas, meta, nil)
+			cb(isTombstone, meta, cas, nil)
 			return
 		}
 
@@ -367,14 +413,14 @@ func (t *transactionAttempt) getMetaForConflictedInsert(
 		case ErrorClassFailPathNotFound:
 			fallthrough
 		case ErrorClassFailTransient:
-			cb(0, nil, t.operationFailed(operationFailedDef{
+			cb(isTombstone, nil, 0, t.operationFailed(operationFailedDef{
 				Cerr:              cerr,
 				ShouldNotRetry:    false,
 				ShouldNotRollback: false,
 				Reason:            ErrorReasonTransactionFailed,
 			}))
 		default:
-			cb(0, nil, t.operationFailed(operationFailedDef{
+			cb(isTombstone, nil, 0, t.operationFailed(operationFailedDef{
 				Cerr:              cerr,
 				ShouldNotRetry:    true,
 				ShouldNotRollback: false,
@@ -385,7 +431,7 @@ func (t *transactionAttempt) getMetaForConflictedInsert(
 
 	t.hooks.BeforeGetDocInExistsDuringStagedInsert(key, func(err error) {
 		if err != nil {
-			ecCb(0, nil, classifyHookError(err))
+			ecCb(false, nil, 0, classifyHookError(err))
 			return
 		}
 
@@ -409,7 +455,7 @@ func (t *transactionAttempt) getMetaForConflictedInsert(
 			Flags:    memd.SubdocDocFlagAccessDeleted,
 		}, func(result *gocbcore.LookupInResult, err error) {
 			if err != nil {
-				ecCb(0, nil, classifyError(err))
+				ecCb(false, nil, 0, classifyError(err))
 				return
 			}
 
@@ -417,7 +463,7 @@ func (t *transactionAttempt) getMetaForConflictedInsert(
 			if result.Ops[0].Err == nil {
 				var txnMetaVal jsonTxnXattr
 				if err := json.Unmarshal(result.Ops[0].Value, &txnMetaVal); err != nil {
-					ecCb(0, nil, &classifiedError{
+					ecCb(false, nil, 0, &classifiedError{
 						Source: err,
 						Class:  ErrorClassFailOther,
 					})
@@ -426,34 +472,85 @@ func (t *transactionAttempt) getMetaForConflictedInsert(
 				txnMeta = &txnMetaVal
 			}
 
-			if txnMeta == nil {
-				// This doc isn't in a transaction
-				if !result.Internal.IsDeleted {
-					ecCb(0, nil, &classifiedError{
-						Source: ErrDocumentAlreadyExists,
-						Class:  ErrorClassFailDocAlreadyExists,
-					})
-					return
-				}
+			isTombstone := result.Internal.IsDeleted
+			ecCb(isTombstone, txnMeta, result.Cas, nil)
+		})
+		if err != nil {
+			ecCb(false, nil, 0, classifyError(err))
+			return
+		}
+	})
+}
 
-				ecCb(result.Cas, nil, nil)
+func (t *transactionAttempt) cleanupStagedInsert(
+	agent *gocbcore.Agent,
+	scopeName string,
+	collectionName string,
+	key []byte,
+	cas gocbcore.Cas,
+	isTombstone bool,
+	cb func(gocbcore.Cas, *TransactionOperationFailedError),
+) {
+	ecCb := func(cas gocbcore.Cas, cerr *classifiedError) {
+		if cerr == nil {
+			cb(cas, nil)
+			return
+		}
+
+		switch cerr.Class {
+		case ErrorClassFailDocNotFound:
+			fallthrough
+		case ErrorClassFailCasMismatch:
+			fallthrough
+		case ErrorClassFailTransient:
+			cb(0, t.operationFailed(operationFailedDef{
+				Cerr:              cerr,
+				ShouldNotRetry:    false,
+				ShouldNotRollback: false,
+				Reason:            ErrorReasonTransactionFailed,
+			}))
+		default:
+			cb(0, t.operationFailed(operationFailedDef{
+				Cerr:              cerr,
+				ShouldNotRetry:    true,
+				ShouldNotRollback: false,
+				Reason:            ErrorReasonTransactionFailed,
+			}))
+		}
+	}
+
+	if isTombstone {
+		// This is already a tombstone, so we can just proceed.
+		ecCb(cas, nil)
+		return
+	}
+
+	t.hooks.BeforeRemovingDocDuringStagedInsert(key, func(err error) {
+		if err != nil {
+			ecCb(0, classifyHookError(err))
+			return
+		}
+
+		var deadline time.Time
+		if t.operationTimeout > 0 {
+			deadline = time.Now().Add(t.operationTimeout)
+		}
+
+		_, err = agent.Delete(gocbcore.DeleteOptions{
+			ScopeName:      scopeName,
+			CollectionName: collectionName,
+			Key:            key,
+			Deadline:       deadline,
+		}, func(result *gocbcore.DeleteResult, err error) {
+			if err != nil {
+				ecCb(0, classifyError(err))
 				return
 			}
 
-			ecCb(result.Cas, &MutableItemMeta{
-				TransactionID: txnMeta.ID.Transaction,
-				AttemptID:     txnMeta.ID.Attempt,
-				ATR: MutableItemMetaATR{
-					BucketName:     txnMeta.ATR.BucketName,
-					ScopeName:      txnMeta.ATR.ScopeName,
-					CollectionName: txnMeta.ATR.CollectionName,
-					DocID:          txnMeta.ATR.DocID,
-				},
-				ForwardCompat: jsonForwardCompatToForwardCompat(txnMeta.ForwardCompat),
-			}, nil)
+			ecCb(result.Cas, nil)
 		})
 		if err != nil {
-			ecCb(0, nil, classifyError(err))
+			ecCb(0, classifyError(err))
 			return
 		}
 	})

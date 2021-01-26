@@ -22,6 +22,7 @@ func ProtocolExtensions() []string {
 		"EXT_MEMORY_OPT_UNSTAGING",
 		"EXT_BINARY_METADATA",
 		"EXT_CUSTOM_METADATA_COLLECTION",
+		"BF_CBD_3787",
 	}
 }
 
