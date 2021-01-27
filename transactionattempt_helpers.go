@@ -415,16 +415,9 @@ func (t *transactionAttempt) getTxnState(
 			// entry data available for that atr entry.
 			cb(nil, nil)
 		case ErrorClassFailDocNotFound:
-			cb(nil, t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: cerr.Source,
-					Class:  ErrorClassFailOther,
-				},
-				CanStillCommit:    forceNonFatal,
-				ShouldNotRetry:    true,
-				ShouldNotRollback: false,
-				Reason:            ErrorReasonTransactionFailed,
-			}))
+			// If the ATR is not found, we just return as if there was no
+			// entry data available for that atr entry.
+			cb(nil, nil)
 		default:
 			cb(nil, t.operationFailed(operationFailedDef{
 				Cerr: &classifiedError{
