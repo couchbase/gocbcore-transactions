@@ -485,6 +485,7 @@ func (t *transactionAttempt) getTxnState(
 					Source: err,
 					Class:  ErrorClassFailOther,
 				})
+				return
 			}
 
 			ecCb(txnAttempt, nil)
