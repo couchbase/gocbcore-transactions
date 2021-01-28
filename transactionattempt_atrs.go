@@ -139,12 +139,7 @@ func (t *transactionAttempt) setATRPendingLocked(
 				return
 			}
 
-			var deadline time.Time
-			var duraTimeout time.Duration
-			if t.operationTimeout > 0 {
-				deadline = time.Now().Add(t.operationTimeout)
-				duraTimeout = t.operationTimeout * 10 / 9
-			}
+			deadline, duraTimeout := mutationTimeouts(t.operationTimeout, t.durabilityLevel)
 
 			var marshalErr error
 			atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag) gocbcore.SubDocOp {
@@ -539,12 +534,7 @@ func (t *transactionAttempt) setATRCommittedLocked(
 				return
 			}
 
-			var duraTimeout time.Duration
-			var deadline time.Time
-			if t.operationTimeout > 0 {
-				duraTimeout = t.operationTimeout * 10 / 9
-				deadline = time.Now().Add(t.operationTimeout)
-			}
+			deadline, duraTimeout := mutationTimeouts(t.operationTimeout, t.durabilityLevel)
 
 			var marshalErr error
 			atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag, op memd.SubDocOpType) gocbcore.SubDocOp {
@@ -684,12 +674,7 @@ func (t *transactionAttempt) setATRCompletedLocked(
 				return
 			}
 
-			var duraTimeout time.Duration
-			var deadline time.Time
-			if t.operationTimeout > 0 {
-				duraTimeout = t.operationTimeout * 10 / 9
-				deadline = time.Now().Add(t.operationTimeout)
-			}
+			deadline, duraTimeout := mutationTimeouts(t.operationTimeout, t.durabilityLevel)
 
 			var marshalErr error
 			atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag) gocbcore.SubDocOp {
@@ -1037,12 +1022,7 @@ func (t *transactionAttempt) setATRAbortedLocked(
 				return
 			}
 
-			var duraTimeout time.Duration
-			var deadline time.Time
-			if t.operationTimeout > 0 {
-				duraTimeout = t.operationTimeout * 10 / 9
-				deadline = time.Now().Add(t.operationTimeout)
-			}
+			deadline, duraTimeout := mutationTimeouts(t.operationTimeout, t.durabilityLevel)
 
 			var marshalErr error
 			atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag) gocbcore.SubDocOp {
@@ -1196,12 +1176,7 @@ func (t *transactionAttempt) setATRRolledBackLocked(
 				return
 			}
 
-			var duraTimeout time.Duration
-			var deadline time.Time
-			if t.operationTimeout > 0 {
-				duraTimeout = t.operationTimeout * 10 / 9
-				deadline = time.Now().Add(t.operationTimeout)
-			}
+			deadline, duraTimeout := mutationTimeouts(t.operationTimeout, t.durabilityLevel)
 
 			var marshalErr error
 			atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag) gocbcore.SubDocOp {

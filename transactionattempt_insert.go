@@ -320,12 +320,7 @@ func (t *transactionAttempt) stageInsert(
 				return
 			}
 
-			var duraTimeout time.Duration
-			var deadline time.Time
-			if t.operationTimeout > 0 {
-				duraTimeout = t.operationTimeout * 10 / 9
-				deadline = time.Now().Add(t.operationTimeout)
-			}
+			deadline, duraTimeout := mutationTimeouts(t.operationTimeout, t.durabilityLevel)
 
 			flags := memd.SubdocDocFlagCreateAsDeleted | memd.SubdocDocFlagAccessDeleted
 			var txnOp memd.SubDocOpType

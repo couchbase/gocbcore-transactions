@@ -2,8 +2,6 @@ package transactions
 
 import (
 	"encoding/json"
-	"time"
-
 	"github.com/couchbase/gocbcore/v9"
 	"github.com/couchbase/gocbcore/v9/memd"
 	"github.com/pkg/errors"
@@ -270,12 +268,7 @@ func (t *transactionAttempt) stageRemove(
 				return
 			}
 
-			var duraTimeout time.Duration
-			var deadline time.Time
-			if t.operationTimeout > 0 {
-				duraTimeout = t.operationTimeout * 10 / 9
-				deadline = time.Now().Add(t.operationTimeout)
-			}
+			deadline, duraTimeout := mutationTimeouts(t.operationTimeout, t.durabilityLevel)
 
 			flags := memd.SubdocDocFlagAccessDeleted
 
@@ -435,12 +428,7 @@ func (t *transactionAttempt) stageRemoveOfInsert(
 			return
 		}
 
-		var duraTimeout time.Duration
-		var deadline time.Time
-		if t.operationTimeout > 0 {
-			duraTimeout = t.operationTimeout * 10 / 9
-			deadline = time.Now().Add(t.operationTimeout)
-		}
+		deadline, duraTimeout := mutationTimeouts(t.operationTimeout, t.durabilityLevel)
 
 		_, err = agent.MutateIn(gocbcore.MutateInOptions{
 			ScopeName:      scopeName,
