@@ -66,21 +66,21 @@ type ProcessATRStats struct {
 // LostTransactionCleaner is responsible for cleaning up lost transactions.
 // Internal: This should never be used and is not supported.
 type LostTransactionCleaner interface {
-	ProcessClient(agent *gocbcore.Agent, uuid string, cb func(*ClientRecordDetails, error))
-	ProcessATR(agent *gocbcore.Agent, atrID string, cb func([]CleanupAttempt, ProcessATRStats))
+	ProcessClient(agent *gocbcore.Agent, collection, scope, uuid string, cb func(*ClientRecordDetails, error))
+	ProcessATR(agent *gocbcore.Agent, collection, scope, atrID string, cb func([]CleanupAttempt, ProcessATRStats))
 	RemoveClientFromAllBuckets(uuid string) error
 	Close()
 }
 
 type lostTransactionCleaner interface {
-	AddBucket(bucket string)
+	AddATRLocation(location LostATRLocation)
 	Close()
 }
 
 type noopLostTransactionCleaner struct {
 }
 
-func (ltc *noopLostTransactionCleaner) AddBucket(bucket string) {
+func (ltc *noopLostTransactionCleaner) AddATRLocation(location LostATRLocation) {
 }
 
 func (ltc *noopLostTransactionCleaner) Close() {
@@ -95,11 +95,16 @@ type stdLostTransactionCleaner struct {
 	cleaner             Cleaner
 	operationTimeout    time.Duration
 	bucketAgentProvider BucketAgentProviderFn
-	buckets             map[string]struct{}
-	bucketsLock         sync.Mutex
-	newBucketCh         chan string
+	locations           map[LostATRLocation]chan struct{}
+	locationsLock       sync.Mutex
+	newLocationCh       chan lostATRLocationWithShutdown
 	stop                chan struct{}
-	bucketListProvider  BucketListProviderFn
+	atrLocationFinder   LostCleanupATRLocationProviderFn
+}
+
+type lostATRLocationWithShutdown struct {
+	location LostATRLocation
+	shutdown chan struct{}
 }
 
 // NewLostTransactionCleaner returns new lost transaction cleaner.
@@ -118,10 +123,10 @@ func newStdLostTransactionCleaner(config *Config) *stdLostTransactionCleaner {
 		cleaner:             NewCleaner(config),
 		operationTimeout:    config.KeyValueTimeout,
 		bucketAgentProvider: config.BucketAgentProvider,
-		buckets:             make(map[string]struct{}),
-		newBucketCh:         make(chan string, 20), // Buffer of 20 should be plenty
+		locations:           make(map[LostATRLocation]chan struct{}),
+		newLocationCh:       make(chan lostATRLocationWithShutdown, 20), // Buffer of 20 should be plenty
 		stop:                make(chan struct{}),
-		bucketListProvider:  config.BucketListProvider,
+		atrLocationFinder:   config.LostCleanupATRLocationProvider,
 	}
 }
 
@@ -137,13 +142,14 @@ func startLostTransactionCleaner(config *Config) *stdLostTransactionCleaner {
 
 func (ltc *stdLostTransactionCleaner) start() {
 	go func() {
-		ltc.pollForBuckets()
+		for {
+			ltc.pollForLocations()
 
-		select {
-		case <-ltc.stop:
-			return
-		case <-time.After(10 * time.Minute):
-			ltc.pollForBuckets()
+			select {
+			case <-ltc.stop:
+				return
+			case <-time.After(10 * time.Minute):
+			}
 		}
 	}()
 
@@ -151,29 +157,33 @@ func (ltc *stdLostTransactionCleaner) start() {
 		select {
 		case <-ltc.stop:
 			return
-		case bucket := <-ltc.newBucketCh:
-			agent, err := ltc.bucketAgentProvider(bucket)
+		case location := <-ltc.newLocationCh:
+			agent, err := ltc.bucketAgentProvider(location.location.BucketName)
 			if err != nil {
-				logDebugf("Failed to fetch agent for %s:, err: %v",
-					bucket, err)
+				logDebugf("Failed to fetch agent for %v:, err: %v",
+					location, err)
 				// We should probably do something here...
 				return
 			}
-			go ltc.perBucket(agent)
+			go ltc.perLocation(agent, location.location.CollectionName, location.location.ScopeName, location.shutdown)
 		}
 	}
 }
 
-func (ltc *stdLostTransactionCleaner) AddBucket(bucket string) {
-	ltc.bucketsLock.Lock()
-	if _, ok := ltc.buckets[bucket]; ok {
-		ltc.bucketsLock.Unlock()
+func (ltc *stdLostTransactionCleaner) AddATRLocation(location LostATRLocation) {
+	ltc.locationsLock.Lock()
+	if _, ok := ltc.locations[location]; ok {
+		ltc.locationsLock.Unlock()
 		return
 	}
-	ltc.buckets[bucket] = struct{}{}
-	ltc.bucketsLock.Unlock()
-	logDebugf("Adding bucket %s to lost cleanup", bucket)
-	ltc.newBucketCh <- bucket
+	ch := make(chan struct{})
+	ltc.locations[location] = ch
+	ltc.locationsLock.Unlock()
+	logDebugf("Adding location %v to lost cleanup", location)
+	ltc.newLocationCh <- lostATRLocationWithShutdown{
+		location: location,
+		shutdown: ch,
+	}
 }
 
 func (ltc *stdLostTransactionCleaner) Close() {
@@ -182,51 +192,52 @@ func (ltc *stdLostTransactionCleaner) Close() {
 }
 
 func (ltc *stdLostTransactionCleaner) RemoveClientFromAllBuckets(uuid string) error {
-	ltc.bucketsLock.Lock()
-	buckets := ltc.buckets
-	ltc.bucketsLock.Unlock()
-	if ltc.bucketListProvider != nil {
-		bs, err := ltc.bucketListProvider()
+	ltc.locationsLock.Lock()
+	locations := ltc.locations
+	ltc.locationsLock.Unlock()
+	if ltc.atrLocationFinder != nil {
+		bs, err := ltc.atrLocationFinder()
 		if err != nil {
+			logDebugf("Failed to get atr locations: %v", err)
 			return err
 		}
 
 		for _, b := range bs {
-			if _, ok := buckets[b]; !ok {
-				buckets[b] = struct{}{}
+			if _, ok := locations[b]; !ok {
+				locations[b] = make(chan struct{})
 			}
 		}
 	}
 
-	return ltc.removeClient(uuid, buckets)
+	return ltc.removeClient(uuid, locations)
 }
 
-func (ltc *stdLostTransactionCleaner) removeClient(uuid string, buckets map[string]struct{}) error {
+func (ltc *stdLostTransactionCleaner) removeClient(uuid string, locations map[LostATRLocation]chan struct{}) error {
 	var err error
 	var wg sync.WaitGroup
-	for bucket := range buckets {
+	for l := range locations {
 		wg.Add(1)
-		func(bucketName string) {
+		func(location LostATRLocation) {
 			// There's a possible race between here and the client record being updated/created.
 			// If that happens then it'll be expired and removed by another client anyway
 			deadline := time.Now().Add(500 * time.Millisecond)
 
-			ltc.unregisterClientRecord(bucketName, uuid, deadline, func(unregErr error) {
+			ltc.unregisterClientRecord(location, uuid, deadline, func(unregErr error) {
 				if unregErr != nil {
-					logDebugf("Failed to unregister %s from cleanup record on from bucket %s", uuid, bucket)
+					logDebugf("Failed to unregister %s from cleanup record on from location %v", uuid, location)
 					err = unregErr
 				}
 				wg.Done()
 			})
-		}(bucket)
+		}(l)
 	}
 	wg.Wait()
 
 	return err
 }
 
-func (ltc *stdLostTransactionCleaner) unregisterClientRecord(bucket, uuid string, deadline time.Time, cb func(error)) {
-	agent, err := ltc.bucketAgentProvider(bucket)
+func (ltc *stdLostTransactionCleaner) unregisterClientRecord(location LostATRLocation, uuid string, deadline time.Time, cb func(error)) {
+	agent, err := ltc.bucketAgentProvider(location.BucketName)
 	if err != nil {
 		select {
 		case <-time.After(deadline.Sub(time.Now())):
@@ -234,7 +245,7 @@ func (ltc *stdLostTransactionCleaner) unregisterClientRecord(bucket, uuid string
 			return
 		case <-time.After(10 * time.Millisecond):
 		}
-		ltc.unregisterClientRecord(bucket, uuid, deadline, cb)
+		ltc.unregisterClientRecord(location, uuid, deadline, cb)
 		return
 	}
 
@@ -251,7 +262,7 @@ func (ltc *stdLostTransactionCleaner) unregisterClientRecord(bucket, uuid string
 				return
 			case <-time.After(10 * time.Millisecond):
 			}
-			ltc.unregisterClientRecord(bucket, uuid, deadline, cb)
+			ltc.unregisterClientRecord(location, uuid, deadline, cb)
 			return
 		}
 
@@ -269,7 +280,9 @@ func (ltc *stdLostTransactionCleaner) unregisterClientRecord(bucket, uuid string
 					Path:  "records.clients." + uuid,
 				},
 			},
-			Deadline: opDeadline,
+			Deadline:       opDeadline,
+			CollectionName: location.CollectionName,
+			ScopeName:      location.ScopeName,
 		}, func(result *gocbcore.MutateInResult, err error) {
 			if err != nil {
 				if errors.Is(err, gocbcore.ErrDocumentNotFound) || errors.Is(err, gocbcore.ErrPathNotFound) {
@@ -283,7 +296,7 @@ func (ltc *stdLostTransactionCleaner) unregisterClientRecord(bucket, uuid string
 					return
 				case <-time.After(10 * time.Millisecond):
 				}
-				ltc.unregisterClientRecord(bucket, uuid, deadline, cb)
+				ltc.unregisterClientRecord(location, uuid, deadline, cb)
 				return
 			}
 
@@ -296,20 +309,22 @@ func (ltc *stdLostTransactionCleaner) unregisterClientRecord(bucket, uuid string
 				return
 			case <-time.After(10 * time.Millisecond):
 			}
-			ltc.unregisterClientRecord(bucket, uuid, deadline, cb)
+			ltc.unregisterClientRecord(location, uuid, deadline, cb)
 			return
 		}
 	})
 }
 
-func (ltc *stdLostTransactionCleaner) perBucket(agent *gocbcore.Agent) {
-	ltc.process(agent, func(err error) {
+func (ltc *stdLostTransactionCleaner) perLocation(agent *gocbcore.Agent, collection, scope string, shutdownCh chan struct{}) {
+	ltc.process(agent, collection, scope, func(err error) {
 		if err != nil {
 			select {
 			case <-ltc.stop:
 				return
+			case <-shutdownCh:
+				return
 			case <-time.After(1 * time.Second):
-				ltc.perBucket(agent)
+				ltc.perLocation(agent, collection, scope, shutdownCh)
 				return
 			}
 		}
@@ -317,14 +332,16 @@ func (ltc *stdLostTransactionCleaner) perBucket(agent *gocbcore.Agent) {
 		select {
 		case <-ltc.stop:
 			return
+		case <-shutdownCh:
+			return
 		default:
 		}
-		ltc.perBucket(agent)
+		ltc.perLocation(agent, collection, scope, shutdownCh)
 	})
 }
 
-func (ltc *stdLostTransactionCleaner) process(agent *gocbcore.Agent, cb func(error)) {
-	ltc.ProcessClient(agent, ltc.uuid, func(recordDetails *ClientRecordDetails, err error) {
+func (ltc *stdLostTransactionCleaner) process(agent *gocbcore.Agent, collection, scope string, cb func(error)) {
+	ltc.ProcessClient(agent, collection, scope, ltc.uuid, func(recordDetails *ClientRecordDetails, err error) {
 		if err != nil {
 			logDebugf("Failed to process client %s on bucket %s", ltc.uuid, agent.BucketName())
 			cb(err)
@@ -344,7 +361,7 @@ func (ltc *stdLostTransactionCleaner) process(agent *gocbcore.Agent, cb func(err
 				}
 
 				waitCh := make(chan struct{}, 1)
-				ltc.ProcessATR(agent, atr, func(attempts []CleanupAttempt, _ ProcessATRStats) {
+				ltc.ProcessATR(agent, collection, scope, atr, func(attempts []CleanupAttempt, _ ProcessATRStats) {
 					// We don't actually care what happened
 					waitCh <- struct{}{}
 				})
@@ -357,7 +374,7 @@ func (ltc *stdLostTransactionCleaner) process(agent *gocbcore.Agent, cb func(err
 }
 
 // We pass uuid to this so that it's testable externally.
-func (ltc *stdLostTransactionCleaner) ProcessClient(agent *gocbcore.Agent, uuid string, cb func(*ClientRecordDetails, error)) {
+func (ltc *stdLostTransactionCleaner) ProcessClient(agent *gocbcore.Agent, collection, scope, uuid string, cb func(*ClientRecordDetails, error)) {
 	ltc.clientRecordHooks.BeforeGetRecord(func(err error) {
 		if err != nil {
 			ec := classifyHookError(err)
@@ -389,7 +406,9 @@ func (ltc *stdLostTransactionCleaner) ProcessClient(agent *gocbcore.Agent, uuid 
 					Flags: memd.SubdocFlagXattrPath,
 				},
 			},
-			Deadline: deadline,
+			Deadline:       deadline,
+			CollectionName: collection,
+			ScopeName:      scope,
 		}, func(result *gocbcore.LookupInResult, err error) {
 			if err != nil {
 				ec := classifyError(err)
@@ -402,7 +421,7 @@ func (ltc *stdLostTransactionCleaner) ProcessClient(agent *gocbcore.Agent, uuid 
 							return
 						}
 
-						ltc.ProcessClient(agent, uuid, cb)
+						ltc.ProcessClient(agent, collection, scope, uuid, cb)
 					})
 				default:
 					cb(nil, err)
@@ -454,7 +473,7 @@ func (ltc *stdLostTransactionCleaner) ProcessClient(agent *gocbcore.Agent, uuid 
 				return
 			}
 
-			ltc.processClientRecord(agent, uuid, recordDetails, func(err error) {
+			ltc.processClientRecord(agent, collection, scope, uuid, recordDetails, func(err error) {
 				if err != nil {
 					cb(nil, err)
 					return
@@ -467,8 +486,8 @@ func (ltc *stdLostTransactionCleaner) ProcessClient(agent *gocbcore.Agent, uuid 
 	})
 }
 
-func (ltc *stdLostTransactionCleaner) ProcessATR(agent *gocbcore.Agent, atrID string, cb func([]CleanupAttempt, ProcessATRStats)) {
-	ltc.getATR(agent, atrID, func(attempts map[string]jsonAtrAttempt, hlc int, err error) {
+func (ltc *stdLostTransactionCleaner) ProcessATR(agent *gocbcore.Agent, collection, scope, atrID string, cb func([]CleanupAttempt, ProcessATRStats)) {
+	ltc.getATR(agent, collection, scope, atrID, func(attempts map[string]jsonAtrAttempt, hlc int, err error) {
 		if err != nil {
 			logDebugf("Failed to get atr %s on bucket %s", atrID, agent.BucketName())
 			cb(nil, ProcessATRStats{})
@@ -546,8 +565,8 @@ func (ltc *stdLostTransactionCleaner) ProcessATR(agent *gocbcore.Agent, atrID st
 					req := &CleanupRequest{
 						AttemptID:         key,
 						AtrID:             []byte(atrID),
-						AtrCollectionName: "_default",
-						AtrScopeName:      "_default",
+						AtrCollectionName: collection,
+						AtrScopeName:      scope,
 						AtrBucketName:     agent.BucketName(),
 						Inserts:           inserts,
 						Replaces:          replaces,
@@ -571,7 +590,7 @@ func (ltc *stdLostTransactionCleaner) ProcessATR(agent *gocbcore.Agent, atrID st
 	})
 }
 
-func (ltc *stdLostTransactionCleaner) getATR(agent *gocbcore.Agent, atrID string,
+func (ltc *stdLostTransactionCleaner) getATR(agent *gocbcore.Agent, collection, scope, atrID string,
 	cb func(map[string]jsonAtrAttempt, int, error)) {
 	ltc.cleanupHooks.BeforeATRGet([]byte(atrID), func(err error) {
 		if err != nil {
@@ -598,7 +617,9 @@ func (ltc *stdLostTransactionCleaner) getATR(agent *gocbcore.Agent, atrID string
 					Flags: memd.SubdocFlagXattrPath,
 				},
 			},
-			Deadline: deadline,
+			Deadline:       deadline,
+			CollectionName: collection,
+			ScopeName:      scope,
 		}, func(result *gocbcore.LookupInResult, err error) {
 			if err != nil {
 				cb(nil, 0, err)
@@ -723,7 +744,7 @@ func (ltc *stdLostTransactionCleaner) parseClientRecords(records jsonClientRecor
 	}, nil
 }
 
-func (ltc *stdLostTransactionCleaner) processClientRecord(agent *gocbcore.Agent, uuid string,
+func (ltc *stdLostTransactionCleaner) processClientRecord(agent *gocbcore.Agent, collection, scope, uuid string,
 	recordDetails ClientRecordDetails, cb func(error)) {
 	ltc.clientRecordHooks.BeforeUpdateRecord(func(err error) {
 		if err != nil {
@@ -767,6 +788,8 @@ func (ltc *stdLostTransactionCleaner) processClientRecord(agent *gocbcore.Agent,
 					Value: []byte{0},
 				},
 			},
+			CollectionName: collection,
+			ScopeName:      scope,
 		}
 
 		numOps := 12
@@ -857,20 +880,30 @@ func (ltc *stdLostTransactionCleaner) createClientRecord(agent *gocbcore.Agent, 
 	})
 }
 
-func (ltc *stdLostTransactionCleaner) pollForBuckets() error {
-	if ltc.bucketListProvider != nil {
-		buckets, err := ltc.bucketListProvider()
+func (ltc *stdLostTransactionCleaner) pollForLocations() {
+	if ltc.atrLocationFinder != nil {
+		locations, err := ltc.atrLocationFinder()
 		if err != nil {
-			logDebugf("Failed to poll for buckets")
-			return err
+			logDebugf("Failed to poll for locations: %v", err)
 		}
 
-		for _, bucket := range buckets {
-			ltc.AddBucket(bucket)
+		locationMap := make(map[LostATRLocation]struct{})
+		for _, location := range locations {
+			ltc.AddATRLocation(location)
+			locationMap[location] = struct{}{}
 		}
+
+		ltc.locationsLock.Lock()
+		for location, shutdown := range ltc.locations {
+			if _, ok := locationMap[location]; ok {
+				continue
+			}
+
+			close(shutdown)
+		}
+		ltc.locationsLock.Unlock()
 	}
 
-	return nil
 }
 
 func atrsToHandle(index int, numActive int, numAtrs int) []string {

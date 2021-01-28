@@ -12,8 +12,103 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestSomethingElse(t *testing.T) {
+	cluster, err := gocb.Connect("couchbase://10.112.210.101/", gocb.ClusterOptions{
+		Username: "Administrator",
+		Password: "password",
+	})
+	assert.NoError(t, err, "connect failed")
+
+	bucket := cluster.Bucket("default")
+	collection := bucket.DefaultCollection()
+
+	// Do the setup stuff
+
+	err = cluster.Buckets().FlushBucket("default", nil)
+	assert.NoError(t, err, "delete-all failed")
+	time.Sleep(1 * time.Second)
+
+	testDummy1 := map[string]string{"name": "joel"}
+	testDummy2 := []byte(`{"name":"mike"}`)
+	// insertDoc
+	_, err = collection.Upsert("replaceDoc", testDummy1, nil)
+	assert.NoError(t, err, "replaceDoc upsert failed")
+
+	// Setup Complete, start doing some work
+
+	agent, err := bucket.Internal().IORouter()
+	assert.NoError(t, err, "agent fetch failed")
+
+	testScopeName := ""
+	testCollectionName := ""
+
+	transactions, err := Init(&Config{
+		DurabilityLevel: DurabilityLevelNone,
+		BucketAgentProvider: func(bucketName string) (*gocbcore.Agent, error) {
+			// We can always return just this one agent as we only actually
+			// use a single bucket for this entire test.
+			return agent, nil
+		},
+		ExpirationTime:        30 * time.Second,
+		CleanupClientAttempts: true,
+	})
+	assert.NoError(t, err, "txn init failed")
+
+	txn, err := transactions.BeginTransaction(nil)
+	assert.NoError(t, err, "txn begin failed")
+
+	// Start the attempt
+	err = txn.NewAttempt()
+	assert.NoError(t, err, "txn attempt creation failed")
+	log.Printf("initial attempt: %+v", txn.attempt)
+
+	// INSERT - pre-serialization
+	insertRes, err := testBlkInsert(txn, InsertOptions{
+		Agent:          agent,
+		ScopeName:      testScopeName,
+		CollectionName: testCollectionName,
+		Key:            []byte(`insertDoc2`),
+		Value:          testDummy2,
+	})
+	assert.NoError(t, err, "insert of insertDoc failed")
+	log.Printf("insert of insertDoc result: %+v", insertRes)
+
+	err = testBlkCommit(txn)
+	assert.NoError(t, err, "commit of insertDoc failed")
+
+	txn, err = transactions.BeginTransaction(&PerTransactionConfig{
+		ExpirationTime: 3 * time.Second,
+	})
+	assert.NoError(t, err, "txn begin failed")
+
+	// Start the attempt
+	err = txn.NewAttempt()
+	assert.NoError(t, err, "txn attempt creation failed")
+	log.Printf("initial attempt: %+v", txn.attempt)
+
+	// INSERT - pre-serialization
+	insertRes, err = testBlkInsert(txn, InsertOptions{
+		Agent:          agent,
+		ScopeName:      testScopeName,
+		CollectionName: testCollectionName,
+		Key:            []byte(`insertDoc2`),
+		Value:          testDummy2,
+	})
+	assert.NoError(t, err, "insert of insertDoc failed")
+	log.Printf("insert of insertDoc result: %+v", insertRes)
+
+	err = testBlkCommit(txn)
+	// assert.NoError(t, err, "commit of insertDoc failed")
+	fmt.Println(transactions.cleaner.QueueLength())
+	time.Sleep(4 * time.Second)
+	fmt.Println(transactions.cleaner.QueueLength())
+
+	time.Sleep(31 * time.Second)
+	fmt.Println(transactions.cleaner.QueueLength())
+}
+
 func TestSomething(t *testing.T) {
-	cluster, err := gocb.Connect("couchbase://10.144.210.101/", gocb.ClusterOptions{
+	cluster, err := gocb.Connect("couchbase://10.112.210.101/", gocb.ClusterOptions{
 		Username: "Administrator",
 		Password: "password",
 	})

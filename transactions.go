@@ -234,7 +234,6 @@ func (t *Manager) Close() error {
 }
 
 func (t *Manager) addCleanupRequest(req *CleanupRequest) bool {
-	t.lostCleanup.AddBucket(req.AtrBucketName)
 	return t.cleaner.AddRequest(req)
 }
 

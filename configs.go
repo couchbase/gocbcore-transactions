@@ -68,13 +68,21 @@ type ATRLocation struct {
 	CollectionName string
 }
 
+// LostATRLocation specifies a specific location where lost transactions should
+// attempt cleanup.
+type LostATRLocation struct {
+	BucketName     string
+	ScopeName      string
+	CollectionName string
+}
+
 // BucketAgentProviderFn is a function used to provide an agent for
 // a particular bucket by name.
 type BucketAgentProviderFn func(bucketName string) (*gocbcore.Agent, error)
 
-// BucketListProviderFn is a function used to provide a list of buckets for use
-// in lost transaction cleanup.
-type BucketListProviderFn func() ([]string, error)
+// LostCleanupATRLocationProviderFn is a function used to provide a list of ATRLocations for
+// lost transactions cleanup.
+type LostCleanupATRLocationProviderFn func() ([]LostATRLocation, error)
 
 // BUG(TXNG-28): KeyValueTimeout, KvDurableTimeout are deprecated in Config.
 
@@ -117,9 +125,9 @@ type Config struct {
 	// a particular bucket by name.
 	BucketAgentProvider BucketAgentProviderFn
 
-	// BucketListProvider provides a function which returns a list of bucket names
+	// LostCleanupATRLocationProviderFn provides a function which returns a list of LostATRLocations
 	// for use in lost transaction cleanup.
-	BucketListProvider BucketListProviderFn
+	LostCleanupATRLocationProvider LostCleanupATRLocationProviderFn
 
 	// Internal specifies a set of options for internal use.
 	// Internal: This should never be used and is not supported.
