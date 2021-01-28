@@ -12,16 +12,38 @@ func mergeOperationFailedErrors(errs []*TransactionOperationFailedError) *Transa
 		return nil
 	}
 
-	err := errs[0]
-	for errIdx := 1; errIdx < len(errs); errIdx++ {
+	if len(errs) == 1 {
+		return errs[0]
+	}
+
+	shouldNotRetry := false
+	shouldNotRollback := false
+	aggCauses := aggregateError{}
+	shouldRaise := ErrorReasonTransactionFailed
+
+	for errIdx := 0; errIdx < len(errs); errIdx++ {
 		tErr := errs[errIdx]
 
-		if tErr.shouldRaise > err.shouldRaise {
-			err = tErr
+		aggCauses = append(aggCauses, tErr.errorCause)
+
+		if tErr.shouldNotRetry {
+			shouldNotRetry = true
+		}
+		if tErr.shouldNotRollback {
+			shouldNotRollback = true
+		}
+		if tErr.shouldRaise > shouldRaise {
+			shouldRaise = shouldRaise
 		}
 	}
 
-	return err
+	return &TransactionOperationFailedError{
+		shouldNotRetry:    shouldNotRetry,
+		shouldNotRollback: shouldNotRollback,
+		errorCause:        aggCauses,
+		shouldRaise:       shouldRaise,
+		errorClass:        ErrorClassFailOther,
+	}
 }
 
 type operationFailedDef struct {

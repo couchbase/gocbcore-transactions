@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/couchbase/gocbcore/v9"
 )
@@ -128,6 +129,29 @@ func (tfe TransactionOperationFailedError) ErrorClass() ErrorClass {
 type classifiedError struct {
 	Source error
 	Class  ErrorClass
+}
+
+type aggregateError []error
+
+func (agge aggregateError) MarshalJSON() ([]byte, error) {
+	return json.Marshal(agge)
+}
+
+func (agge aggregateError) Error() string {
+	errStrs := []string{}
+	for _, err := range agge {
+		errStrs = append(errStrs, err.Error())
+	}
+	return "[" + strings.Join(errStrs, ", ") + "]"
+}
+
+func (agge aggregateError) Is(err error) bool {
+	for _, aerr := range agge {
+		if errors.Is(aerr, err) {
+			return true
+		}
+	}
+	return false
 }
 
 type writeWriteConflictError struct {
