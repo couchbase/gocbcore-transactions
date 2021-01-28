@@ -455,14 +455,14 @@ func (ltc *stdLostTransactionCleaner) ProcessClient(agent *gocbcore.Agent, colle
 				return
 			}
 
-			nowSecs, err := strconv.Atoi(hlc.NowSecs)
+			nowSecs, err := strconv.ParseInt(hlc.NowSecs, 10, 64)
 			if err != nil {
 				cb(nil, err)
 				return
 			}
 			nowMS := nowSecs * 1000 // we need it in millis
 
-			recordDetails, err := ltc.parseClientRecords(records, uuid, int64(nowMS))
+			recordDetails, err := ltc.parseClientRecords(records, uuid, nowMS)
 			if err != nil {
 				cb(nil, err)
 				return
@@ -487,7 +487,7 @@ func (ltc *stdLostTransactionCleaner) ProcessClient(agent *gocbcore.Agent, colle
 }
 
 func (ltc *stdLostTransactionCleaner) ProcessATR(agent *gocbcore.Agent, collection, scope, atrID string, cb func([]CleanupAttempt, ProcessATRStats)) {
-	ltc.getATR(agent, collection, scope, atrID, func(attempts map[string]jsonAtrAttempt, hlc int, err error) {
+	ltc.getATR(agent, collection, scope, atrID, func(attempts map[string]jsonAtrAttempt, hlc int64, err error) {
 		if err != nil {
 			logDebugf("Failed to get atr %s on bucket %s", atrID, agent.BucketName())
 			cb(nil, ProcessATRStats{})
@@ -591,7 +591,7 @@ func (ltc *stdLostTransactionCleaner) ProcessATR(agent *gocbcore.Agent, collecti
 }
 
 func (ltc *stdLostTransactionCleaner) getATR(agent *gocbcore.Agent, collection, scope, atrID string,
-	cb func(map[string]jsonAtrAttempt, int, error)) {
+	cb func(map[string]jsonAtrAttempt, int64, error)) {
 	ltc.cleanupHooks.BeforeATRGet([]byte(atrID), func(err error) {
 		if err != nil {
 			cb(nil, 0, err)
@@ -650,7 +650,7 @@ func (ltc *stdLostTransactionCleaner) getATR(agent *gocbcore.Agent, collection, 
 				return
 			}
 
-			nowSecs, err := strconv.Atoi(hlc.NowSecs)
+			nowSecs, err := strconv.ParseInt(hlc.NowSecs, 10, 64)
 			if err != nil {
 				cb(nil, 0, err)
 				return
