@@ -13,7 +13,7 @@ import (
 
 func TestParseCas(t *testing.T) {
 	// assertEquals(1539336197457L, ActiveTransactionRecord.parseMutationCAS("0x000058a71dd25c15"));
-	cas, err := parseMutationCAS("0x000058a71dd25c15")
+	cas, err := parseCASToMilliseconds("0x000058a71dd25c15")
 	if err != nil {
 		t.Fatalf("Failed to parse cas: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestLostCleanupProcessATR(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	wait := make(chan []CleanupAttempt)
-	cleaner.ProcessATR(agent, string(a.AtrID), func(attempts []CleanupAttempt, stats ProcessATRStats) {
+	cleaner.ProcessATR(agent, "", "", string(a.AtrID), func(attempts []CleanupAttempt, stats ProcessATRStats) {
 		wait <- attempts
 	})
 
@@ -247,13 +247,15 @@ func TestLostCleanupProcessClient(t *testing.T) {
 	config.Internal.ClientRecordHooks = &DefaultClientRecordHooks{}
 	config.Internal.NumATRs = 1024
 	cleaner := newStdLostTransactionCleaner(config)
-	cleaner.buckets = map[string]struct{}{
-		bucket.Name(): {},
+	cleaner.locations = map[LostATRLocation]chan struct{}{
+		LostATRLocation{
+			BucketName: "default",
+		}: make(chan struct{}),
 	}
 	time.Sleep(2 * time.Second)
 
 	wait := make(chan error, 1)
-	cleaner.process(agent, func(err error) {
+	cleaner.process(agent, "", "", func(err error) {
 		wait <- err
 	})
 	err = <-wait
@@ -445,7 +447,7 @@ func TestLostCleanupCleansUpExpiredClients(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
 	wait := make(chan error, 1)
-	cleaner.ProcessClient(agent, clientUUID, func(details *ClientRecordDetails, err error) {
+	cleaner.ProcessClient(agent, "", "", clientUUID, func(details *ClientRecordDetails, err error) {
 		wait <- err
 	})
 	err = <-wait
