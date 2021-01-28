@@ -3,11 +3,8 @@ package transactions
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
-	"log"
 	"math"
 	"sort"
-	"strconv"
 	"sync"
 	"time"
 
@@ -455,7 +452,7 @@ func (ltc *stdLostTransactionCleaner) ProcessClient(agent *gocbcore.Agent, colle
 				return
 			}
 
-			nowSecs, err := strconv.ParseInt(hlc.NowSecs, 10, 64)
+			nowSecs, err := parseHLCToSeconds(hlc)
 			if err != nil {
 				cb(nil, err)
 				return
@@ -512,7 +509,7 @@ func (ltc *stdLostTransactionCleaner) ProcessATR(agent *gocbcore.Agent, collecti
 					return
 				default:
 				}
-				parsedCAS, err := parseMutationCAS(attempt.PendingCAS)
+				parsedCAS, err := parseCASToMilliseconds(attempt.PendingCAS)
 				if err != nil {
 					cb(nil, ProcessATRStats{})
 					return
@@ -650,7 +647,7 @@ func (ltc *stdLostTransactionCleaner) getATR(agent *gocbcore.Agent, collection, 
 				return
 			}
 
-			nowSecs, err := strconv.ParseInt(hlc.NowSecs, 10, 64)
+			nowSecs, err := parseHLCToSeconds(hlc)
 			if err != nil {
 				cb(nil, 0, err)
 				return
@@ -678,7 +675,7 @@ func (ltc *stdLostTransactionCleaner) parseClientRecords(records jsonClientRecor
 			continue
 		}
 
-		heartbeatMS, err := parseMutationCAS(client.HeartbeatMS)
+		heartbeatMS, err := parseCASToMilliseconds(client.HeartbeatMS)
 		if err != nil {
 			return ClientRecordDetails{}, err
 		}
@@ -914,55 +911,4 @@ func atrsToHandle(index int, numActive int, numAtrs int) []string {
 	}
 
 	return selectedAtrs
-}
-
-// From Java impl:
-// ${Mutation.CAS} is written by kvengine with 'macroToString(htonll(info.cas))'.  Discussed this with KV team and,
-// though there is consensus that this is off (htonll is definitely wrong, and a string is an odd choice), there are
-// clients (SyncGateway) that consume the current string, so it can't be changed.  Note that only little-endian
-// servers are supported for Couchbase, so the 8 byte long inside the string will always be little-endian ordered.
-//
-// Looks like: "0x000058a71dd25c15"
-// Want:        0x155CD21DA7580000   (1539336197457313792 in base10, an epoch time in millionths of a second)
-func parseMutationCAS(in string) (int64, error) {
-	if len(in) < 18 {
-		log.Printf("Invalid mutation cas value seen in cleanup: %s", in)
-		return 0, errors.New("invalid cas value provided")
-	}
-	offsetIndex := 2 // for the initial "0x"
-	result := int64(0)
-
-	for octetIndex := 7; octetIndex >= 0; octetIndex-- {
-		char1 := in[offsetIndex+(octetIndex*2)]
-		char2 := in[offsetIndex+(octetIndex*2)+1]
-
-		octet1 := int64(0)
-		octet2 := int64(0)
-
-		if char1 >= 'a' && char1 <= 'f' {
-			octet1 = int64(char1 - 'a' + 10)
-		} else if char1 >= 'A' && char1 <= 'F' {
-			octet1 = int64(char1 - 'A' + 10)
-		} else if char1 >= '0' && char1 <= '9' {
-			octet1 = int64(char1 - '0')
-		} else {
-			return 0, fmt.Errorf("could not parse CAS: %s", in)
-		}
-
-		if char2 >= 'a' && char2 <= 'f' {
-			octet2 = int64(char2 - 'a' + 10)
-		} else if char2 >= 'A' && char2 <= 'F' {
-			octet2 = int64(char2 - 'A' + 10)
-		} else if char2 >= '0' && char2 <= '9' {
-			octet2 = int64(char2 - '0')
-		} else {
-			return 0, fmt.Errorf("could not parse CAS: %s", in)
-		}
-
-		result |= octet1 << ((octetIndex * 8) + 4)
-		result |= octet2 << (octetIndex * 8)
-	}
-
-	// It's in millionths of a second
-	return result / 1000000, nil
 }

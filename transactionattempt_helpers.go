@@ -401,11 +401,11 @@ func (t *transactionAttempt) getTxnState(
 	atrDocID string,
 	attemptID string,
 	forceNonFatal bool,
-	cb func(*jsonAtrAttempt, *TransactionOperationFailedError),
+	cb func(*jsonAtrAttempt, time.Time, *TransactionOperationFailedError),
 ) {
-	ecCb := func(res *jsonAtrAttempt, cerr *classifiedError) {
+	ecCb := func(res *jsonAtrAttempt, txnExp time.Time, cerr *classifiedError) {
 		if cerr == nil {
-			cb(res, nil)
+			cb(res, txnExp, nil)
 			return
 		}
 
@@ -413,13 +413,13 @@ func (t *transactionAttempt) getTxnState(
 		case ErrorClassFailPathNotFound:
 			// If the path is not found, we just return as if there was no
 			// entry data available for that atr entry.
-			cb(nil, nil)
+			cb(nil, time.Time{}, nil)
 		case ErrorClassFailDocNotFound:
 			// If the ATR is not found, we just return as if there was no
 			// entry data available for that atr entry.
-			cb(nil, nil)
+			cb(nil, time.Time{}, nil)
 		default:
-			cb(nil, t.operationFailed(operationFailedDef{
+			cb(nil, time.Time{}, t.operationFailed(operationFailedDef{
 				Cerr: &classifiedError{
 					Source: &writeWriteConflictError{
 						Source:         cerr.Source,
@@ -440,13 +440,13 @@ func (t *transactionAttempt) getTxnState(
 
 	atrAgent, err := t.bucketAgentProvider(atrBucketName)
 	if err != nil {
-		ecCb(nil, classifyError(err))
+		ecCb(nil, time.Time{}, classifyError(err))
 		return
 	}
 
 	t.hooks.BeforeCheckATREntryForBlockingDoc([]byte(atrDocID), func(err error) {
 		if err != nil {
-			ecCb(nil, classifyHookError(err))
+			ecCb(nil, time.Time{}, classifyHookError(err))
 			return
 		}
 
@@ -465,33 +465,73 @@ func (t *transactionAttempt) getTxnState(
 					Path:  "attempts." + attemptID,
 					Flags: memd.SubdocFlagXattrPath,
 				},
+				{
+					Op:    memd.SubDocOpGet,
+					Path:  hlcMacro,
+					Flags: memd.SubdocFlagXattrPath,
+				},
 			},
 			Deadline: deadline,
 		}, func(result *gocbcore.LookupInResult, err error) {
 			if err != nil {
-				ecCb(nil, classifyError(err))
+				ecCb(nil, time.Time{}, classifyError(err))
 				return
 			}
 
-			err = result.Ops[0].Err
-			if err != nil {
-				ecCb(nil, classifyError(err))
-				return
+			for _, op := range result.Ops {
+				if op.Err != nil {
+					ecCb(nil, time.Time{}, classifyError(op.Err))
+					return
+				}
 			}
 
 			var txnAttempt *jsonAtrAttempt
 			if err := json.Unmarshal(result.Ops[0].Value, &txnAttempt); err != nil {
-				ecCb(nil, &classifiedError{
+				ecCb(nil, time.Time{}, &classifiedError{
 					Source: err,
 					Class:  ErrorClassFailOther,
 				})
 				return
 			}
 
-			ecCb(txnAttempt, nil)
+			var hlc *jsonHLC
+			if err := json.Unmarshal(result.Ops[1].Value, &hlc); err != nil {
+				ecCb(nil, time.Time{}, &classifiedError{
+					Source: err,
+					Class:  ErrorClassFailOther,
+				})
+				return
+			}
+
+			nowSecs, err := parseHLCToSeconds(*hlc)
+			if err != nil {
+				ecCb(nil, time.Time{}, &classifiedError{
+					Source: err,
+					Class:  ErrorClassFailOther,
+				})
+				return
+			}
+
+			txnStartMs, err := parseCASToMilliseconds(txnAttempt.PendingCAS)
+			if err != nil {
+				ecCb(nil, time.Time{}, &classifiedError{
+					Source: err,
+					Class:  ErrorClassFailOther,
+				})
+				return
+			}
+
+			nowTime := time.Duration(nowSecs) * time.Second
+			txnStartTime := time.Duration(txnStartMs) * time.Millisecond
+			txnExpiryTime := time.Duration(txnAttempt.ExpiryTime) * time.Millisecond
+
+			txnElapsedTime := nowTime - txnStartTime
+			txnExpiry := time.Now().Add(txnExpiryTime - txnElapsedTime)
+
+			ecCb(txnAttempt, txnExpiry, nil)
 		})
 		if err != nil {
-			ecCb(nil, classifyError(err))
+			ecCb(nil, time.Time{}, classifyError(err))
 			return
 		}
 	})
@@ -614,7 +654,7 @@ func (t *transactionAttempt) writeWriteConflictPoll(
 					meta.ATR.DocID,
 					meta.AttemptID,
 					false,
-					func(attempt *jsonAtrAttempt, err *TransactionOperationFailedError) {
+					func(attempt *jsonAtrAttempt, expiry time.Time, err *TransactionOperationFailedError) {
 						if err != nil {
 							cb(err)
 							return
@@ -626,10 +666,8 @@ func (t *transactionAttempt) writeWriteConflictPoll(
 							return
 						}
 
-						// The way this works, if our transaction starts before the other transaction
-						// its possible we will think its expired when it is not yet expired.
-						td := time.Duration(attempt.ExpiryTime) * time.Millisecond
-						if t.txnStartTime.Add(td).Before(time.Now()) {
+						// If the transaction expired, we are safe to overwrite.
+						if time.Now().After(expiry) {
 							cb(nil)
 							return
 						}

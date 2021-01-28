@@ -242,7 +242,7 @@ func (t *transactionAttempt) mavRead(
 						doc.TxnMeta.ATR.DocID,
 						doc.TxnMeta.ID.Attempt,
 						forceNonFatal,
-						func(attempt *jsonAtrAttempt, err *TransactionOperationFailedError) {
+						func(attempt *jsonAtrAttempt, expiry time.Time, err *TransactionOperationFailedError) {
 							if err != nil {
 								cb(nil, err)
 								return
