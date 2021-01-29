@@ -685,7 +685,7 @@ func (t *transactionAttempt) setATRCompletedLocked(
 
 				return gocbcore.SubDocOp{
 					Op:    memd.SubDocOpDictSet,
-					Flags: memd.SubdocFlagMkDirP | flags,
+					Flags: flags,
 					Path:  "attempts." + t.id + "." + fieldName,
 					Value: bytes,
 				}
@@ -1033,7 +1033,7 @@ func (t *transactionAttempt) setATRAbortedLocked(
 
 				return gocbcore.SubDocOp{
 					Op:    memd.SubDocOpDictSet,
-					Flags: memd.SubdocFlagMkDirP | flags,
+					Flags: flags,
 					Path:  "attempts." + t.id + "." + fieldName,
 					Value: bytes,
 				}
@@ -1187,7 +1187,7 @@ func (t *transactionAttempt) setATRRolledBackLocked(
 
 				return gocbcore.SubDocOp{
 					Op:    memd.SubDocOpDictSet,
-					Flags: memd.SubdocFlagMkDirP | flags,
+					Flags: flags,
 					Path:  "attempts." + t.id + "." + fieldName,
 					Value: bytes,
 				}
