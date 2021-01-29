@@ -71,10 +71,8 @@ func (t *transactionAttempt) rollback(
 							t.removeStagedRemoveReplace(*mutation, unstageCb)
 						default:
 							unstageCb(t.operationFailed(operationFailedDef{
-								Cerr: &classifiedError{
-									Source: errors.New("unexpected staged operation type"),
-									Class:  ErrorClassFailOther,
-								},
+								Cerr: classifyError(
+									errors.Wrap(ErrIllegalState, "unexpected staged mutation type")),
 								ShouldNotRetry:    true,
 								ShouldNotRollback: true,
 								Reason:            ErrorReasonTransactionFailed,
@@ -166,10 +164,8 @@ func (t *transactionAttempt) removeStagedInsert(
 
 		if t.isExpiryOvertimeAtomic() {
 			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: errors.Wrap(ErrAttemptExpired, "removing a staged insert failed during overtime"),
-					Class:  ErrorClassFailExpiry,
-				},
+				Cerr: classifyError(
+					errors.Wrap(ErrAttemptExpired, "removing a staged insert failed during overtime")),
 				ShouldNotRetry:    true,
 				ShouldNotRollback: true,
 				Reason:            ErrorReasonTransactionExpired,
@@ -193,14 +189,12 @@ func (t *transactionAttempt) removeStagedInsert(
 		case ErrorClassFailPathNotFound:
 			cb(nil)
 			return
-		case ErrorClassFailCasMismatch:
-			fallthrough
 		case ErrorClassFailDocAlreadyExists:
+			cerr.Class = ErrorClassFailCasMismatch
+			fallthrough
+		case ErrorClassFailCasMismatch:
 			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: cerr.Source,
-					Class:  ErrorClassFailCasMismatch,
-				},
+				Cerr:              cerr,
 				ShouldNotRetry:    true,
 				ShouldNotRollback: true,
 				Reason:            ErrorReasonTransactionFailed,
@@ -292,10 +286,8 @@ func (t *transactionAttempt) removeStagedRemoveReplace(
 
 		if t.isExpiryOvertimeAtomic() {
 			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: errors.Wrap(ErrAttemptExpired, "removing a staged remove or replace failed during overtime"),
-					Class:  ErrorClassFailExpiry,
-				},
+				Cerr: classifyError(
+					errors.Wrap(ErrAttemptExpired, "removing a staged remove or replace failed during overtime")),
 				ShouldNotRetry:    true,
 				ShouldNotRollback: true,
 				Reason:            ErrorReasonTransactionExpired,
@@ -323,14 +315,12 @@ func (t *transactionAttempt) removeStagedRemoveReplace(
 				ShouldNotRollback: true,
 				Reason:            ErrorReasonTransactionFailed,
 			}))
-		case ErrorClassFailCasMismatch:
-			fallthrough
 		case ErrorClassFailDocAlreadyExists:
+			cerr.Class = ErrorClassFailCasMismatch
+			fallthrough
+		case ErrorClassFailCasMismatch:
 			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: cerr.Source,
-					Class:  ErrorClassFailCasMismatch,
-				},
+				Cerr:              cerr,
 				ShouldNotRetry:    true,
 				ShouldNotRollback: true,
 				Reason:            ErrorReasonTransactionFailed,

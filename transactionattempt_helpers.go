@@ -54,10 +54,8 @@ func (t *transactionAttempt) checkCanPerformOpLocked() *TransactionOperationFail
 		fallthrough
 	case AttemptStateCompleted:
 		return t.operationFailed(operationFailedDef{
-			Cerr: &classifiedError{
-				Source: errors.Wrap(ErrIllegalState, "transaction already committed"),
-				Class:  ErrorClassFailOther,
-			},
+			Cerr: classifyError(
+				errors.Wrap(ErrIllegalState, "transaction already committed")),
 			ShouldNotRetry:    true,
 			ShouldNotRollback: true,
 			Reason:            ErrorReasonTransactionFailed,
@@ -66,20 +64,16 @@ func (t *transactionAttempt) checkCanPerformOpLocked() *TransactionOperationFail
 		fallthrough
 	case AttemptStateRolledBack:
 		return t.operationFailed(operationFailedDef{
-			Cerr: &classifiedError{
-				Source: errors.Wrap(ErrIllegalState, "transaction already aborted"),
-				Class:  ErrorClassFailOther,
-			},
+			Cerr: classifyError(
+				errors.Wrap(ErrIllegalState, "transaction already aborted")),
 			ShouldNotRetry:    true,
 			ShouldNotRollback: true,
 			Reason:            ErrorReasonTransactionFailed,
 		})
 	default:
 		return t.operationFailed(operationFailedDef{
-			Cerr: &classifiedError{
-				Source: errors.Wrap(ErrIllegalState, "invalid transaction state"),
-				Class:  ErrorClassFailOther,
-			},
+			Cerr: classifyError(
+				errors.Wrap(ErrIllegalState, fmt.Sprintf("invalid transaction state: %v", t.state))),
 			ShouldNotRetry:    true,
 			ShouldNotRollback: true,
 			Reason:            ErrorReasonTransactionFailed,
@@ -89,10 +83,8 @@ func (t *transactionAttempt) checkCanPerformOpLocked() *TransactionOperationFail
 	stateBits := atomic.LoadUint32(&t.stateBits)
 	if (stateBits & transactionStateBitShouldNotCommit) != 0 {
 		return t.operationFailed(operationFailedDef{
-			Cerr: &classifiedError{
-				Source: errors.Wrap(ErrPreviousOperationFailed, "previous operation failure prevents further operations"),
-				Class:  ErrorClassFailOther,
-			},
+			Cerr: classifyError(
+				errors.Wrap(ErrPreviousOperationFailed, "previous operation prevents further operations")),
 			ShouldNotRetry:    true,
 			ShouldNotRollback: false,
 			Reason:            ErrorReasonTransactionFailed,
@@ -112,10 +104,8 @@ func (t *transactionAttempt) checkCanCommitRollbackLocked() *TransactionOperatio
 		fallthrough
 	case AttemptStateCompleted:
 		return t.operationFailed(operationFailedDef{
-			Cerr: &classifiedError{
-				Source: errors.Wrap(ErrIllegalState, "transaction already committed"),
-				Class:  ErrorClassFailOther,
-			},
+			Cerr: classifyError(
+				errors.Wrap(ErrIllegalState, "transaction already committed")),
 			ShouldNotRetry:    true,
 			ShouldNotRollback: true,
 			Reason:            ErrorReasonTransactionFailed,
@@ -124,20 +114,16 @@ func (t *transactionAttempt) checkCanCommitRollbackLocked() *TransactionOperatio
 		fallthrough
 	case AttemptStateRolledBack:
 		return t.operationFailed(operationFailedDef{
-			Cerr: &classifiedError{
-				Source: errors.Wrap(ErrIllegalState, "transaction already aborted"),
-				Class:  ErrorClassFailOther,
-			},
+			Cerr: classifyError(
+				errors.Wrap(ErrIllegalState, "transaction already aborted")),
 			ShouldNotRetry:    true,
 			ShouldNotRollback: true,
 			Reason:            ErrorReasonTransactionFailed,
 		})
 	default:
 		return t.operationFailed(operationFailedDef{
-			Cerr: &classifiedError{
-				Source: errors.Wrap(ErrIllegalState, "invalid transaction state"),
-				Class:  ErrorClassFailOther,
-			},
+			Cerr: classifyError(
+				errors.Wrap(ErrIllegalState, fmt.Sprintf("invalid transaction state: %v", t.state))),
 			ShouldNotRetry:    true,
 			ShouldNotRollback: true,
 			Reason:            ErrorReasonTransactionFailed,
@@ -156,10 +142,8 @@ func (t *transactionAttempt) checkCanCommitLocked() *TransactionOperationFailedE
 	stateBits := atomic.LoadUint32(&t.stateBits)
 	if (stateBits & transactionStateBitShouldNotCommit) != 0 {
 		return t.operationFailed(operationFailedDef{
-			Cerr: &classifiedError{
-				Source: errors.Wrap(ErrPreviousOperationFailed, "previous operation prevents commit"),
-				Class:  ErrorClassFailOther,
-			},
+			Cerr: classifyError(
+				errors.Wrap(ErrPreviousOperationFailed, "previous operation prevents commit")),
 			ShouldNotRetry:    true,
 			ShouldNotRollback: false,
 			Reason:            ErrorReasonTransactionFailed,
@@ -178,10 +162,8 @@ func (t *transactionAttempt) checkCanRollbackLocked() *TransactionOperationFaile
 	stateBits := atomic.LoadUint32(&t.stateBits)
 	if (stateBits & transactionStateBitShouldNotRollback) != 0 {
 		return t.operationFailed(operationFailedDef{
-			Cerr: &classifiedError{
-				Source: errors.Wrap(ErrPreviousOperationFailed, "previous operation prevents rollback"),
-				Class:  ErrorClassFailOther,
-			},
+			Cerr: classifyError(
+				errors.Wrap(ErrPreviousOperationFailed, "previous operation prevents rollback")),
 			ShouldNotRetry:    true,
 			ShouldNotRollback: false,
 			Reason:            ErrorReasonTransactionFailed,
@@ -208,24 +190,15 @@ func (t *transactionAttempt) checkExpiredAtomic(stage string, id []byte, proceed
 
 	t.hooks.HasExpiredClientSideHook(stage, id, func(expired bool, err error) {
 		if err != nil {
-			cb(&classifiedError{
-				Source: errors.Wrap(err, "HasExpired hook returned an unexpected error"),
-				Class:  ErrorClassFailOther,
-			})
+			cb(classifyError(errors.Wrap(err, "HasExpired hook returned an unexpected error")))
 			return
 		}
 
 		if expired {
-			cb(&classifiedError{
-				Source: errors.Wrap(ErrAttemptExpired, "a hook has marked this attempt expired"),
-				Class:  ErrorClassFailExpiry,
-			})
+			cb(classifyError(errors.Wrap(ErrAttemptExpired, "a hook has marked this attempt expired")))
 			return
 		} else if hasExpired(t.expiryTime) {
-			cb(&classifiedError{
-				Source: errors.Wrap(ErrAttemptExpired, "the expiry for the attempt was reached"),
-				Class:  ErrorClassFailExpiry,
-			})
+			cb(classifyError(errors.Wrap(ErrAttemptExpired, "the expiry for the attempt was reached")))
 			return
 		}
 
@@ -337,10 +310,7 @@ func (t *transactionAttempt) checkForwardCompatability(
 	isCompat, shouldRetry, retryWait, err := checkForwardCompatability(stage, fc)
 	if err != nil {
 		cb(t.operationFailed(operationFailedDef{
-			Cerr: &classifiedError{
-				Source: err,
-				Class:  ErrorClassFailOther,
-			},
+			Cerr:              classifyError(err),
 			CanStillCommit:    forceNonFatal,
 			ShouldNotRetry:    false,
 			ShouldNotRollback: false,
@@ -353,10 +323,7 @@ func (t *transactionAttempt) checkForwardCompatability(
 		if shouldRetry {
 			cbRetryError := func() {
 				cb(t.operationFailed(operationFailedDef{
-					Cerr: &classifiedError{
-						Source: ErrForwardCompatibilityFailure,
-						Class:  ErrorClassFailOther,
-					},
+					Cerr:              classifyError(ErrForwardCompatibilityFailure),
 					CanStillCommit:    forceNonFatal,
 					ShouldNotRetry:    false,
 					ShouldNotRollback: false,
@@ -374,10 +341,7 @@ func (t *transactionAttempt) checkForwardCompatability(
 		}
 
 		cb(t.operationFailed(operationFailedDef{
-			Cerr: &classifiedError{
-				Source: ErrForwardCompatibilityFailure,
-				Class:  ErrorClassFailOther,
-			},
+			Cerr:              classifyError(ErrForwardCompatibilityFailure),
 			CanStillCommit:    forceNonFatal,
 			ShouldNotRetry:    true,
 			ShouldNotRollback: false,
@@ -420,16 +384,13 @@ func (t *transactionAttempt) getTxnState(
 			cb(nil, time.Time{}, nil)
 		default:
 			cb(nil, time.Time{}, t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: &writeWriteConflictError{
-						Source:         cerr.Source,
-						BucketName:     srcBucketName,
-						ScopeName:      srcScopeName,
-						CollectionName: srcCollectionName,
-						DocumentKey:    srcDocID,
-					},
-					Class: ErrorClassFailWriteWriteConflict,
-				},
+				Cerr: classifyError(&writeWriteConflictError{
+					Source:         cerr.Source,
+					BucketName:     srcBucketName,
+					ScopeName:      srcScopeName,
+					CollectionName: srcCollectionName,
+					DocumentKey:    srcDocID,
+				}),
 				CanStillCommit:    forceNonFatal,
 				ShouldNotRetry:    false,
 				ShouldNotRollback: false,
@@ -487,37 +448,25 @@ func (t *transactionAttempt) getTxnState(
 
 			var txnAttempt *jsonAtrAttempt
 			if err := json.Unmarshal(result.Ops[0].Value, &txnAttempt); err != nil {
-				ecCb(nil, time.Time{}, &classifiedError{
-					Source: err,
-					Class:  ErrorClassFailOther,
-				})
+				ecCb(nil, time.Time{}, classifyError(err))
 				return
 			}
 
 			var hlc *jsonHLC
 			if err := json.Unmarshal(result.Ops[1].Value, &hlc); err != nil {
-				ecCb(nil, time.Time{}, &classifiedError{
-					Source: err,
-					Class:  ErrorClassFailOther,
-				})
+				ecCb(nil, time.Time{}, classifyError(err))
 				return
 			}
 
 			nowSecs, err := parseHLCToSeconds(*hlc)
 			if err != nil {
-				ecCb(nil, time.Time{}, &classifiedError{
-					Source: err,
-					Class:  ErrorClassFailOther,
-				})
+				ecCb(nil, time.Time{}, classifyError(err))
 				return
 			}
 
 			txnStartMs, err := parseCASToMilliseconds(txnAttempt.PendingCAS)
 			if err != nil {
-				ecCb(nil, time.Time{}, &classifiedError{
-					Source: err,
-					Class:  ErrorClassFailOther,
-				})
+				ecCb(nil, time.Time{}, classifyError(err))
 				return
 			}
 
@@ -561,10 +510,8 @@ func (t *transactionAttempt) writeWriteConflictPoll(
 					// There was an existing mutation but it doesn't match the expected
 					// CAS.  We throw a CAS mismatch to early detect this.
 					cb(t.operationFailed(operationFailedDef{
-						Cerr: &classifiedError{
-							Source: nil,
-							Class:  ErrorClassFailCasMismatch,
-						},
+						Cerr: classifyError(
+							errors.Wrap(ErrCasMismatch, "cas mismatch occured against local staged mutation")),
 						ShouldNotRetry:    false,
 						ShouldNotRollback: false,
 						Reason:            ErrorReasonTransactionFailed,
@@ -580,10 +527,8 @@ func (t *transactionAttempt) writeWriteConflictPoll(
 			// attempt has performed without actually having found the existing mutation,
 			// this is never going to work correctly.
 			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: ErrIllegalState,
-					Class:  ErrorClassFailOther,
-				},
+				Cerr: classifyError(
+					errors.Wrap(ErrIllegalState, "attempted to overwrite local staged mutation but couldn't find it")),
 				ShouldNotRetry:    true,
 				ShouldNotRollback: false,
 				Reason:            ErrorReasonTransactionFailed,
@@ -604,21 +549,18 @@ func (t *transactionAttempt) writeWriteConflictPoll(
 		if !time.Now().Before(deadline) {
 			// If the deadline expired, lets just immediately return.
 			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: &writeWriteConflictError{
-						Source: fmt.Errorf(
-							"deadline expired before WWC was resolved on %s.%s.%s.%s",
-							meta.ATR.BucketName,
-							meta.ATR.ScopeName,
-							meta.ATR.CollectionName,
-							meta.ATR.DocID),
-						BucketName:     agent.BucketName(),
-						ScopeName:      scopeName,
-						CollectionName: collectionName,
-						DocumentKey:    key,
-					},
-					Class: ErrorClassFailWriteWriteConflict,
-				},
+				Cerr: classifyError(&writeWriteConflictError{
+					Source: fmt.Errorf(
+						"deadline expired before WWC was resolved on %s.%s.%s.%s",
+						meta.ATR.BucketName,
+						meta.ATR.ScopeName,
+						meta.ATR.CollectionName,
+						meta.ATR.DocID),
+					BucketName:     agent.BucketName(),
+					ScopeName:      scopeName,
+					CollectionName: collectionName,
+					DocumentKey:    key,
+				}),
 				ShouldNotRetry:    false,
 				ShouldNotRollback: false,
 				Reason:            ErrorReasonTransactionFailed,

@@ -110,10 +110,8 @@ func (t *transactionAttempt) commit(
 								t.commitStagedRemove(*mutation, false, unstageCb)
 							default:
 								unstageCb(t.operationFailed(operationFailedDef{
-									Cerr: &classifiedError{
-										Source: errors.New("unexpected staged operation type"),
-										Class:  ErrorClassFailOther,
-									},
+									Cerr: classifyError(
+										errors.Wrap(ErrIllegalState, "unexpected staged mutation type")),
 									ShouldNotRetry:    true,
 									ShouldNotRollback: true,
 									Reason:            ErrorReasonTransactionFailedPostCommit,
@@ -210,10 +208,8 @@ func (t *transactionAttempt) ensureMutation(
 		}
 
 		cb(t.operationFailed(operationFailedDef{
-			Cerr: &classifiedError{
-				Source: errors.New("failed to fetch staged data to commit"),
-				Class:  ErrorClassFailOther,
-			},
+			Cerr: classifyError(
+				errors.New("failed to fetch staged data to commit")),
 			ShouldNotRetry:    false,
 			ShouldNotRollback: false,
 			Reason:            ErrorReasonTransactionFailed,
@@ -258,14 +254,6 @@ func (t *transactionAttempt) ensureMutation(
 			return
 		}
 
-		if len(result.Ops) != 1 {
-			ecCb(&classifiedError{
-				Source: errors.New("wrong number of lookup results"),
-				Class:  ErrorClassFailOther,
-			})
-			return
-		}
-
 		if result.Ops[0].Err != nil {
 			ecCb(classifyError(result.Ops[0].Err))
 			return
@@ -294,10 +282,8 @@ func (t *transactionAttempt) commitStagedReplace(
 
 		if t.isExpiryOvertimeAtomic() {
 			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: errors.Wrap(ErrAttemptExpired, "committing a replace failed during overtime"),
-					Class:  ErrorClassFailExpiry,
-				},
+				Cerr: classifyError(
+					errors.Wrap(ErrAttemptExpired, "committing a replace failed during overtime")),
 				ShouldNotRetry:    true,
 				ShouldNotRollback: true,
 				Reason:            ErrorReasonTransactionFailedPostCommit,
@@ -311,9 +297,10 @@ func (t *transactionAttempt) commitStagedReplace(
 				ambiguityResolution = true
 				t.commitStagedReplace(mutation, forceWrite, ambiguityResolution, cb)
 			})
-		case ErrorClassFailCasMismatch:
-			fallthrough
 		case ErrorClassFailDocAlreadyExists:
+			cerr.Class = ErrorClassFailCasMismatch
+			fallthrough
+		case ErrorClassFailCasMismatch:
 			if !ambiguityResolution {
 				time.AfterFunc(3*time.Millisecond, func() {
 					forceWrite = true
@@ -323,10 +310,7 @@ func (t *transactionAttempt) commitStagedReplace(
 			}
 
 			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: cerr.Source,
-					Class:  ErrorClassFailCasMismatch,
-				},
+				Cerr:              cerr,
 				ShouldNotRetry:    true,
 				ShouldNotRollback: true,
 				Reason:            ErrorReasonTransactionFailedPostCommit,
@@ -457,10 +441,8 @@ func (t *transactionAttempt) commitStagedInsert(
 
 		if t.isExpiryOvertimeAtomic() {
 			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: errors.Wrap(ErrAttemptExpired, "committing an insert failed during overtime"),
-					Class:  ErrorClassFailExpiry,
-				},
+				Cerr: classifyError(
+					errors.Wrap(ErrAttemptExpired, "committing an insert failed during overtime")),
 				ShouldNotRetry:    true,
 				ShouldNotRollback: true,
 				Reason:            ErrorReasonTransactionFailedPostCommit,
@@ -474,9 +456,10 @@ func (t *transactionAttempt) commitStagedInsert(
 				ambiguityResolution = true
 				t.commitStagedInsert(mutation, ambiguityResolution, cb)
 			})
-		case ErrorClassFailCasMismatch:
-			fallthrough
 		case ErrorClassFailDocAlreadyExists:
+			cerr.Class = ErrorClassFailCasMismatch
+			fallthrough
+		case ErrorClassFailCasMismatch:
 			if !ambiguityResolution {
 				time.AfterFunc(3*time.Millisecond, func() {
 					t.commitStagedReplace(mutation, true, ambiguityResolution, cb)
@@ -485,10 +468,7 @@ func (t *transactionAttempt) commitStagedInsert(
 			}
 
 			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: cerr.Source,
-					Class:  ErrorClassFailCasMismatch,
-				},
+				Cerr:              cerr,
 				ShouldNotRetry:    true,
 				ShouldNotRollback: true,
 				Reason:            ErrorReasonTransactionFailedPostCommit,
@@ -579,10 +559,8 @@ func (t *transactionAttempt) commitStagedRemove(
 
 		if t.isExpiryOvertimeAtomic() {
 			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: errors.Wrap(ErrAttemptExpired, "committing a remove failed during overtime"),
-					Class:  ErrorClassFailExpiry,
-				},
+				Cerr: classifyError(
+					errors.Wrap(ErrAttemptExpired, "committing a remove failed during overtime")),
 				ShouldNotRetry:    true,
 				ShouldNotRollback: true,
 				Reason:            ErrorReasonTransactionFailedPostCommit,

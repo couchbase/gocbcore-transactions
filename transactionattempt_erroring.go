@@ -33,7 +33,7 @@ func mergeOperationFailedErrors(errs []*TransactionOperationFailedError) *Transa
 			shouldNotRollback = true
 		}
 		if tErr.shouldRaise > shouldRaise {
-			shouldRaise = shouldRaise
+			shouldRaise = tErr.shouldRaise
 		}
 	}
 
@@ -103,6 +103,21 @@ func classifyError(err error) *classifiedError {
 	ec := ErrorClassFailOther
 	if errors.Is(err, ErrDocAlreadyInTransaction) || errors.Is(err, ErrWriteWriteConflict) {
 		ec = ErrorClassFailWriteWriteConflict
+	} else if errors.Is(err, ErrHard) {
+		ec = ErrorClassFailHard
+	} else if errors.Is(err, ErrAttemptExpired) {
+		ec = ErrorClassFailExpiry
+	} else if errors.Is(err, ErrTransient) {
+		ec = ErrorClassFailTransient
+	} else if errors.Is(err, ErrDocumentNotFound) {
+		ec = ErrorClassFailDocNotFound
+	} else if errors.Is(err, ErrDocumentAlreadyExists) {
+		ec = ErrorClassFailDocAlreadyExists
+	} else if errors.Is(err, ErrAmbiguous) {
+		ec = ErrorClassFailAmbiguous
+	} else if errors.Is(err, ErrCasMismatch) {
+		ec = ErrorClassFailCasMismatch
+
 	} else if errors.Is(err, gocbcore.ErrDocumentNotFound) {
 		ec = ErrorClassFailDocNotFound
 	} else if errors.Is(err, gocbcore.ErrDocumentExists) {
@@ -113,15 +128,12 @@ func classifyError(err error) *classifiedError {
 		ec = ErrorClassFailPathNotFound
 	} else if errors.Is(err, gocbcore.ErrCasMismatch) {
 		ec = ErrorClassFailCasMismatch
-	} else if errors.Is(err, gocbcore.ErrUnambiguousTimeout) || errors.Is(err, ErrTransient) {
+	} else if errors.Is(err, gocbcore.ErrUnambiguousTimeout) {
 		ec = ErrorClassFailTransient
-	} else if errors.Is(err, gocbcore.ErrDurabilityAmbiguous) || errors.Is(err, gocbcore.ErrAmbiguousTimeout) ||
-		errors.Is(err, ErrAmbiguous) || errors.Is(err, gocbcore.ErrRequestCanceled) {
+	} else if errors.Is(err, gocbcore.ErrDurabilityAmbiguous) ||
+		errors.Is(err, gocbcore.ErrAmbiguousTimeout) ||
+		errors.Is(err, gocbcore.ErrRequestCanceled) {
 		ec = ErrorClassFailAmbiguous
-	} else if errors.Is(err, ErrHard) {
-		ec = ErrorClassFailHard
-	} else if errors.Is(err, ErrAttemptExpired) {
-		ec = ErrorClassFailExpiry
 	} else if errors.Is(err, gocbcore.ErrMemdTooBig) {
 		ec = ErrorClassFailOutOfSpace
 	}

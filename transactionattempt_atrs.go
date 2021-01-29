@@ -2,6 +2,7 @@ package transactions
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/couchbase/gocbcore/v9"
@@ -22,10 +23,7 @@ func (t *transactionAttempt) selectAtrLocked(
 	t.hooks.RandomATRIDForVbucket(func(s string, err error) {
 		if err != nil {
 			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: err,
-					Class:  ErrorClassFailOther,
-				},
+				Cerr:              classifyHookError(err),
 				ShouldNotRetry:    true,
 				ShouldNotRollback: true,
 				Reason:            ErrorReasonTransactionFailed,
@@ -47,12 +45,9 @@ func (t *transactionAttempt) selectAtrLocked(
 		} else {
 			if t.explicitAtrs {
 				cb(t.operationFailed(operationFailedDef{
-					Cerr: &classifiedError{
-						Source: errors.New("atrs must be explicitly defined"),
-						Class:  ErrorClassFailOther,
-					},
+					Cerr:              classifyError(errors.New("atrs must be explicitly defined")),
 					ShouldNotRetry:    true,
-					ShouldNotRollback: false,
+					ShouldNotRollback: true,
 					Reason:            ErrorReasonTransactionFailed,
 				}))
 				return
@@ -95,10 +90,7 @@ func (t *transactionAttempt) setATRPendingLocked(
 			}))
 		case ErrorClassFailOutOfSpace:
 			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: ErrAtrFull,
-					Class:  ErrorClassFailOutOfSpace,
-				},
+				Cerr:              cerr.Wrap(ErrAtrFull),
 				ShouldNotRetry:    true,
 				ShouldNotRollback: false,
 				Reason:            ErrorReasonTransactionFailed,
@@ -171,10 +163,7 @@ func (t *transactionAttempt) setATRPendingLocked(
 				atrFieldOp("d", durabilityLevelToShorthand(t.durabilityLevel), memd.SubdocFlagXattrPath),
 			}
 			if marshalErr != nil {
-				ecCb(&classifiedError{
-					Source: marshalErr,
-					Class:  ErrorClassFailOther,
-				})
+				ecCb(classifyError(marshalErr))
 				return
 			}
 
@@ -248,36 +237,6 @@ func (t *transactionAttempt) resolveATRCommitConflictLocked(
 				ShouldNotRollback: true,
 				Reason:            errorReason,
 			}))
-		case ErrorClassFailPathNotFound:
-			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: ErrAtrEntryNotFound,
-					Class:  ErrorClassFailPathNotFound,
-				},
-				ShouldNotRetry:    true,
-				ShouldNotRollback: true,
-				Reason:            errorReason,
-			}))
-		case ErrorClassFailDocNotFound:
-			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: ErrAtrNotFound,
-					Class:  ErrorClassFailDocNotFound,
-				},
-				ShouldNotRetry:    true,
-				ShouldNotRollback: true,
-				Reason:            errorReason,
-			}))
-		case ErrorClassFailOutOfSpace:
-			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: ErrAtrFull,
-					Class:  ErrorClassFailOutOfSpace,
-				},
-				ShouldNotRetry:    true,
-				ShouldNotRollback: true,
-				Reason:            errorReason,
-			}))
 		case ErrorClassFailHard:
 			if t.disableCBD3838Fix {
 				errorReason = ErrorReasonTransactionFailed
@@ -347,42 +306,34 @@ func (t *transactionAttempt) resolveATRCommitConflictLocked(
 
 				var st jsonAtrState
 				if err := json.Unmarshal(result.Ops[0].Value, &st); err != nil {
-					ecCb(&classifiedError{
-						Source: err,
-						Class:  ErrorClassFailOther,
-					})
+					ecCb(classifyError(err))
 					return
 				}
 
 				switch st {
-				case jsonAtrStateCommitted:
-					ecCb(nil)
 				case jsonAtrStatePending:
 					if t.disableCBD3838Fix {
 						// With TXNG53, we can get here while pending, so we need to loop
 						// back around until that bug gets fixed in FIT.
 						t.setATRCommittedLocked(ambiguityResolution, cb)
 					} else {
-						ecCb(&classifiedError{
-							Source: errors.New("transaction still pending even with p set during commit"),
-							Class:  ErrorClassFailOther,
-						})
+						ecCb(classifyError(
+							errors.Wrap(ErrIllegalState, "transaction still pending even with p set during commit")))
 					}
+				case jsonAtrStateCommitted:
+					ecCb(nil)
+				case jsonAtrStateCompleted:
+					ecCb(classifyError(
+						errors.Wrap(ErrIllegalState, "transaction already completed during commit")))
 				case jsonAtrStateAborted:
-					ecCb(&classifiedError{
-						Source: errors.New("transaction already aborted during commit"),
-						Class:  ErrorClassFailOther,
-					})
+					ecCb(classifyError(
+						errors.Wrap(ErrIllegalState, "transaction already aborted during commit")))
 				case jsonAtrStateRolledBack:
-					ecCb(&classifiedError{
-						Source: errors.New("transaction already rolled back during commit"),
-						Class:  ErrorClassFailOther,
-					})
+					ecCb(classifyError(
+						errors.Wrap(ErrIllegalState, "transaction already rolled back during commit")))
 				default:
-					ecCb(&classifiedError{
-						Source: errors.New("illegal transaction state during commit"),
-						Class:  ErrorClassFailOther,
-					})
+					ecCb(classifyError(
+						errors.Wrap(ErrIllegalState, fmt.Sprintf("illegal transaction state during commit: %s", st))))
 				}
 			})
 			if err != nil {
@@ -436,36 +387,6 @@ func (t *transactionAttempt) setATRCommittedLocked(
 				ShouldNotRollback: false,
 				Reason:            errorReason,
 			}))
-		case ErrorClassFailPathNotFound:
-			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: ErrAtrEntryNotFound,
-					Class:  ErrorClassFailPathNotFound,
-				},
-				ShouldNotRetry:    true,
-				ShouldNotRollback: true,
-				Reason:            errorReason,
-			}))
-		case ErrorClassFailDocNotFound:
-			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: ErrAtrNotFound,
-					Class:  ErrorClassFailDocNotFound,
-				},
-				ShouldNotRetry:    true,
-				ShouldNotRollback: true,
-				Reason:            errorReason,
-			}))
-		case ErrorClassFailOutOfSpace:
-			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: ErrAtrFull,
-					Class:  ErrorClassFailOutOfSpace,
-				},
-				ShouldNotRetry:    true,
-				ShouldNotRollback: true,
-				Reason:            errorReason,
-			}))
 		case ErrorClassFailTransient:
 			cb(t.operationFailed(operationFailedDef{
 				Cerr:              cerr,
@@ -514,10 +435,7 @@ func (t *transactionAttempt) setATRCommittedLocked(
 		} else if mutation.OpType == StagedMutationRemove {
 			remMutations = append(remMutations, jsonMutation)
 		} else {
-			ecCb(&classifiedError{
-				Source: errors.New("invalid mutation type"),
-				Class:  ErrorClassFailOther,
-			})
+			ecCb(classifyError(errors.Wrap(ErrIllegalState, "unexpected staged mutation type")))
 			return
 		}
 	}
@@ -560,10 +478,7 @@ func (t *transactionAttempt) setATRCommittedLocked(
 				atrFieldOp("rem", remMutations, memd.SubdocFlagXattrPath, memd.SubDocOpDictSet),
 			}
 			if marshalErr != nil {
-				ecCb(&classifiedError{
-					Source: marshalErr,
-					Class:  ErrorClassFailOther,
-				})
+				ecCb(classifyError(marshalErr))
 				return
 			}
 
@@ -616,33 +531,9 @@ func (t *transactionAttempt) setATRCompletedLocked(
 		}
 
 		switch cerr.Class {
-		case ErrorClassFailPathNotFound:
+		case ErrorClassFailHard:
 			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: ErrAtrEntryNotFound,
-					Class:  ErrorClassFailPathNotFound,
-				},
-				ShouldNotRetry:    true,
-				ShouldNotRollback: true,
-				Reason:            ErrorReasonTransactionFailedPostCommit,
-			}))
-			return
-		case ErrorClassFailDocNotFound:
-			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: ErrAtrNotFound,
-					Class:  ErrorClassFailDocNotFound,
-				},
-				ShouldNotRetry:    true,
-				ShouldNotRollback: true,
-				Reason:            ErrorReasonTransactionFailedPostCommit,
-			}))
-		case ErrorClassFailOutOfSpace:
-			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: ErrAtrFull,
-					Class:  ErrorClassFailOutOfSpace,
-				},
+				Cerr:              cerr,
 				ShouldNotRetry:    true,
 				ShouldNotRollback: true,
 				Reason:            ErrorReasonTransactionFailedPostCommit,
@@ -696,10 +587,7 @@ func (t *transactionAttempt) setATRCompletedLocked(
 				atrFieldOp("tsco", "${Mutation.CAS}", memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros),
 			}
 			if marshalErr != nil {
-				ecCb(&classifiedError{
-					Source: marshalErr,
-					Class:  ErrorClassFailOther,
-				})
+				ecCb(classifyError(marshalErr))
 				return
 			}
 
@@ -753,10 +641,8 @@ func (t *transactionAttempt) resolveATRAbortConflictLocked(
 
 		if t.isExpiryOvertimeAtomic() {
 			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: errors.Wrap(ErrAttemptExpired, "atr abort ambiguity resolution failed during overtime"),
-					Class:  ErrorClassFailExpiry,
-				},
+				Cerr: classifyError(
+					errors.Wrap(ErrAttemptExpired, "atr abort ambiguity resolution failed during overtime")),
 				ShouldNotRetry:    true,
 				ShouldNotRollback: true,
 				Reason:            ErrorReasonTransactionExpired,
@@ -775,31 +661,17 @@ func (t *transactionAttempt) resolveATRAbortConflictLocked(
 				t.resolveATRAbortConflictLocked(cb)
 			})
 		case ErrorClassFailPathNotFound:
-			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: ErrAtrEntryNotFound,
-					Class:  ErrorClassFailPathNotFound,
-				},
-				ShouldNotRetry:    true,
-				ShouldNotRollback: true,
-				Reason:            ErrorReasonTransactionFailed,
-			}))
+			fallthrough
 		case ErrorClassFailDocNotFound:
 			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: ErrAtrNotFound,
-					Class:  ErrorClassFailDocNotFound,
-				},
+				Cerr:              cerr.Wrap(ErrAtrNotFound),
 				ShouldNotRetry:    true,
 				ShouldNotRollback: true,
 				Reason:            ErrorReasonTransactionFailed,
 			}))
 		case ErrorClassFailOutOfSpace:
 			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: ErrAtrFull,
-					Class:  ErrorClassFailOutOfSpace,
-				},
+				Cerr:              cerr.Wrap(ErrAtrFull),
 				ShouldNotRetry:    true,
 				ShouldNotRollback: true,
 				Reason:            ErrorReasonTransactionFailed,
@@ -858,36 +730,25 @@ func (t *transactionAttempt) resolveATRAbortConflictLocked(
 
 			var st jsonAtrState
 			if err := json.Unmarshal(result.Ops[0].Value, &st); err != nil {
-				ecCb(&classifiedError{
-					Source: err,
-					Class:  ErrorClassFailOther,
-				})
+				ecCb(classifyError(err))
 				return
 			}
 
 			switch st {
 			case jsonAtrStateCommitted:
-				ecCb(&classifiedError{
-					Source: errors.New("transaction became committed during abort"),
-					Class:  ErrorClassFailOther,
-				})
+				ecCb(classifyError(
+					errors.Wrap(ErrIllegalState, "transaction became committed during abort")))
 			case jsonAtrStatePending:
-				ecCb(&classifiedError{
-					Source: errors.New("transaction still pending even with p set during abort"),
-					Class:  ErrorClassFailOther,
-				})
+				ecCb(classifyError(
+					errors.Wrap(ErrIllegalState, "transaction still pending even with p set during abort")))
 			case jsonAtrStateAborted:
 				ecCb(nil)
 			case jsonAtrStateRolledBack:
-				ecCb(&classifiedError{
-					Source: errors.New("transaction already rolled back during abort"),
-					Class:  ErrorClassFailOther,
-				})
+				ecCb(classifyError(
+					errors.Wrap(ErrIllegalState, "transaction already rolled back during abort")))
 			default:
-				ecCb(&classifiedError{
-					Source: errors.New("illegal transaction state during abort"),
-					Class:  ErrorClassFailOther,
-				})
+				ecCb(classifyError(
+					errors.Wrap(ErrIllegalState, fmt.Sprintf("illegal transaction state during abort: %s", st))))
 			}
 		})
 		if err != nil {
@@ -908,10 +769,8 @@ func (t *transactionAttempt) setATRAbortedLocked(
 
 		if t.isExpiryOvertimeAtomic() {
 			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: errors.Wrap(ErrAttemptExpired, "atr abort failed during overtime"),
-					Class:  ErrorClassFailExpiry,
-				},
+				Cerr: classifyError(
+					errors.Wrap(ErrAttemptExpired, "atr abort failed during overtime")),
 				ShouldNotRetry:    true,
 				ShouldNotRollback: true,
 				Reason:            ErrorReasonTransactionExpired,
@@ -934,32 +793,23 @@ func (t *transactionAttempt) setATRAbortedLocked(
 			time.AfterFunc(3*time.Millisecond, func() {
 				t.setATRAbortedLocked(cb)
 			})
-		case ErrorClassFailPathNotFound:
+		case ErrorClassFailDocNotFound:
 			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: ErrAtrEntryNotFound,
-					Class:  ErrorClassFailPathNotFound,
-				},
+				Cerr:              cerr.Wrap(ErrAtrNotFound),
 				ShouldNotRetry:    true,
 				ShouldNotRollback: true,
 				Reason:            ErrorReasonTransactionFailed,
 			}))
-		case ErrorClassFailDocNotFound:
+		case ErrorClassFailPathNotFound:
 			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: ErrAtrNotFound,
-					Class:  ErrorClassFailDocNotFound,
-				},
+				Cerr:              cerr.Wrap(ErrAtrEntryNotFound),
 				ShouldNotRetry:    true,
 				ShouldNotRollback: true,
 				Reason:            ErrorReasonTransactionFailed,
 			}))
 		case ErrorClassFailOutOfSpace:
 			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: ErrAtrFull,
-					Class:  ErrorClassFailOutOfSpace,
-				},
+				Cerr:              cerr.Wrap(ErrAtrFull),
 				ShouldNotRetry:    true,
 				ShouldNotRollback: true,
 				Reason:            ErrorReasonTransactionFailed,
@@ -1002,10 +852,7 @@ func (t *transactionAttempt) setATRAbortedLocked(
 		} else if mutation.OpType == StagedMutationRemove {
 			remMutations = append(remMutations, jsonMutation)
 		} else {
-			ecCb(&classifiedError{
-				Source: errors.New("invalid mutation type"),
-				Class:  ErrorClassFailOther,
-			})
+			ecCb(classifyError(errors.Wrap(ErrIllegalState, "unexpected staged mutation type")))
 			return
 		}
 	}
@@ -1048,10 +895,7 @@ func (t *transactionAttempt) setATRAbortedLocked(
 				atrFieldOp("rem", remMutations, memd.SubdocFlagXattrPath),
 			}
 			if marshalErr != nil {
-				ecCb(&classifiedError{
-					Source: marshalErr,
-					Class:  ErrorClassFailOther,
-				})
+				ecCb(classifyError(marshalErr))
 				return
 			}
 
@@ -1105,10 +949,8 @@ func (t *transactionAttempt) setATRRolledBackLocked(
 
 		if t.isExpiryOvertimeAtomic() {
 			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: errors.Wrap(ErrAttemptExpired, "atr rolledback failed during overtime"),
-					Class:  ErrorClassFailExpiry,
-				},
+				Cerr: classifyError(
+					errors.Wrap(ErrAttemptExpired, "atr rolledback failed during overtime")),
 				ShouldNotRetry:    true,
 				ShouldNotRollback: true,
 				Reason:            ErrorReasonTransactionExpired,
@@ -1127,20 +969,14 @@ func (t *transactionAttempt) setATRRolledBackLocked(
 			})
 		case ErrorClassFailDocNotFound:
 			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: ErrAtrNotFound,
-					Class:  ErrorClassFailDocNotFound,
-				},
+				Cerr:              cerr.Wrap(ErrAtrNotFound),
 				ShouldNotRetry:    true,
 				ShouldNotRollback: true,
 				Reason:            ErrorReasonTransactionFailed,
 			}))
 		case ErrorClassFailOutOfSpace:
 			cb(t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: ErrAtrFull,
-					Class:  ErrorClassFailOutOfSpace,
-				},
+				Cerr:              cerr.Wrap(ErrAtrFull),
 				ShouldNotRetry:    true,
 				ShouldNotRollback: true,
 				Reason:            ErrorReasonTransactionFailed,
@@ -1198,10 +1034,7 @@ func (t *transactionAttempt) setATRRolledBackLocked(
 				atrFieldOp("tsrc", "${Mutation.CAS}", memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros),
 			}
 			if marshalErr != nil {
-				ecCb(&classifiedError{
-					Source: marshalErr,
-					Class:  ErrorClassFailOther,
-				})
+				ecCb(classifyError(marshalErr))
 				return
 			}
 

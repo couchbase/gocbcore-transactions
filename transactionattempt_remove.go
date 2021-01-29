@@ -2,6 +2,7 @@ package transactions
 
 import (
 	"encoding/json"
+
 	"github.com/couchbase/gocbcore/v9"
 	"github.com/couchbase/gocbcore/v9/memd"
 	"github.com/pkg/errors"
@@ -66,10 +67,8 @@ func (t *transactionAttempt) remove(
 				case StagedMutationInsert:
 					if t.disableCompoundOps {
 						endAndCb(nil, t.operationFailed(operationFailedDef{
-							Cerr: &classifiedError{
-								Source: errors.New("attempted to insert a document previously removed in this transaction"),
-								Class:  ErrorClassFailOther,
-							},
+							Cerr: classifyError(
+								errors.Wrap(ErrIllegalState, "attempted to remove a document previously inserted in this transaction")),
 							ShouldNotRetry:    true,
 							ShouldNotRollback: false,
 							Reason:            ErrorReasonTransactionFailed,
@@ -89,10 +88,8 @@ func (t *transactionAttempt) remove(
 					// the user passed to us and the existing mutation is caught by WriteWriteConflict.
 				case StagedMutationRemove:
 					endAndCb(nil, t.operationFailed(operationFailedDef{
-						Cerr: &classifiedError{
-							Source: ErrDocumentNotFound,
-							Class:  ErrorClassFailDocNotFound,
-						},
+						Cerr: classifyError(
+							errors.Wrap(ErrDocumentNotFound, "attempted to remove a document previously removed in this transaction")),
 						ShouldNotRetry:    false,
 						ShouldNotRollback: false,
 						Reason:            ErrorReasonTransactionFailed,
@@ -100,10 +97,8 @@ func (t *transactionAttempt) remove(
 					return
 				default:
 					endAndCb(nil, t.operationFailed(operationFailedDef{
-						Cerr: &classifiedError{
-							Source: ErrIllegalState,
-							Class:  ErrorClassFailOther,
-						},
+						Cerr: classifyError(
+							errors.Wrap(ErrIllegalState, "unexpected staged mutation type")),
 						ShouldNotRetry:    true,
 						ShouldNotRollback: false,
 						Reason:            ErrorReasonTransactionFailed,
@@ -169,27 +164,18 @@ func (t *transactionAttempt) stageRemove(
 			}))
 		case ErrorClassFailDocNotFound:
 			cb(nil, t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: ErrDocumentNotFound,
-					Class:  ErrorClassFailDocNotFound,
-				},
-				ShouldNotRetry:    false,
-				ShouldNotRollback: false,
-				Reason:            ErrorReasonTransactionFailed,
-			}))
-		case ErrorClassFailCasMismatch:
-			cb(nil, t.operationFailed(operationFailedDef{
-				Cerr:              cerr,
+				Cerr: classifyError(
+					errors.Wrap(ErrDocumentNotFound, "document not found during staging")),
 				ShouldNotRetry:    false,
 				ShouldNotRollback: false,
 				Reason:            ErrorReasonTransactionFailed,
 			}))
 		case ErrorClassFailDocAlreadyExists:
+			cerr.Class = ErrorClassFailCasMismatch
+			fallthrough
+		case ErrorClassFailCasMismatch:
 			cb(nil, t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: cerr.Source,
-					Class:  ErrorClassFailCasMismatch,
-				},
+				Cerr:              cerr,
 				ShouldNotRetry:    false,
 				ShouldNotRollback: false,
 				Reason:            ErrorReasonTransactionFailed,
@@ -261,10 +247,7 @@ func (t *transactionAttempt) stageRemove(
 
 			txnMetaBytes, err := json.Marshal(txnMeta)
 			if err != nil {
-				ecCb(nil, &classifiedError{
-					Source: err,
-					Class:  ErrorClassFailOther,
-				})
+				ecCb(nil, classifyError(err))
 				return
 			}
 
@@ -366,27 +349,18 @@ func (t *transactionAttempt) stageRemoveOfInsert(
 		switch cerr.Class {
 		case ErrorClassFailDocNotFound:
 			cb(nil, t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: errors.Wrap(cerr.Source, "staged document has been modified"),
-					Class:  ErrorClassFailOther,
-				},
-				ShouldNotRetry:    false,
-				ShouldNotRollback: false,
-				Reason:            ErrorReasonTransactionFailed,
-			}))
-		case ErrorClassFailCasMismatch:
-			cb(nil, t.operationFailed(operationFailedDef{
-				Cerr:              cerr,
+				Cerr: classifyError(
+					errors.Wrap(ErrDocumentNotFound, "staged document was modified since insert")),
 				ShouldNotRetry:    false,
 				ShouldNotRollback: false,
 				Reason:            ErrorReasonTransactionFailed,
 			}))
 		case ErrorClassFailDocAlreadyExists:
+			cerr.Class = ErrorClassFailCasMismatch
+			fallthrough
+		case ErrorClassFailCasMismatch:
 			cb(nil, t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: cerr.Source,
-					Class:  ErrorClassFailCasMismatch,
-				},
+				Cerr:              cerr,
 				ShouldNotRetry:    false,
 				ShouldNotRollback: false,
 				Reason:            ErrorReasonTransactionFailed,

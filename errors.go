@@ -2,11 +2,11 @@ package transactions
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/couchbase/gocbcore/v9"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -61,7 +61,25 @@ var (
 
 	// ErrDocumentAlreadyExists indicates that a document already existed.
 	ErrDocumentAlreadyExists = errors.New("document already exists")
+
+	// ErrCasMismatch indicates a document's cas did not match during a mutation.
+	ErrCasMismatch = errors.New("cas mismatch")
 )
+
+type classifiedError struct {
+	Source error
+	Class  ErrorClass
+}
+
+func (ce classifiedError) Wrap(errType error) *classifiedError {
+	return &classifiedError{
+		Source: &basicRetypedError{
+			ErrType: errType,
+			Source:  ce.Source,
+		},
+		Class: ce.Class,
+	}
+}
 
 // TransactionOperationFailedError is used when a transaction operation fails.
 // Internal: This should never be used and is not supported.
@@ -124,11 +142,6 @@ func (tfe TransactionOperationFailedError) ToRaise() ErrorReason {
 // ErrorClass is the class of error which caused this error.
 func (tfe TransactionOperationFailedError) ErrorClass() ErrorClass {
 	return tfe.errorClass
-}
-
-type classifiedError struct {
-	Source error
-	Class  ErrorClass
 }
 
 type aggregateError []error
@@ -199,11 +212,48 @@ func (wwce writeWriteConflictError) Error() string {
 }
 
 func (wwce writeWriteConflictError) Is(err error) bool {
-	return err == ErrWriteWriteConflict
+	if err == ErrWriteWriteConflict {
+		return true
+	}
+	return errors.Is(wwce.Source, err)
 }
 
 func (wwce writeWriteConflictError) Unwrap() error {
 	return wwce.Source
+}
+
+type basicRetypedError struct {
+	ErrType error
+	Source  error
+}
+
+func (bre basicRetypedError) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Msg   string          `json:"msg"`
+		Cause json.RawMessage `json:"cause"`
+	}{
+		Msg:   bre.ErrType.Error(),
+		Cause: marshalErrorToJSON(bre.Source),
+	})
+}
+
+func (bre basicRetypedError) Error() string {
+	errStr := bre.ErrType.Error()
+	if bre.Source != nil {
+		errStr += " | " + bre.Source.Error()
+	}
+	return errStr
+}
+
+func (bre basicRetypedError) Is(err error) bool {
+	if errors.Is(bre.ErrType, err) {
+		return true
+	}
+	return errors.Is(bre.Source, err)
+}
+
+func (bre basicRetypedError) Unwrap() error {
+	return bre.Source
 }
 
 func marshalErrorToJSON(err error) json.RawMessage {

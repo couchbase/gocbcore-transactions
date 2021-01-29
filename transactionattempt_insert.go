@@ -6,6 +6,7 @@ import (
 
 	"github.com/couchbase/gocbcore/v9"
 	"github.com/couchbase/gocbcore/v9/memd"
+	"github.com/pkg/errors"
 )
 
 func (t *transactionAttempt) Insert(opts InsertOptions, cb StoreCallback) error {
@@ -72,13 +73,18 @@ func (t *transactionAttempt) insert(
 						})
 					return
 				case StagedMutationInsert:
-					fallthrough
+					endAndCb(nil, t.operationFailed(operationFailedDef{
+						Cerr: classifyError(
+							errors.Wrap(ErrDocumentAlreadyExists, "attempted to insert a document previously inserted in this transaction")),
+						ShouldNotRetry:    false,
+						ShouldNotRollback: false,
+						Reason:            ErrorReasonTransactionFailed,
+					}))
+					return
 				case StagedMutationReplace:
 					endAndCb(nil, t.operationFailed(operationFailedDef{
-						Cerr: &classifiedError{
-							Source: nil,
-							Class:  ErrorClassFailDocAlreadyExists,
-						},
+						Cerr: classifyError(
+							errors.Wrap(ErrDocumentAlreadyExists, "attempted to insert a document previously replaced in this transaction")),
 						ShouldNotRetry:    false,
 						ShouldNotRollback: false,
 						Reason:            ErrorReasonTransactionFailed,
@@ -86,10 +92,8 @@ func (t *transactionAttempt) insert(
 					return
 				default:
 					endAndCb(nil, t.operationFailed(operationFailedDef{
-						Cerr: &classifiedError{
-							Source: ErrIllegalState,
-							Class:  ErrorClassFailOther,
-						},
+						Cerr: classifyError(
+							errors.Wrap(ErrIllegalState, "unexpected staged mutation type")),
 						ShouldNotRetry:    true,
 						ShouldNotRollback: false,
 						Reason:            ErrorReasonTransactionFailed,
@@ -138,10 +142,8 @@ func (t *transactionAttempt) resolveConflictedInsert(
 				// This doc isn't in a transaction
 				if !isTombstone {
 					cb(nil, t.operationFailed(operationFailedDef{
-						Cerr: &classifiedError{
-							Source: ErrDocumentAlreadyExists,
-							Class:  ErrorClassFailDocAlreadyExists,
-						},
+						Cerr: classifyError(
+							errors.Wrap(ErrDocumentAlreadyExists, "found existing document")),
 						ShouldNotRetry:    true,
 						ShouldNotRollback: false,
 						Reason:            ErrorReasonTransactionFailed,
@@ -174,10 +176,8 @@ func (t *transactionAttempt) resolveConflictedInsert(
 
 				if txnMeta.Operation.Type != jsonMutationInsert {
 					cb(nil, t.operationFailed(operationFailedDef{
-						Cerr: &classifiedError{
-							Source: ErrDocumentAlreadyExists,
-							Class:  ErrorClassFailDocAlreadyExists,
-						},
+						Cerr: classifyError(
+							errors.Wrap(ErrDocumentAlreadyExists, "found staged non-insert mutation")),
 						ShouldNotRetry:    true,
 						ShouldNotRollback: false,
 						Reason:            ErrorReasonTransactionFailed,
@@ -313,10 +313,7 @@ func (t *transactionAttempt) stageInsert(
 
 			txnMetaBytes, err := json.Marshal(txnMeta)
 			if err != nil {
-				ecCb(nil, &classifiedError{
-					Source: err,
-					Class:  ErrorClassFailOther,
-				})
+				ecCb(nil, classifyError(err))
 				return
 			}
 
@@ -458,10 +455,7 @@ func (t *transactionAttempt) getMetaForConflictedInsert(
 			if result.Ops[0].Err == nil {
 				var txnMetaVal jsonTxnXattr
 				if err := json.Unmarshal(result.Ops[0].Value, &txnMetaVal); err != nil {
-					ecCb(false, nil, 0, &classifiedError{
-						Source: err,
-						Class:  ErrorClassFailOther,
-					})
+					ecCb(false, nil, 0, classifyError(err))
 					return
 				}
 				txnMeta = &txnMetaVal

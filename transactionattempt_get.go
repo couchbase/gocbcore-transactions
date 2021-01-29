@@ -6,6 +6,7 @@ import (
 
 	"github.com/couchbase/gocbcore/v9"
 	"github.com/couchbase/gocbcore/v9/memd"
+	"github.com/pkg/errors"
 )
 
 func (t *transactionAttempt) Get(opts GetOptions, cb GetCallback) error {
@@ -64,10 +65,7 @@ func (t *transactionAttempt) get(
 				t.hooks.AfterGetComplete(opts.Key, func(err error) {
 					if err != nil {
 						endAndCb(nil, t.operationFailed(operationFailedDef{
-							Cerr: &classifiedError{
-								Source: err,
-								Class:  ErrorClassFailOther,
-							},
+							Cerr:              classifyHookError(err),
 							CanStillCommit:    forceNonFatal,
 							ShouldNotRetry:    true,
 							ShouldNotRollback: true,
@@ -119,10 +117,8 @@ func (t *transactionAttempt) mavRead(
 			if doc.TxnMeta == nil {
 				if doc.Deleted {
 					cb(nil, t.operationFailed(operationFailedDef{
-						Cerr: &classifiedError{
-							Source: ErrDocumentNotFound,
-							Class:  ErrorClassFailDocNotFound,
-						},
+						Cerr: classifyError(
+							errors.Wrap(ErrDocumentNotFound, "doc was a tombstone")),
 						CanStillCommit:    true,
 						ShouldNotRetry:    true,
 						ShouldNotRollback: false,
@@ -158,10 +154,8 @@ func (t *transactionAttempt) mavRead(
 					}, nil)
 				case jsonMutationRemove:
 					cb(nil, t.operationFailed(operationFailedDef{
-						Cerr: &classifiedError{
-							Source: ErrDocumentNotFound,
-							Class:  ErrorClassFailDocNotFound,
-						},
+						Cerr: classifyError(
+							errors.Wrap(ErrDocumentNotFound, "doc was a staged remove")),
 						CanStillCommit:    true,
 						ShouldNotRetry:    true,
 						ShouldNotRollback: false,
@@ -169,10 +163,8 @@ func (t *transactionAttempt) mavRead(
 					}))
 				default:
 					cb(nil, t.operationFailed(operationFailedDef{
-						Cerr: &classifiedError{
-							Source: nil,
-							Class:  ErrorClassFailOther,
-						},
+						Cerr: classifyError(
+							errors.Wrap(ErrIllegalState, "unexpected staged mutation type")),
 						CanStillCommit:    forceNonFatal,
 						ShouldNotRetry:    false,
 						ShouldNotRollback: false,
@@ -185,10 +177,8 @@ func (t *transactionAttempt) mavRead(
 			if doc.TxnMeta.ID.Attempt == resolvingATREntry {
 				if doc.Deleted {
 					cb(nil, t.operationFailed(operationFailedDef{
-						Cerr: &classifiedError{
-							Source: ErrDocumentNotFound,
-							Class:  ErrorClassFailDocNotFound,
-						},
+						Cerr: classifyError(
+							errors.Wrap(ErrDocumentNotFound, "doc was a staged tombstone during resolution")),
 						CanStillCommit:    true,
 						ShouldNotRetry:    true,
 						ShouldNotRollback: false,
@@ -279,10 +269,8 @@ func (t *transactionAttempt) mavRead(
 										}, nil)
 									case jsonMutationRemove:
 										cb(nil, t.operationFailed(operationFailedDef{
-											Cerr: &classifiedError{
-												Source: ErrDocumentNotFound,
-												Class:  ErrorClassFailDocNotFound,
-											},
+											Cerr: classifyError(
+												errors.Wrap(ErrDocumentNotFound, "doc was a staged remove")),
 											CanStillCommit:    true,
 											ShouldNotRetry:    true,
 											ShouldNotRollback: false,
@@ -290,10 +278,8 @@ func (t *transactionAttempt) mavRead(
 										}))
 									default:
 										cb(nil, t.operationFailed(operationFailedDef{
-											Cerr: &classifiedError{
-												Source: nil,
-												Class:  ErrorClassFailOther,
-											},
+											Cerr: classifyError(
+												errors.Wrap(ErrIllegalState, "unexpected staged mutation type")),
 											ShouldNotRetry:    false,
 											ShouldNotRollback: false,
 											Reason:            ErrorReasonTransactionFailed,
@@ -304,10 +290,8 @@ func (t *transactionAttempt) mavRead(
 
 								if doc.Deleted {
 									cb(nil, t.operationFailed(operationFailedDef{
-										Cerr: &classifiedError{
-											Source: ErrDocumentNotFound,
-											Class:  ErrorClassFailDocNotFound,
-										},
+										Cerr: classifyError(
+											errors.Wrap(ErrDocumentNotFound, "doc was a tombstone")),
 										CanStillCommit:    true,
 										ShouldNotRetry:    true,
 										ShouldNotRollback: false,
@@ -348,10 +332,8 @@ func (t *transactionAttempt) fetchDocWithMeta(
 		switch cerr.Class {
 		case ErrorClassFailDocNotFound:
 			cb(nil, t.operationFailed(operationFailedDef{
-				Cerr: &classifiedError{
-					Source: ErrDocumentNotFound,
-					Class:  ErrorClassFailDocNotFound,
-				},
+				Cerr: classifyError(
+					errors.Wrap(ErrDocumentNotFound, "doc was not found")),
 				CanStillCommit:    true,
 				ShouldNotRetry:    true,
 				ShouldNotRollback: false,
@@ -425,14 +407,6 @@ func (t *transactionAttempt) fetchDocWithMeta(
 				return
 			}
 
-			if len(result.Ops) != 3 {
-				ecCb(nil, &classifiedError{
-					Source: nil,
-					Class:  ErrorClassFailOther,
-				})
-				return
-			}
-
 			if result.Ops[0].Err != nil {
 				ecCb(nil, classifyError(result.Ops[0].Err))
 				return
@@ -440,10 +414,7 @@ func (t *transactionAttempt) fetchDocWithMeta(
 
 			var meta *docMeta
 			if err := json.Unmarshal(result.Ops[0].Value, &meta); err != nil {
-				ecCb(nil, &classifiedError{
-					Source: err,
-					Class:  ErrorClassFailOther,
-				})
+				ecCb(nil, classifyError(err))
 				return
 			}
 
@@ -452,10 +423,7 @@ func (t *transactionAttempt) fetchDocWithMeta(
 				// Doc is currently in a txn.
 				var txnMetaVal jsonTxnXattr
 				if err := json.Unmarshal(result.Ops[1].Value, &txnMetaVal); err != nil {
-					ecCb(nil, &classifiedError{
-						Source: err,
-						Class:  ErrorClassFailOther,
-					})
+					ecCb(nil, classifyError(err))
 					return
 				}
 
