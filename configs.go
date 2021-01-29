@@ -137,7 +137,6 @@ type Config struct {
 		ClientRecordHooks  ClientRecordHooks
 		EnableNonFatalGets bool
 		DisableCompoundOps bool
-		DisableCBD3838Fix  bool
 		SerialUnstaging    bool
 		ExplicitATRs       bool
 		NumATRs            int

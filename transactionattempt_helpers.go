@@ -50,6 +50,14 @@ func (t *transactionAttempt) checkCanPerformOpLocked() *TransactionOperationFail
 		fallthrough
 	case AttemptStatePending:
 		// Good to continue
+	case AttemptStateCommitting:
+		return t.operationFailed(operationFailedDef{
+			Cerr: classifyError(
+				errors.Wrap(ErrIllegalState, "transaction is ambiguously committed")),
+			ShouldNotRetry:    true,
+			ShouldNotRollback: true,
+			Reason:            ErrorReasonTransactionFailed,
+		})
 	case AttemptStateCommitted:
 		fallthrough
 	case AttemptStateCompleted:
@@ -100,6 +108,14 @@ func (t *transactionAttempt) checkCanCommitRollbackLocked() *TransactionOperatio
 		fallthrough
 	case AttemptStatePending:
 		// Good to continue
+	case AttemptStateCommitting:
+		return t.operationFailed(operationFailedDef{
+			Cerr: classifyError(
+				errors.Wrap(ErrIllegalState, "transaction is ambiguously committed")),
+			ShouldNotRetry:    true,
+			ShouldNotRollback: true,
+			Reason:            ErrorReasonTransactionFailed,
+		})
 	case AttemptStateCommitted:
 		fallthrough
 	case AttemptStateCompleted:
@@ -670,6 +686,11 @@ func (t *transactionAttempt) ensureCleanUpRequest() {
 		bucketName = t.atrAgent.BucketName()
 	}
 
+	cleanupState := t.state
+	if cleanupState == AttemptStateCommitting {
+		cleanupState = AttemptStatePending
+	}
+
 	req := &CleanupRequest{
 		AttemptID:         t.id,
 		AtrID:             t.atrKey,
@@ -679,7 +700,7 @@ func (t *transactionAttempt) ensureCleanUpRequest() {
 		Inserts:           inserts,
 		Replaces:          replaces,
 		Removes:           removes,
-		State:             t.state,
+		State:             cleanupState,
 		readyTime:         t.expiryTime,
 		ForwardCompat:     nil, // Let's just be explicit about this, it'll change in the future anyway.
 		DurabilityLevel:   t.durabilityLevel,

@@ -9,6 +9,7 @@ import (
 type jsonAtrState string
 
 const (
+	jsonAtrStateUnknown    = jsonAtrState("")
 	jsonAtrStatePending    = jsonAtrState("PENDING")
 	jsonAtrStateCommitted  = jsonAtrState("COMMITTED")
 	jsonAtrStateCompleted  = jsonAtrState("COMPLETED")

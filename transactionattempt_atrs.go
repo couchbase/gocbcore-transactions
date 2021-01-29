@@ -206,72 +206,71 @@ func (t *transactionAttempt) setATRPendingLocked(
 	})
 }
 
-func (t *transactionAttempt) resolveATRCommitConflictLocked(
-	ambiguityResolution bool,
-	cb func(*TransactionOperationFailedError),
+func (t *transactionAttempt) fetchATRCommitConflictLocked(
+	cb func(jsonAtrState, *TransactionOperationFailedError),
 ) {
-	ecCb := func(cerr *classifiedError) {
+	ecCb := func(st jsonAtrState, cerr *classifiedError) {
 		if cerr == nil {
-			cb(nil)
+			cb(st, nil)
 			return
-		}
-
-		errorReason := ErrorReasonTransactionFailed
-		if ambiguityResolution {
-			errorReason = ErrorReasonTransactionCommitAmbiguous
 		}
 
 		switch cerr.Class {
 		case ErrorClassFailTransient:
+			fallthrough
+		case ErrorClassFailOther:
 			time.AfterFunc(3*time.Millisecond, func() {
-				t.resolveATRCommitConflictLocked(ambiguityResolution, cb)
+				t.fetchATRCommitConflictLocked(cb)
 			})
+			return
+		case ErrorClassFailDocNotFound:
+			cb(jsonAtrStateUnknown, t.operationFailed(operationFailedDef{
+				Cerr:              cerr.Wrap(ErrAtrNotFound),
+				ShouldNotRetry:    true,
+				ShouldNotRollback: true,
+				Reason:            ErrorReasonTransactionCommitAmbiguous,
+			}))
+		case ErrorClassFailPathNotFound:
+			cb(jsonAtrStateUnknown, t.operationFailed(operationFailedDef{
+				Cerr:              cerr.Wrap(ErrAtrEntryNotFound),
+				ShouldNotRetry:    true,
+				ShouldNotRollback: true,
+				Reason:            ErrorReasonTransactionCommitAmbiguous,
+			}))
 		case ErrorClassFailExpiry:
-			if errorReason == ErrorReasonTransactionFailed {
-				errorReason = ErrorReasonTransactionExpired
-			}
-
-			cb(t.operationFailed(operationFailedDef{
+			cb(jsonAtrStateUnknown, t.operationFailed(operationFailedDef{
 				Cerr:              cerr,
 				ShouldNotRetry:    true,
 				ShouldNotRollback: true,
-				Reason:            errorReason,
+				Reason:            ErrorReasonTransactionCommitAmbiguous,
 			}))
 		case ErrorClassFailHard:
-			if t.disableCBD3838Fix {
-				errorReason = ErrorReasonTransactionFailed
-			}
-
-			cb(t.operationFailed(operationFailedDef{
+			cb(jsonAtrStateUnknown, t.operationFailed(operationFailedDef{
 				Cerr:              cerr,
 				ShouldNotRetry:    true,
 				ShouldNotRollback: true,
-				Reason:            errorReason,
+				Reason:            ErrorReasonTransactionCommitAmbiguous,
 			}))
 		default:
-			if t.disableCBD3838Fix {
-				// With TXNG53, this appears to be a divergence from the spec in Java?
-				t.resolveATRCommitConflictLocked(ambiguityResolution, cb)
-			} else {
-				cb(t.operationFailed(operationFailedDef{
-					Cerr:              cerr,
-					ShouldNotRetry:    false,
-					ShouldNotRollback: true,
-					Reason:            errorReason,
-				}))
-			}
+			cb(jsonAtrStateUnknown, t.operationFailed(operationFailedDef{
+				Cerr:              cerr,
+				ShouldNotRetry:    true,
+				ShouldNotRollback: true,
+				Reason:            ErrorReasonTransactionCommitAmbiguous,
+			}))
+			return
 		}
 	}
 
 	t.checkExpiredAtomic(hookATRCommitAmbiguityResolution, []byte{}, false, func(cerr *classifiedError) {
 		if cerr != nil {
-			ecCb(cerr)
+			ecCb(jsonAtrStateUnknown, cerr)
 			return
 		}
 
 		t.hooks.BeforeATRCommitAmbiguityResolution(func(err error) {
 			if err != nil {
-				ecCb(classifyHookError(err))
+				ecCb(jsonAtrStateUnknown, classifyHookError(err))
 				return
 			}
 
@@ -295,52 +294,84 @@ func (t *transactionAttempt) resolveATRCommitConflictLocked(
 				Flags:    memd.SubdocDocFlagNone,
 			}, func(result *gocbcore.LookupInResult, err error) {
 				if err != nil {
-					ecCb(classifyError(err))
+					ecCb(jsonAtrStateUnknown, classifyError(err))
 					return
 				}
 
 				if result.Ops[0].Err != nil {
-					ecCb(classifyError(err))
+					ecCb(jsonAtrStateUnknown, classifyError(err))
 					return
 				}
 
 				var st jsonAtrState
 				if err := json.Unmarshal(result.Ops[0].Value, &st); err != nil {
-					ecCb(classifyError(err))
+					ecCb(jsonAtrStateUnknown, classifyError(err))
 					return
 				}
 
-				switch st {
-				case jsonAtrStatePending:
-					if t.disableCBD3838Fix {
-						// With TXNG53, we can get here while pending, so we need to loop
-						// back around until that bug gets fixed in FIT.
-						t.setATRCommittedLocked(ambiguityResolution, cb)
-					} else {
-						ecCb(classifyError(
-							errors.Wrap(ErrIllegalState, "transaction still pending even with p set during commit")))
-					}
-				case jsonAtrStateCommitted:
-					ecCb(nil)
-				case jsonAtrStateCompleted:
-					ecCb(classifyError(
-						errors.Wrap(ErrIllegalState, "transaction already completed during commit")))
-				case jsonAtrStateAborted:
-					ecCb(classifyError(
-						errors.Wrap(ErrIllegalState, "transaction already aborted during commit")))
-				case jsonAtrStateRolledBack:
-					ecCb(classifyError(
-						errors.Wrap(ErrIllegalState, "transaction already rolled back during commit")))
-				default:
-					ecCb(classifyError(
-						errors.Wrap(ErrIllegalState, fmt.Sprintf("illegal transaction state during commit: %s", st))))
-				}
+				ecCb(st, nil)
 			})
 			if err != nil {
-				ecCb(classifyError(err))
+				ecCb(jsonAtrStateUnknown, classifyError(err))
 				return
 			}
 		})
+	})
+}
+
+func (t *transactionAttempt) resolveATRCommitConflictLocked(
+	cb func(*TransactionOperationFailedError),
+) {
+	t.fetchATRCommitConflictLocked(func(st jsonAtrState, err *TransactionOperationFailedError) {
+		if err != nil {
+			cb(err)
+			return
+		}
+
+		switch st {
+		case jsonAtrStatePending:
+			cb(t.operationFailed(operationFailedDef{
+				Cerr: classifyError(
+					errors.Wrap(ErrIllegalState, "transaction still pending even with p set during commit")),
+				ShouldNotRetry:    true,
+				ShouldNotRollback: true,
+				Reason:            ErrorReasonTransactionFailed,
+			}))
+		case jsonAtrStateCommitted:
+			cb(nil)
+		case jsonAtrStateCompleted:
+			cb(t.operationFailed(operationFailedDef{
+				Cerr: classifyError(
+					errors.Wrap(ErrIllegalState, "transaction already completed during commit")),
+				ShouldNotRetry:    true,
+				ShouldNotRollback: true,
+				Reason:            ErrorReasonTransactionFailed,
+			}))
+		case jsonAtrStateAborted:
+			cb(t.operationFailed(operationFailedDef{
+				Cerr: classifyError(
+					errors.Wrap(ErrIllegalState, "transaction already aborted during commit")),
+				ShouldNotRetry:    false,
+				ShouldNotRollback: false,
+				Reason:            ErrorReasonTransactionFailed,
+			}))
+		case jsonAtrStateRolledBack:
+			cb(t.operationFailed(operationFailedDef{
+				Cerr: classifyError(
+					errors.Wrap(ErrIllegalState, "transaction already rolled back during commit")),
+				ShouldNotRetry:    true,
+				ShouldNotRollback: true,
+				Reason:            ErrorReasonTransactionFailed,
+			}))
+		default:
+			cb(t.operationFailed(operationFailedDef{
+				Cerr: classifyError(
+					errors.Wrap(ErrIllegalState, fmt.Sprintf("illegal transaction state during commit: %s", st))),
+				ShouldNotRetry:    true,
+				ShouldNotRollback: true,
+				Reason:            ErrorReasonTransactionFailed,
+			}))
+		}
 	})
 }
 
@@ -361,37 +392,58 @@ func (t *transactionAttempt) setATRCommittedLocked(
 
 		switch cerr.Class {
 		case ErrorClassFailAmbiguous:
-			if t.disableCBD3838Fix {
-				ambiguityResolution = true
-				t.resolveATRCommitConflictLocked(ambiguityResolution, cb)
-			} else {
+			time.AfterFunc(3*time.Millisecond, func() {
 				ambiguityResolution = true
 				t.setATRCommittedLocked(ambiguityResolution, cb)
-			}
+			})
 			return
-		case ErrorClassFailPathAlreadyExists:
-			t.resolveATRCommitConflictLocked(ambiguityResolution, cb)
-			return
-		case ErrorClassFailExpiry:
-			if errorReason == ErrorReasonTransactionFailed {
-				errorReason = ErrorReasonTransactionExpired
+		case ErrorClassFailTransient:
+			if ambiguityResolution {
+				time.AfterFunc(3*time.Millisecond, func() {
+					t.setATRCommittedLocked(ambiguityResolution, cb)
+				})
+				return
 			}
 
-			if t.disableCBD3838Fix {
+			cb(t.operationFailed(operationFailedDef{
+				Cerr:              cerr,
+				ShouldNotRetry:    false,
+				ShouldNotRollback: false,
+				Reason:            errorReason,
+			}))
+		case ErrorClassFailPathAlreadyExists:
+			t.resolveATRCommitConflictLocked(cb)
+			return
+		case ErrorClassFailDocNotFound:
+			cb(t.operationFailed(operationFailedDef{
+				Cerr:              cerr.Wrap(ErrAtrNotFound),
+				ShouldNotRetry:    true,
+				ShouldNotRollback: true,
+				Reason:            errorReason,
+			}))
+		case ErrorClassFailPathNotFound:
+			cb(t.operationFailed(operationFailedDef{
+				Cerr:              cerr.Wrap(ErrAtrEntryNotFound),
+				ShouldNotRetry:    true,
+				ShouldNotRollback: true,
+				Reason:            errorReason,
+			}))
+		case ErrorClassFailOutOfSpace:
+			cb(t.operationFailed(operationFailedDef{
+				Cerr:              cerr.Wrap(ErrAtrFull),
+				ShouldNotRetry:    true,
+				ShouldNotRollback: true,
+				Reason:            errorReason,
+			}))
+		case ErrorClassFailExpiry:
+			if errorReason == ErrorReasonTransactionFailed {
 				errorReason = ErrorReasonTransactionExpired
 			}
 
 			cb(t.operationFailed(operationFailedDef{
 				Cerr:              cerr,
 				ShouldNotRetry:    true,
-				ShouldNotRollback: false,
-				Reason:            errorReason,
-			}))
-		case ErrorClassFailTransient:
-			cb(t.operationFailed(operationFailedDef{
-				Cerr:              cerr,
-				ShouldNotRetry:    false,
-				ShouldNotRollback: false,
+				ShouldNotRollback: true,
 				Reason:            errorReason,
 			}))
 		case ErrorClassFailHard:
@@ -402,6 +454,16 @@ func (t *transactionAttempt) setATRCommittedLocked(
 				Reason:            errorReason,
 			}))
 		default:
+			if ambiguityResolution {
+				cb(t.operationFailed(operationFailedDef{
+					Cerr:              cerr,
+					ShouldNotRetry:    true,
+					ShouldNotRollback: true,
+					Reason:            errorReason,
+				}))
+				return
+			}
+
 			cb(t.operationFailed(operationFailedDef{
 				Cerr:              cerr,
 				ShouldNotRetry:    true,
@@ -661,17 +723,15 @@ func (t *transactionAttempt) resolveATRAbortConflictLocked(
 				t.resolveATRAbortConflictLocked(cb)
 			})
 		case ErrorClassFailPathNotFound:
-			fallthrough
-		case ErrorClassFailDocNotFound:
 			cb(t.operationFailed(operationFailedDef{
-				Cerr:              cerr.Wrap(ErrAtrNotFound),
+				Cerr:              cerr.Wrap(ErrAtrEntryNotFound),
 				ShouldNotRetry:    true,
 				ShouldNotRollback: true,
 				Reason:            ErrorReasonTransactionFailed,
 			}))
-		case ErrorClassFailOutOfSpace:
+		case ErrorClassFailDocNotFound:
 			cb(t.operationFailed(operationFailedDef{
-				Cerr:              cerr.Wrap(ErrAtrFull),
+				Cerr:              cerr.Wrap(ErrAtrNotFound),
 				ShouldNotRetry:    true,
 				ShouldNotRollback: true,
 				Reason:            ErrorReasonTransactionFailed,
@@ -962,11 +1022,6 @@ func (t *transactionAttempt) setATRRolledBackLocked(
 		case ErrorClassFailPathNotFound:
 			cb(nil)
 			return
-		case ErrorClassFailExpiry:
-			t.setExpiryOvertimeAtomic()
-			time.AfterFunc(3*time.Millisecond, func() {
-				t.setATRRolledBackLocked(cb)
-			})
 		case ErrorClassFailDocNotFound:
 			cb(t.operationFailed(operationFailedDef{
 				Cerr:              cerr.Wrap(ErrAtrNotFound),
@@ -974,6 +1029,11 @@ func (t *transactionAttempt) setATRRolledBackLocked(
 				ShouldNotRollback: true,
 				Reason:            ErrorReasonTransactionFailed,
 			}))
+		case ErrorClassFailExpiry:
+			t.setExpiryOvertimeAtomic()
+			time.AfterFunc(3*time.Millisecond, func() {
+				t.setATRRolledBackLocked(cb)
+			})
 		case ErrorClassFailOutOfSpace:
 			cb(t.operationFailed(operationFailedDef{
 				Cerr:              cerr.Wrap(ErrAtrFull),

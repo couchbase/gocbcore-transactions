@@ -21,7 +21,6 @@ type transactionAttempt struct {
 	hooks               TransactionHooks
 	enableNonFatalGets  bool
 	disableCompoundOps  bool
-	disableCBD3838Fix   bool
 	serialUnstaging     bool
 	explicitAtrs        bool
 	atrLocation         ATRLocation
