@@ -248,7 +248,7 @@ func TestLostCleanupProcessClient(t *testing.T) {
 	config.Internal.NumATRs = 1024
 	cleaner := newStdLostTransactionCleaner(config)
 	cleaner.locations = map[LostATRLocation]chan struct{}{
-		LostATRLocation{
+		{
 			BucketName: "default",
 		}: make(chan struct{}),
 	}
