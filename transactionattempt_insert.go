@@ -76,7 +76,7 @@ func (t *transactionAttempt) insert(
 					endAndCb(nil, t.operationFailed(operationFailedDef{
 						Cerr: classifyError(
 							errors.Wrap(ErrDocumentAlreadyExists, "attempted to insert a document previously inserted in this transaction")),
-						ShouldNotRetry:    false,
+						ShouldNotRetry:    true,
 						ShouldNotRollback: false,
 						Reason:            ErrorReasonTransactionFailed,
 					}))
@@ -85,7 +85,7 @@ func (t *transactionAttempt) insert(
 					endAndCb(nil, t.operationFailed(operationFailedDef{
 						Cerr: classifyError(
 							errors.Wrap(ErrDocumentAlreadyExists, "attempted to insert a document previously replaced in this transaction")),
-						ShouldNotRetry:    false,
+						ShouldNotRetry:    true,
 						ShouldNotRollback: false,
 						Reason:            ErrorReasonTransactionFailed,
 					}))

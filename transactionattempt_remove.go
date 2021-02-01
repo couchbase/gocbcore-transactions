@@ -90,7 +90,7 @@ func (t *transactionAttempt) remove(
 					endAndCb(nil, t.operationFailed(operationFailedDef{
 						Cerr: classifyError(
 							errors.Wrap(ErrDocumentNotFound, "attempted to remove a document previously removed in this transaction")),
-						ShouldNotRetry:    false,
+						ShouldNotRetry:    true,
 						ShouldNotRollback: false,
 						Reason:            ErrorReasonTransactionFailed,
 					}))

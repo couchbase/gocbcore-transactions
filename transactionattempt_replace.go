@@ -82,7 +82,7 @@ func (t *transactionAttempt) replace(
 					endAndCb(nil, t.operationFailed(operationFailedDef{
 						Cerr: classifyError(
 							errors.Wrap(ErrDocumentNotFound, "attempted to replace a document previously removed in this transaction")),
-						ShouldNotRetry:    false,
+						ShouldNotRetry:    true,
 						ShouldNotRollback: false,
 						Reason:            ErrorReasonTransactionFailed,
 					}))
