@@ -73,17 +73,6 @@ func (t *transactionAttempt) insert(
 						})
 					return
 				case StagedMutationInsert:
-					if !t.enableCompoundOps {
-						endAndCb(nil, t.operationFailed(operationFailedDef{
-							Cerr: classifyError(
-								errors.Wrap(ErrIllegalState, "attempted to insert a document previously inserted in this transaction")),
-							ShouldNotRetry:    true,
-							ShouldNotRollback: false,
-							Reason:            ErrorReasonTransactionFailed,
-						}))
-						return
-					}
-
 					endAndCb(nil, t.operationFailed(operationFailedDef{
 						Cerr: classifyError(
 							errors.Wrap(ErrDocumentAlreadyExists, "attempted to insert a document previously inserted in this transaction")),
@@ -122,7 +111,6 @@ func (t *transactionAttempt) insert(
 				t.stageInsert(
 					agent, scopeName, collectionName, key,
 					value, 0,
-					false,
 					func(result *GetResult, err *TransactionOperationFailedError) {
 						endAndCb(result, err)
 					})
@@ -139,7 +127,6 @@ func (t *transactionAttempt) resolveConflictedInsert(
 	collectionName string,
 	key []byte,
 	value json.RawMessage,
-	replaceOfInsert bool,
 	cb func(*GetResult, *TransactionOperationFailedError),
 ) {
 	t.getMetaForConflictedInsert(agent, scopeName, collectionName, key,
@@ -163,7 +150,7 @@ func (t *transactionAttempt) resolveConflictedInsert(
 				}
 
 				// There wasn't actually a staged mutation there.
-				t.stageInsert(agent, scopeName, collectionName, key, value, cas, replaceOfInsert, cb)
+				t.stageInsert(agent, scopeName, collectionName, key, value, cas, cb)
 				return
 			}
 
@@ -201,7 +188,7 @@ func (t *transactionAttempt) resolveConflictedInsert(
 				// is unneccessary, as is the forwards compatibility check when resolving conflicted inserts
 				// so we can safely just ignore it.
 				if meta.TransactionID == t.transactionID && meta.AttemptID == t.id {
-					t.stageInsert(agent, scopeName, collectionName, key, value, cas, replaceOfInsert, cb)
+					t.stageInsert(agent, scopeName, collectionName, key, value, cas, cb)
 					return
 				}
 
@@ -217,7 +204,7 @@ func (t *transactionAttempt) resolveConflictedInsert(
 							return
 						}
 
-						t.stageInsert(agent, scopeName, collectionName, key, value, cas, replaceOfInsert, cb)
+						t.stageInsert(agent, scopeName, collectionName, key, value, cas, cb)
 					})
 				})
 			})
@@ -231,7 +218,6 @@ func (t *transactionAttempt) stageInsert(
 	key []byte,
 	value json.RawMessage,
 	cas gocbcore.Cas,
-	replaceOfInsert bool,
 	cb func(*GetResult, *TransactionOperationFailedError),
 ) {
 	ecCb := func(result *GetResult, cerr *classifiedError) {
@@ -243,7 +229,7 @@ func (t *transactionAttempt) stageInsert(
 		switch cerr.Class {
 		case ErrorClassFailAmbiguous:
 			time.AfterFunc(3*time.Millisecond, func() {
-				t.stageInsert(agent, scopeName, collectionName, key, value, cas, replaceOfInsert, cb)
+				t.stageInsert(agent, scopeName, collectionName, key, value, cas, cb)
 			})
 		case ErrorClassFailExpiry:
 			t.setExpiryOvertimeAtomic()
@@ -270,7 +256,7 @@ func (t *transactionAttempt) stageInsert(
 		case ErrorClassFailDocAlreadyExists:
 			fallthrough
 		case ErrorClassFailCasMismatch:
-			t.resolveConflictedInsert(agent, scopeName, collectionName, key, value, replaceOfInsert, cb)
+			t.resolveConflictedInsert(agent, scopeName, collectionName, key, value, cb)
 		default:
 			cb(nil, t.operationFailed(operationFailedDef{
 				Cerr:              cerr,
@@ -281,23 +267,13 @@ func (t *transactionAttempt) stageInsert(
 		}
 	}
 
-	// BUG(TXNG-70): Remove this once FIT has been updated.
-	// Note that replaceOfInsert should also be removed from stageInsert and
-	// resolveConflictedInsert.
-	beforeHook := t.hooks.BeforeStagedInsert
-	afterHook := t.hooks.AfterStagedInsertComplete
-	if replaceOfInsert {
-		beforeHook = t.hooks.BeforeStagedReplace
-		afterHook = t.hooks.AfterStagedReplaceComplete
-	}
-
 	t.checkExpiredAtomic(hookInsert, key, false, func(cerr *classifiedError) {
 		if cerr != nil {
 			ecCb(nil, cerr)
 			return
 		}
 
-		beforeHook(key, func(err error) {
+		t.hooks.BeforeStagedInsert(key, func(err error) {
 			if err != nil {
 				ecCb(nil, classifyHookError(err))
 				return
@@ -370,7 +346,7 @@ func (t *transactionAttempt) stageInsert(
 
 				stagedInfo.Cas = result.Cas
 
-				afterHook(key, func(err error) {
+				t.hooks.AfterStagedInsertComplete(key, func(err error) {
 					if err != nil {
 						ecCb(nil, classifyHookError(err))
 						return

@@ -20,7 +20,6 @@ type transactionAttempt struct {
 	id                      string
 	hooks                   TransactionHooks
 	enableNonFatalGets      bool
-	enableCompoundOps       bool
 	enableParallelUnstaging bool
 	enableExplicitATRs      bool
 	enableMutationCaching   bool

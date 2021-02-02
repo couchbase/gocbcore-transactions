@@ -23,7 +23,6 @@ type Transaction struct {
 	durabilityLevel         DurabilityLevel
 	enableParallelUnstaging bool
 	enableNonFatalGets      bool
-	enableCompoundOps       bool
 	enableExplicitATRs      bool
 	enableMutationCaching   bool
 	atrLocation             ATRLocation
@@ -61,7 +60,6 @@ func (t *Transaction) NewAttempt() error {
 		durabilityLevel:         t.durabilityLevel,
 		transactionID:           t.transactionID,
 		enableNonFatalGets:      t.enableNonFatalGets,
-		enableCompoundOps:       t.enableCompoundOps,
 		enableParallelUnstaging: t.enableParallelUnstaging,
 		enableMutationCaching:   t.enableMutationCaching,
 		enableExplicitATRs:      t.enableExplicitATRs,
@@ -169,7 +167,6 @@ func (t *Transaction) resumeAttempt(txnData *jsonSerializedAttempt) error {
 		durabilityLevel:         t.durabilityLevel,
 		transactionID:           t.transactionID,
 		enableNonFatalGets:      t.enableNonFatalGets,
-		enableCompoundOps:       t.enableCompoundOps,
 		enableParallelUnstaging: t.enableParallelUnstaging,
 		enableMutationCaching:   t.enableMutationCaching,
 		enableExplicitATRs:      t.enableExplicitATRs,

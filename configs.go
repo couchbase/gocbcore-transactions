@@ -136,7 +136,6 @@ type Config struct {
 		CleanUpHooks            CleanUpHooks
 		ClientRecordHooks       ClientRecordHooks
 		EnableNonFatalGets      bool
-		EnableCompoundOps       bool
 		EnableParallelUnstaging bool
 		EnableExplicitATRs      bool
 		EnableMutationCaching   bool

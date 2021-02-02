@@ -26,6 +26,8 @@ type TransactionHooks interface {
 	BeforeCheckATREntryForBlockingDoc(docID []byte, cb func(err error))
 	BeforeDocGet(docID []byte, cb func(err error))
 	BeforeGetDocInExistsDuringStagedInsert(docID []byte, cb func(err error))
+	BeforeRemoveStagedInsert(docID []byte, cb func(err error))
+	AfterRemoveStagedInsert(docID []byte, cb func(err error))
 	AfterDocsCommitted(func(err error))
 	AfterDocsRemoved(func(err error))
 	AfterATRPending(func(err error))
@@ -183,6 +185,16 @@ func (dh *DefaultHooks) BeforeGetDocInExistsDuringStagedInsert(docID []byte, cb 
 	cb(nil)
 }
 
+// BeforeRemoveStagedInsert occurs before removing a staged insert.
+func (dh *DefaultHooks) BeforeRemoveStagedInsert(docID []byte, cb func(err error)) {
+	cb(nil)
+}
+
+// AfterRemoveStagedInsert occurs after removing a staged insert.
+func (dh *DefaultHooks) AfterRemoveStagedInsert(docID []byte, cb func(err error)) {
+	cb(nil)
+}
+
 // AfterDocsCommitted occurs after all documents are committed.
 func (dh *DefaultHooks) AfterDocsCommitted(cb func(err error)) {
 	cb(nil)
@@ -329,6 +341,7 @@ const (
 	hookRollbackDoc        = "rollbackDoc"
 	hookDeleteInserted     = "deleteInserted"
 	hookCreateStagedInsert = "createdStagedInsert"
+	hookRemoveStagedInsert = "removeStagedInsert"
 	hookRemoveDoc          = "removeDoc"
 	hookCommitDoc          = "commitDoc"
 

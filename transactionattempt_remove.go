@@ -65,17 +65,6 @@ func (t *transactionAttempt) remove(
 			if existingMutation != nil {
 				switch existingMutation.OpType {
 				case StagedMutationInsert:
-					if !t.enableCompoundOps {
-						endAndCb(nil, t.operationFailed(operationFailedDef{
-							Cerr: classifyError(
-								errors.Wrap(ErrIllegalState, "attempted to remove a document previously inserted in this transaction")),
-							ShouldNotRetry:    true,
-							ShouldNotRollback: false,
-							Reason:            ErrorReasonTransactionFailed,
-						}))
-						return
-					}
-
 					t.stageRemoveOfInsert(
 						agent, scopeName, collectionName, key,
 						cas,
@@ -347,6 +336,13 @@ func (t *transactionAttempt) stageRemoveOfInsert(
 		}
 
 		switch cerr.Class {
+		case ErrorClassFailExpiry:
+			cb(nil, t.operationFailed(operationFailedDef{
+				Cerr:              cerr,
+				ShouldNotRetry:    true,
+				ShouldNotRollback: true,
+				Reason:            ErrorReasonTransactionExpired,
+			}))
 		case ErrorClassFailDocNotFound:
 			cb(nil, t.operationFailed(operationFailedDef{
 				Cerr: classifyError(
@@ -396,56 +392,63 @@ func (t *transactionAttempt) stageRemoveOfInsert(
 		}
 	}
 
-	t.hooks.BeforeStagedRemove(key, func(err error) {
-		if err != nil {
-			ecCb(nil, classifyHookError(err))
+	t.checkExpiredAtomic(hookRemoveStagedInsert, key, false, func(cerr *classifiedError) {
+		if cerr != nil {
+			ecCb(nil, cerr)
 			return
 		}
 
-		deadline, duraTimeout := mutationTimeouts(t.keyValueTimeout, t.durabilityLevel)
+		t.hooks.BeforeRemoveStagedInsert(key, func(err error) {
+			if err != nil {
+				ecCb(nil, classifyHookError(err))
+				return
+			}
 
-		_, err = agent.MutateIn(gocbcore.MutateInOptions{
-			ScopeName:      scopeName,
-			CollectionName: collectionName,
-			Key:            key,
-			Cas:            cas,
-			Flags:          memd.SubdocDocFlagAccessDeleted,
-			Ops: []gocbcore.SubDocOp{
-				{
-					Op:    memd.SubDocOpDelete,
-					Path:  "txn",
-					Flags: memd.SubdocFlagXattrPath,
+			deadline, duraTimeout := mutationTimeouts(t.keyValueTimeout, t.durabilityLevel)
+
+			_, err = agent.MutateIn(gocbcore.MutateInOptions{
+				ScopeName:      scopeName,
+				CollectionName: collectionName,
+				Key:            key,
+				Cas:            cas,
+				Flags:          memd.SubdocDocFlagAccessDeleted,
+				Ops: []gocbcore.SubDocOp{
+					{
+						Op:    memd.SubDocOpDelete,
+						Path:  "txn",
+						Flags: memd.SubdocFlagXattrPath,
+					},
 				},
-			},
-			DurabilityLevel:        durabilityLevelToMemd(t.durabilityLevel),
-			DurabilityLevelTimeout: duraTimeout,
-			Deadline:               deadline,
-		}, func(result *gocbcore.MutateInResult, err error) {
+				DurabilityLevel:        durabilityLevelToMemd(t.durabilityLevel),
+				DurabilityLevelTimeout: duraTimeout,
+				Deadline:               deadline,
+			}, func(result *gocbcore.MutateInResult, err error) {
+				if err != nil {
+					ecCb(nil, classifyError(err))
+					return
+				}
+
+				t.hooks.AfterRemoveStagedInsert(key, func(err error) {
+					if err != nil {
+						ecCb(nil, classifyHookError(err))
+						return
+					}
+
+					t.removeStagedMutation(agent.BucketName(), scopeName, collectionName, key, func() {
+						cb(&GetResult{
+							agent:          agent,
+							scopeName:      scopeName,
+							collectionName: collectionName,
+							key:            key,
+							Cas:            result.Cas,
+						}, nil)
+					})
+				})
+			})
 			if err != nil {
 				ecCb(nil, classifyError(err))
 				return
 			}
-
-			t.hooks.AfterStagedRemoveComplete(key, func(err error) {
-				if err != nil {
-					ecCb(nil, classifyHookError(err))
-					return
-				}
-
-				t.removeStagedMutation(agent.BucketName(), scopeName, collectionName, key, func() {
-					cb(&GetResult{
-						agent:          agent,
-						scopeName:      scopeName,
-						collectionName: collectionName,
-						key:            key,
-						Cas:            result.Cas,
-					}, nil)
-				})
-			})
 		})
-		if err != nil {
-			ecCb(nil, classifyError(err))
-			return
-		}
 	})
 }
