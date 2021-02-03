@@ -134,7 +134,11 @@ type classifiedError struct {
 type aggregateError []error
 
 func (agge aggregateError) MarshalJSON() ([]byte, error) {
-	return json.Marshal(agge)
+	suberrs := make([]json.RawMessage, len(agge))
+	for i, err := range agge {
+		suberrs[i] = marshalErrorToJSON(err)
+	}
+	return json.Marshal(suberrs)
 }
 
 func (agge aggregateError) Error() string {
