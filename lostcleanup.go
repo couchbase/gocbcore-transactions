@@ -882,6 +882,7 @@ func (ltc *stdLostTransactionCleaner) pollForLocations() {
 		locations, err := ltc.atrLocationFinder()
 		if err != nil {
 			logDebugf("Failed to poll for locations: %v", err)
+			return
 		}
 
 		locationMap := make(map[LostATRLocation]struct{})
