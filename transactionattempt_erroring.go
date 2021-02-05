@@ -24,7 +24,7 @@ func mergeOperationFailedErrors(errs []*TransactionOperationFailedError) *Transa
 	for errIdx := 0; errIdx < len(errs); errIdx++ {
 		tErr := errs[errIdx]
 
-		aggCauses = append(aggCauses, tErr.errorCause)
+		aggCauses = append(aggCauses, tErr)
 
 		if tErr.shouldNotRetry {
 			shouldNotRetry = true
