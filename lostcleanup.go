@@ -412,7 +412,7 @@ func (ltc *stdLostTransactionCleaner) ProcessClient(agent *gocbcore.Agent, colle
 
 				switch ec.Class {
 				case ErrorClassFailDocNotFound:
-					ltc.createClientRecord(agent, func(err error) {
+					ltc.createClientRecord(agent, collection, scope, func(err error) {
 						if err != nil {
 							cb(nil, err)
 							return
@@ -820,7 +820,7 @@ func (ltc *stdLostTransactionCleaner) processClientRecord(agent *gocbcore.Agent,
 	})
 }
 
-func (ltc *stdLostTransactionCleaner) createClientRecord(agent *gocbcore.Agent, cb func(error)) {
+func (ltc *stdLostTransactionCleaner) createClientRecord(agent *gocbcore.Agent, collection, scope string, cb func(error)) {
 	ltc.clientRecordHooks.BeforeCreateRecord(func(err error) {
 		if err != nil {
 			ec := classifyHookError(err)
@@ -854,8 +854,10 @@ func (ltc *stdLostTransactionCleaner) createClientRecord(agent *gocbcore.Agent, 
 					Value: []byte{0},
 				},
 			},
-			Flags:    memd.SubdocDocFlagAddDoc,
-			Deadline: deadline,
+			Flags:          memd.SubdocDocFlagAddDoc,
+			Deadline:       deadline,
+			CollectionName: collection,
+			ScopeName:      scope,
 		}, func(result *gocbcore.MutateInResult, err error) {
 			if err != nil {
 				ec := classifyError(err)
