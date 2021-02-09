@@ -317,7 +317,7 @@ func (t *transactionAttempt) stageInsert(
 				return
 			}
 
-			deadline, duraTimeout := mutationTimeouts(t.operationTimeout, t.durabilityLevel)
+			deadline, duraTimeout := mutationTimeouts(t.keyValueTimeout, t.durabilityLevel)
 
 			flags := memd.SubdocDocFlagCreateAsDeleted | memd.SubdocDocFlagAccessDeleted
 			var txnOp memd.SubDocOpType
@@ -428,8 +428,8 @@ func (t *transactionAttempt) getMetaForConflictedInsert(
 		}
 
 		var deadline time.Time
-		if t.operationTimeout > 0 {
-			deadline = time.Now().Add(t.operationTimeout)
+		if t.keyValueTimeout > 0 {
+			deadline = time.Now().Add(t.keyValueTimeout)
 		}
 
 		_, err = agent.LookupIn(gocbcore.LookupInOptions{
@@ -521,8 +521,8 @@ func (t *transactionAttempt) cleanupStagedInsert(
 		}
 
 		var deadline time.Time
-		if t.operationTimeout > 0 {
-			deadline = time.Now().Add(t.operationTimeout)
+		if t.keyValueTimeout > 0 {
+			deadline = time.Now().Add(t.keyValueTimeout)
 		}
 
 		_, err = agent.Delete(gocbcore.DeleteOptions{

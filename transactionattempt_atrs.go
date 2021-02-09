@@ -131,7 +131,7 @@ func (t *transactionAttempt) setATRPendingLocked(
 				return
 			}
 
-			deadline, duraTimeout := mutationTimeouts(t.operationTimeout, t.durabilityLevel)
+			deadline, duraTimeout := mutationTimeouts(t.keyValueTimeout, t.durabilityLevel)
 
 			var marshalErr error
 			atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag) gocbcore.SubDocOp {
@@ -276,8 +276,8 @@ func (t *transactionAttempt) resolveATRCommitConflictLocked(
 			}
 
 			var deadline time.Time
-			if t.operationTimeout > 0 {
-				deadline = time.Now().Add(t.operationTimeout)
+			if t.keyValueTimeout > 0 {
+				deadline = time.Now().Add(t.keyValueTimeout)
 			}
 
 			_, err = t.atrAgent.LookupIn(gocbcore.LookupInOptions{
@@ -452,7 +452,7 @@ func (t *transactionAttempt) setATRCommittedLocked(
 				return
 			}
 
-			deadline, duraTimeout := mutationTimeouts(t.operationTimeout, t.durabilityLevel)
+			deadline, duraTimeout := mutationTimeouts(t.keyValueTimeout, t.durabilityLevel)
 
 			var marshalErr error
 			atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag, op memd.SubDocOpType) gocbcore.SubDocOp {
@@ -565,7 +565,7 @@ func (t *transactionAttempt) setATRCompletedLocked(
 				return
 			}
 
-			deadline, duraTimeout := mutationTimeouts(t.operationTimeout, t.durabilityLevel)
+			deadline, duraTimeout := mutationTimeouts(t.keyValueTimeout, t.durabilityLevel)
 
 			var marshalErr error
 			atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag) gocbcore.SubDocOp {
@@ -700,8 +700,8 @@ func (t *transactionAttempt) resolveATRAbortConflictLocked(
 		}
 
 		var deadline time.Time
-		if t.operationTimeout > 0 {
-			deadline = time.Now().Add(t.operationTimeout)
+		if t.keyValueTimeout > 0 {
+			deadline = time.Now().Add(t.keyValueTimeout)
 		}
 
 		_, err := t.atrAgent.LookupIn(gocbcore.LookupInOptions{
@@ -869,7 +869,7 @@ func (t *transactionAttempt) setATRAbortedLocked(
 				return
 			}
 
-			deadline, duraTimeout := mutationTimeouts(t.operationTimeout, t.durabilityLevel)
+			deadline, duraTimeout := mutationTimeouts(t.keyValueTimeout, t.durabilityLevel)
 
 			var marshalErr error
 			atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag) gocbcore.SubDocOp {
@@ -1012,7 +1012,7 @@ func (t *transactionAttempt) setATRRolledBackLocked(
 				return
 			}
 
-			deadline, duraTimeout := mutationTimeouts(t.operationTimeout, t.durabilityLevel)
+			deadline, duraTimeout := mutationTimeouts(t.keyValueTimeout, t.durabilityLevel)
 
 			var marshalErr error
 			atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag) gocbcore.SubDocOp {

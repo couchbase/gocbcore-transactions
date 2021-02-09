@@ -14,7 +14,7 @@ type transactionAttempt struct {
 	// immutable state
 	expiryTime          time.Time
 	txnStartTime        time.Time
-	operationTimeout    time.Duration
+	keyValueTimeout     time.Duration
 	durabilityLevel     DurabilityLevel
 	transactionID       string
 	id                  string
@@ -188,7 +188,7 @@ func (t *transactionAttempt) Serialize(cb func([]byte, error)) error {
 			res.ATR.ID = ""
 		}
 
-		res.Config.OperationTimeoutMs = int(t.operationTimeout / time.Millisecond)
+		res.Config.KeyValueTimeoutMs = int(t.keyValueTimeout / time.Millisecond)
 		res.Config.DurabilityLevel = durabilityLevelToString(t.durabilityLevel)
 		res.Config.NumAtrs = 1024
 

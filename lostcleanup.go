@@ -90,7 +90,7 @@ type stdLostTransactionCleaner struct {
 	numAtrs             int
 	cleanupWindow       time.Duration
 	cleaner             Cleaner
-	operationTimeout    time.Duration
+	keyValueTimeout     time.Duration
 	bucketAgentProvider BucketAgentProviderFn
 	locations           map[LostATRLocation]chan struct{}
 	locationsLock       sync.Mutex
@@ -118,7 +118,7 @@ func newStdLostTransactionCleaner(config *Config) *stdLostTransactionCleaner {
 		cleanupHooks:        config.Internal.CleanUpHooks,
 		clientRecordHooks:   config.Internal.ClientRecordHooks,
 		cleaner:             NewCleaner(config),
-		operationTimeout:    config.KeyValueTimeout,
+		keyValueTimeout:     config.KeyValueTimeout,
 		bucketAgentProvider: config.BucketAgentProvider,
 		locations:           make(map[LostATRLocation]chan struct{}),
 		newLocationCh:       make(chan lostATRLocationWithShutdown, 20), // Buffer of 20 should be plenty
@@ -264,8 +264,8 @@ func (ltc *stdLostTransactionCleaner) unregisterClientRecord(location LostATRLoc
 		}
 
 		var opDeadline time.Time
-		if ltc.operationTimeout > 0 {
-			opDeadline = time.Now().Add(ltc.operationTimeout)
+		if ltc.keyValueTimeout > 0 {
+			opDeadline = time.Now().Add(ltc.keyValueTimeout)
 		}
 
 		_, err = agent.MutateIn(gocbcore.MutateInOptions{
@@ -385,8 +385,8 @@ func (ltc *stdLostTransactionCleaner) ProcessClient(agent *gocbcore.Agent, colle
 		}
 
 		var deadline time.Time
-		if ltc.operationTimeout > 0 {
-			deadline = time.Now().Add(ltc.operationTimeout)
+		if ltc.keyValueTimeout > 0 {
+			deadline = time.Now().Add(ltc.keyValueTimeout)
 		}
 
 		_, err = agent.LookupIn(gocbcore.LookupInOptions{
@@ -596,8 +596,8 @@ func (ltc *stdLostTransactionCleaner) getATR(agent *gocbcore.Agent, collection, 
 		}
 
 		var deadline time.Time
-		if ltc.operationTimeout > 0 {
-			deadline = time.Now().Add(ltc.operationTimeout)
+		if ltc.keyValueTimeout > 0 {
+			deadline = time.Now().Add(ltc.keyValueTimeout)
 		}
 
 		_, err = agent.LookupIn(gocbcore.LookupInOptions{
@@ -802,8 +802,8 @@ func (ltc *stdLostTransactionCleaner) processClientRecord(agent *gocbcore.Agent,
 			})
 		}
 
-		if ltc.operationTimeout > 0 {
-			opts.Deadline = time.Now().Add(ltc.operationTimeout)
+		if ltc.keyValueTimeout > 0 {
+			opts.Deadline = time.Now().Add(ltc.keyValueTimeout)
 		}
 		_, err = agent.MutateIn(opts, func(result *gocbcore.MutateInResult, err error) {
 			if err != nil {
@@ -834,8 +834,8 @@ func (ltc *stdLostTransactionCleaner) createClientRecord(agent *gocbcore.Agent, 
 		}
 
 		var deadline time.Time
-		if ltc.operationTimeout > 0 {
-			deadline = time.Now().Add(ltc.operationTimeout)
+		if ltc.keyValueTimeout > 0 {
+			deadline = time.Now().Add(ltc.keyValueTimeout)
 		}
 
 		_, err = agent.MutateIn(gocbcore.MutateInOptions{

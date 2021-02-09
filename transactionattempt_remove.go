@@ -251,7 +251,7 @@ func (t *transactionAttempt) stageRemove(
 				return
 			}
 
-			deadline, duraTimeout := mutationTimeouts(t.operationTimeout, t.durabilityLevel)
+			deadline, duraTimeout := mutationTimeouts(t.keyValueTimeout, t.durabilityLevel)
 
 			flags := memd.SubdocDocFlagAccessDeleted
 
@@ -402,7 +402,7 @@ func (t *transactionAttempt) stageRemoveOfInsert(
 			return
 		}
 
-		deadline, duraTimeout := mutationTimeouts(t.operationTimeout, t.durabilityLevel)
+		deadline, duraTimeout := mutationTimeouts(t.keyValueTimeout, t.durabilityLevel)
 
 		_, err = agent.MutateIn(gocbcore.MutateInOptions{
 			ScopeName:      scopeName,

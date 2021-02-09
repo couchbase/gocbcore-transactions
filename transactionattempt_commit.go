@@ -351,7 +351,7 @@ func (t *transactionAttempt) commitStagedReplace(
 				return
 			}
 
-			deadline, duraTimeout := mutationTimeouts(t.operationTimeout, t.durabilityLevel)
+			deadline, duraTimeout := mutationTimeouts(t.keyValueTimeout, t.durabilityLevel)
 
 			cas := mutation.Cas
 			if forceWrite {
@@ -506,7 +506,7 @@ func (t *transactionAttempt) commitStagedInsert(
 				return
 			}
 
-			deadline, duraTimeout := mutationTimeouts(t.operationTimeout, t.durabilityLevel)
+			deadline, duraTimeout := mutationTimeouts(t.keyValueTimeout, t.durabilityLevel)
 
 			_, err = mutation.Agent.Add(gocbcore.AddOptions{
 				ScopeName:              mutation.ScopeName,
@@ -618,7 +618,7 @@ func (t *transactionAttempt) commitStagedRemove(
 				return
 			}
 
-			deadline, duraTimeout := mutationTimeouts(t.operationTimeout, t.durabilityLevel)
+			deadline, duraTimeout := mutationTimeouts(t.keyValueTimeout, t.durabilityLevel)
 
 			_, err = mutation.Agent.Delete(gocbcore.DeleteOptions{
 				ScopeName:              mutation.ScopeName,

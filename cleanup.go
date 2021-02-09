@@ -86,7 +86,7 @@ func NewCleaner(config *Config) Cleaner {
 		stop:                make(chan struct{}),
 		bucketAgentProvider: config.BucketAgentProvider,
 		q:                   make(priorityQueue, 0, config.CleanupQueueSize),
-		operationTimeout:    config.KeyValueTimeout,
+		keyValueTimeout:     config.KeyValueTimeout,
 		durabilityLevel:     config.DurabilityLevel,
 	}
 }
@@ -122,7 +122,7 @@ type stdCleaner struct {
 	qLock               sync.Mutex
 	stop                chan struct{}
 	bucketAgentProvider BucketAgentProviderFn
-	operationTimeout    time.Duration
+	keyValueTimeout     time.Duration
 	durabilityLevel     DurabilityLevel
 }
 
@@ -133,7 +133,7 @@ func startCleanupThread(config *Config) *stdCleaner {
 		stop:                make(chan struct{}),
 		bucketAgentProvider: config.BucketAgentProvider,
 		q:                   make(priorityQueue, 0, config.CleanupQueueSize),
-		operationTimeout:    config.KeyValueTimeout,
+		keyValueTimeout:     config.KeyValueTimeout,
 		durabilityLevel:     config.DurabilityLevel,
 	}
 
@@ -412,7 +412,7 @@ func (c *stdCleaner) cleanupATR(agent *gocbcore.Agent, req *CleanupRequest, cb f
 		if req.DurabilityLevel == DurabilityLevelUnknown {
 			req.DurabilityLevel = c.durabilityLevel
 		}
-		deadline, duraTimeout := mutationTimeouts(c.operationTimeout, req.DurabilityLevel)
+		deadline, duraTimeout := mutationTimeouts(c.keyValueTimeout, req.DurabilityLevel)
 
 		_, err = agent.MutateIn(gocbcore.MutateInOptions{
 			Key:                    req.AtrID,
@@ -451,7 +451,7 @@ func (c *stdCleaner) cleanupDocs(req *CleanupRequest, cb func(error)) {
 		// a durability level.
 		memdDuraLevel = durabilityLevelToMemd(req.DurabilityLevel)
 	}
-	deadline, duraTimeout := mutationTimeouts(c.operationTimeout, req.DurabilityLevel)
+	deadline, duraTimeout := mutationTimeouts(c.keyValueTimeout, req.DurabilityLevel)
 
 	switch req.State {
 	case AttemptStateCommitted:
@@ -882,8 +882,8 @@ func (c *stdCleaner) perDoc(crc32MatchStaging bool, attemptID string, dr DocReco
 		}
 
 		var deadline time.Time
-		if c.operationTimeout > 0 {
-			deadline = time.Now().Add(c.operationTimeout)
+		if c.keyValueTimeout > 0 {
+			deadline = time.Now().Add(c.keyValueTimeout)
 		}
 
 		_, err = agent.LookupIn(gocbcore.LookupInOptions{

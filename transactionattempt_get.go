@@ -374,8 +374,8 @@ func (t *transactionAttempt) fetchDocWithMeta(
 		}
 
 		var deadline time.Time
-		if t.operationTimeout > 0 {
-			deadline = time.Now().Add(t.operationTimeout)
+		if t.keyValueTimeout > 0 {
+			deadline = time.Now().Add(t.keyValueTimeout)
 		}
 
 		_, err = agent.LookupIn(gocbcore.LookupInOptions{

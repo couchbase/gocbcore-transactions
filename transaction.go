@@ -19,7 +19,7 @@ type Transaction struct {
 
 	expiryTime          time.Time
 	startTime           time.Time
-	operationTimeout    time.Duration
+	keyValueTimeout     time.Duration
 	durabilityLevel     DurabilityLevel
 	serialUnstaging     bool
 	enableNonFatalGets  bool
@@ -57,7 +57,7 @@ func (t *Transaction) NewAttempt() error {
 	t.attempt = &transactionAttempt{
 		expiryTime:          t.expiryTime,
 		txnStartTime:        t.startTime,
-		operationTimeout:    t.operationTimeout,
+		keyValueTimeout:     t.keyValueTimeout,
 		durabilityLevel:     t.durabilityLevel,
 		transactionID:       t.transactionID,
 		enableNonFatalGets:  t.enableNonFatalGets,
@@ -165,7 +165,7 @@ func (t *Transaction) resumeAttempt(txnData *jsonSerializedAttempt) error {
 	t.attempt = &transactionAttempt{
 		expiryTime:          t.expiryTime,
 		txnStartTime:        t.startTime,
-		operationTimeout:    t.operationTimeout,
+		keyValueTimeout:     t.keyValueTimeout,
 		durabilityLevel:     t.durabilityLevel,
 		transactionID:       t.transactionID,
 		enableNonFatalGets:  t.enableNonFatalGets,
@@ -412,6 +412,6 @@ func (t *Transaction) Config() PerTransactionConfig {
 		CustomATRLocation: t.atrLocation,
 		ExpirationTime:    timeLeft,
 		DurabilityLevel:   t.durabilityLevel,
-		KeyValueTimeout:   t.operationTimeout,
+		KeyValueTimeout:   t.keyValueTimeout,
 	}
 }

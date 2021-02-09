@@ -21,9 +21,9 @@ type jsonSerializedAttempt struct {
 		ID         string `json:"id"`
 	} `json:"atr"`
 	Config struct {
-		OperationTimeoutMs int    `json:"operationTimeoutMs"`
-		DurabilityLevel    string `json:"durabilityLevel"`
-		NumAtrs            int    `json:"numAtrs"`
+		KeyValueTimeoutMs int    `json:"kvTimeoutMs"`
+		DurabilityLevel   string `json:"durabilityLevel"`
+		NumAtrs           int    `json:"numAtrs"`
 	} `json:"config"`
 	State struct {
 		TimeLeftMs int `json:"timeLeftMs"`

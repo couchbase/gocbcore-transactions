@@ -245,7 +245,7 @@ func (t *transactionAttempt) stageReplace(
 				return
 			}
 
-			deadline, duraTimeout := mutationTimeouts(t.operationTimeout, t.durabilityLevel)
+			deadline, duraTimeout := mutationTimeouts(t.keyValueTimeout, t.durabilityLevel)
 
 			_, err = stagedInfo.Agent.MutateIn(gocbcore.MutateInOptions{
 				ScopeName:      stagedInfo.ScopeName,

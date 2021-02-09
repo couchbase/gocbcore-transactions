@@ -96,7 +96,7 @@ func (t *Manager) BeginTransaction(perConfig *PerTransactionConfig) (*Transactio
 
 	expirationTime := t.config.ExpirationTime
 	durabilityLevel := t.config.DurabilityLevel
-	operationTimeout := t.config.KeyValueTimeout
+	keyValueTimeout := t.config.KeyValueTimeout
 	customATRLocation := t.config.CustomATRLocation
 	bucketAgentProvider := t.config.BucketAgentProvider
 
@@ -108,7 +108,7 @@ func (t *Manager) BeginTransaction(perConfig *PerTransactionConfig) (*Transactio
 			durabilityLevel = perConfig.DurabilityLevel
 		}
 		if perConfig.KeyValueTimeout != 0 {
-			operationTimeout = perConfig.KeyValueTimeout
+			keyValueTimeout = perConfig.KeyValueTimeout
 		}
 		if perConfig.CustomATRLocation.Agent != nil {
 			customATRLocation = perConfig.CustomATRLocation
@@ -125,7 +125,7 @@ func (t *Manager) BeginTransaction(perConfig *PerTransactionConfig) (*Transactio
 		startTime:           now,
 		durabilityLevel:     durabilityLevel,
 		transactionID:       transactionUUID,
-		operationTimeout:    operationTimeout,
+		keyValueTimeout:     keyValueTimeout,
 		atrLocation:         customATRLocation,
 		addCleanupRequest:   t.addCleanupRequest,
 		hooks:               t.config.Internal.Hooks,
@@ -156,7 +156,7 @@ func (t *Manager) ResumeTransactionAttempt(txnBytes []byte) (*Transaction, error
 	if txnData.State.TimeLeftMs <= 0 {
 		return nil, errors.New("invalid txn data - time left must be greater than 0")
 	}
-	if txnData.Config.OperationTimeoutMs <= 0 {
+	if txnData.Config.KeyValueTimeoutMs <= 0 {
 		return nil, errors.New("invalid txn data - operation timeout must be greater than 0")
 	}
 	if txnData.Config.NumAtrs <= 0 || txnData.Config.NumAtrs > 1024 {
@@ -195,7 +195,7 @@ func (t *Manager) ResumeTransactionAttempt(txnBytes []byte) (*Transaction, error
 	}
 
 	expirationTime := time.Duration(txnData.State.TimeLeftMs) * time.Millisecond
-	operationTimeout := time.Duration(txnData.Config.OperationTimeoutMs) * time.Millisecond
+	keyValueTimeout := time.Duration(txnData.Config.KeyValueTimeoutMs) * time.Millisecond
 
 	now := time.Now()
 	txn := &Transaction{
@@ -204,7 +204,7 @@ func (t *Manager) ResumeTransactionAttempt(txnBytes []byte) (*Transaction, error
 		startTime:           now,
 		durabilityLevel:     durabilityLevel,
 		transactionID:       transactionUUID,
-		operationTimeout:    operationTimeout,
+		keyValueTimeout:     keyValueTimeout,
 		atrLocation:         atrLocation,
 		addCleanupRequest:   t.addCleanupRequest,
 		hooks:               t.config.Internal.Hooks,
