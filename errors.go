@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/couchbase/gocbcore/v9"
 	"github.com/pkg/errors"
 )
 
@@ -257,21 +256,6 @@ func (bre basicRetypedError) Unwrap() error {
 }
 
 func marshalErrorToJSON(err error) json.RawMessage {
-	// BUG(TXNG-78): Remove gocbcore error serialization workaround.
-	// We currently need to manually serialize these because gocbcore has a bug that
-	// causes JSON serialization of its errors to loose information.
-	if coreErr, ok := err.(*gocbcore.KeyValueError); ok {
-		var coreErrFields map[string]interface{}
-		if coreErrData, err := json.Marshal(coreErr); err == nil {
-			if err := json.Unmarshal(coreErrData, &coreErrFields); err == nil {
-				coreErrFields["msg"] = coreErr.InnerError.Error()
-				if errData, err := json.Marshal(coreErr); err == nil {
-					return errData
-				}
-			}
-		}
-	}
-
 	if marshaler, ok := err.(json.Marshaler); ok {
 		if data, err := marshaler.MarshalJSON(); err == nil {
 			return json.RawMessage(data)
