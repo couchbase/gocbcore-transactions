@@ -95,7 +95,7 @@ func (t *transactionAttempt) commit(
 						mutation *stagedMutation,
 						unstageCb func(*TransactionOperationFailedError),
 					) {
-						t.ensureMutation(mutation, func(err *TransactionOperationFailedError) {
+						t.fetchBeforeUnstage(mutation, func(err *TransactionOperationFailedError) {
 							if err != nil {
 								unstageCb(err)
 								return
@@ -197,7 +197,7 @@ func (t *transactionAttempt) commit(
 	return nil
 }
 
-func (t *transactionAttempt) ensureMutation(
+func (t *transactionAttempt) fetchBeforeUnstage(
 	mutation *stagedMutation,
 	cb func(*TransactionOperationFailedError),
 ) {
@@ -207,12 +207,22 @@ func (t *transactionAttempt) ensureMutation(
 			return
 		}
 
+		if t.isExpiryOvertimeAtomic() {
+			cb(t.operationFailed(operationFailedDef{
+				Cerr: classifyError(
+					errors.Wrap(ErrAttemptExpired, "fetching staged data failed during overtime")),
+				ShouldNotRetry:    true,
+				ShouldNotRollback: true,
+				Reason:            ErrorReasonTransactionFailedPostCommit,
+			}))
+			return
+		}
+
 		cb(t.operationFailed(operationFailedDef{
-			Cerr: classifyError(
-				errors.New("failed to fetch staged data to commit")),
-			ShouldNotRetry:    false,
-			ShouldNotRollback: false,
-			Reason:            ErrorReasonTransactionFailed,
+			Cerr:              cerr,
+			ShouldNotRetry:    true,
+			ShouldNotRollback: true,
+			Reason:            ErrorReasonTransactionFailedPostCommit,
 		}))
 	}
 
@@ -226,46 +236,75 @@ func (t *transactionAttempt) ensureMutation(
 		return
 	}
 
-	_, err := mutation.Agent.LookupIn(gocbcore.LookupInOptions{
-		ScopeName:      mutation.ScopeName,
-		CollectionName: mutation.CollectionName,
-		Key:            mutation.Key,
-		Ops: []gocbcore.SubDocOp{
-			{
-				Op:    memd.SubDocOpGet,
-				Path:  "txn.op.stgd",
-				Flags: memd.SubdocFlagXattrPath,
+	t.checkExpiredAtomic(hookCommitDoc, mutation.Key, false, func(cerr *classifiedError) {
+		if cerr != nil {
+			t.setExpiryOvertimeAtomic()
+		}
+
+		var flags memd.SubdocDocFlag
+		if mutation.OpType == StagedMutationInsert {
+			flags = memd.SubdocDocFlagAccessDeleted
+		}
+
+		var deadline time.Time
+		if t.keyValueTimeout > 0 {
+			deadline = time.Now().Add(t.keyValueTimeout)
+		}
+
+		_, err := mutation.Agent.LookupIn(gocbcore.LookupInOptions{
+			ScopeName:      mutation.ScopeName,
+			CollectionName: mutation.CollectionName,
+			Key:            mutation.Key,
+			Ops: []gocbcore.SubDocOp{
+				{
+					Op:    memd.SubDocOpGet,
+					Path:  "txn",
+					Flags: memd.SubdocFlagXattrPath,
+				},
 			},
-		},
-		Deadline: t.expiryTime,
-		Flags:    memd.SubdocDocFlagAccessDeleted,
-	}, func(result *gocbcore.LookupInResult, err error) {
+			Deadline: deadline,
+			Flags:    flags,
+		}, func(result *gocbcore.LookupInResult, err error) {
+			if err != nil {
+				ecCb(classifyError(err))
+				return
+			}
+
+			if result.Cas != mutation.Cas {
+				// Something changed the document, we leave the staged data blank
+				// knowing that the operation against it will fail anyways.  We do
+				// need to check this first, so we don't accidentally include path
+				// errors that occurred below DUE to the CAS change.
+				ecCb(nil)
+				return
+			}
+
+			if result.Ops[0].Err != nil {
+				ecCb(classifyError(result.Ops[0].Err))
+				return
+			}
+
+			var jsonTxn jsonTxnXattr
+			err = json.Unmarshal(result.Ops[0].Value, &jsonTxn)
+			if err != nil {
+				ecCb(classifyError(err))
+				return
+			}
+
+			if jsonTxn.ID.Attempt != t.id {
+				ecCb(classifyError(ErrOther))
+				return
+			}
+
+			mutation.Cas = result.Cas
+			mutation.Staged = jsonTxn.Operation.Staged
+			ecCb(nil)
+		})
 		if err != nil {
 			ecCb(classifyError(err))
 			return
 		}
-
-		if result.Cas != mutation.Cas {
-			// Something changed the document, we leave the staged data blank
-			// knowing that the operation against it will fail anyways.  We do
-			// need to check this first, so we don't accidentally include path
-			// errors that occurred below DUE to the CAS change.
-			ecCb(nil)
-			return
-		}
-
-		if result.Ops[0].Err != nil {
-			ecCb(classifyError(result.Ops[0].Err))
-			return
-		}
-
-		mutation.Staged = json.RawMessage(result.Ops[0].Value)
-		ecCb(nil)
 	})
-	if err != nil {
-		ecCb(classifyError(err))
-		return
-	}
 }
 
 func (t *transactionAttempt) commitStagedReplace(
