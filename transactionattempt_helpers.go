@@ -657,6 +657,11 @@ func (t *transactionAttempt) ensureCleanUpRequest() {
 	// relock it.
 	t.lock.LockSync()
 
+	if t.state == AttemptStateCompleted || t.state == AttemptStateRolledBack {
+		t.lock.UnlockSync()
+		return
+	}
+
 	if t.hasCleanupRequest {
 		t.lock.UnlockSync()
 		return
@@ -705,7 +710,6 @@ func (t *transactionAttempt) ensureCleanUpRequest() {
 		Replaces:          replaces,
 		Removes:           removes,
 		State:             cleanupState,
-		readyTime:         t.expiryTime,
 		ForwardCompat:     nil, // Let's just be explicit about this, it'll change in the future anyway.
 		DurabilityLevel:   t.durabilityLevel,
 	}

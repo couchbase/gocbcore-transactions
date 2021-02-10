@@ -1,7 +1,6 @@
 package transactions
 
 import (
-	"container/heap"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,12 +25,6 @@ type CleanupRequest struct {
 	State             AttemptState
 	ForwardCompat     map[string][]ForwardCompatibilityEntry
 	DurabilityLevel   DurabilityLevel
-
-	readyTime time.Time
-}
-
-func (cr *CleanupRequest) ready() bool {
-	return time.Now().After(cr.readyTime)
 }
 
 func (cr *CleanupRequest) String() string {
@@ -80,15 +73,7 @@ type Cleaner interface {
 // NewCleaner returns a Cleaner implementation.
 // Internal: This should never be used and is not supported.
 func NewCleaner(config *Config) Cleaner {
-	return &stdCleaner{
-		hooks:               config.Internal.CleanUpHooks,
-		qSize:               config.CleanupQueueSize,
-		stop:                make(chan struct{}),
-		bucketAgentProvider: config.BucketAgentProvider,
-		q:                   make(priorityQueue, 0, config.CleanupQueueSize),
-		keyValueTimeout:     config.KeyValueTimeout,
-		durabilityLevel:     config.DurabilityLevel,
-	}
+	return newStdCleaner(config)
 }
 
 type noopCleaner struct {
@@ -118,24 +103,27 @@ func (nc *noopCleaner) Close() {}
 type stdCleaner struct {
 	hooks               CleanUpHooks
 	qSize               uint32
-	q                   priorityQueue
-	qLock               sync.Mutex
+	q                   chan *CleanupRequest
 	stop                chan struct{}
 	bucketAgentProvider BucketAgentProviderFn
 	keyValueTimeout     time.Duration
 	durabilityLevel     DurabilityLevel
 }
 
-func startCleanupThread(config *Config) *stdCleaner {
-	cleaner := &stdCleaner{
+func newStdCleaner(config *Config) *stdCleaner {
+	return &stdCleaner{
 		hooks:               config.Internal.CleanUpHooks,
 		qSize:               config.CleanupQueueSize,
 		stop:                make(chan struct{}),
 		bucketAgentProvider: config.BucketAgentProvider,
-		q:                   make(priorityQueue, 0, config.CleanupQueueSize),
+		q:                   make(chan *CleanupRequest, config.CleanupQueueSize),
 		keyValueTimeout:     config.KeyValueTimeout,
 		durabilityLevel:     config.DurabilityLevel,
 	}
+}
+
+func startCleanupThread(config *Config) *stdCleaner {
+	cleaner := newStdCleaner(config)
 
 	// No point in running this if we can't get agents.
 	if config.BucketAgentProvider != nil {
@@ -146,57 +134,45 @@ func startCleanupThread(config *Config) *stdCleaner {
 }
 
 func (c *stdCleaner) AddRequest(req *CleanupRequest) bool {
-	c.qLock.Lock()
-	defer c.qLock.Unlock()
-	if c.q.Len() == int(c.qSize) {
+	select {
+	case c.q <- req:
+		// success!
+	default:
 		logDebugf("Not queueing request for: %s, limit size reached",
 			req.String())
-		return false
 	}
-
-	heap.Push(&c.q, req)
 
 	return true
 }
 
 func (c *stdCleaner) PopRequest() *CleanupRequest {
-	c.qLock.Lock()
-	defer c.qLock.Unlock()
-	if c.q.Len() == 0 {
+	select {
+	case req := <-c.q:
+		return req
+	default:
 		return nil
 	}
+}
 
-	peek := c.q.Peek()
-	if peek == nil {
-		return nil
+func (c *stdCleaner) stealAllRequests() []*CleanupRequest {
+	reqs := make([]*CleanupRequest, 0, len(c.q))
+	for {
+		select {
+		case req := <-c.q:
+			reqs = append(reqs, req)
+		default:
+			return reqs
+		}
 	}
-	if !peek.(*CleanupRequest).ready() {
-		return nil
-	}
-
-	cr := heap.Pop(&c.q)
-	if cr == nil {
-		return nil
-	}
-	return cr.(*CleanupRequest)
 }
 
 // Used only for tests
 func (c *stdCleaner) ForceCleanupQueue(cb func([]CleanupAttempt)) {
-	c.qLock.Lock()
-	var reqs []*CleanupRequest
-	for {
-		if c.q.Len() == 0 {
-			break
-		}
-		req := heap.Pop(&c.q)
-		if req == nil {
-			break
-		}
-
-		reqs = append(reqs, req.(*CleanupRequest))
+	reqs := c.stealAllRequests()
+	if len(reqs) == 0 {
+		cb(nil)
+		return
 	}
-	c.qLock.Unlock()
 
 	results := make([]CleanupAttempt, 0, len(reqs))
 	var l sync.Mutex
@@ -220,7 +196,8 @@ func (c *stdCleaner) ForceCleanupQueue(cb func([]CleanupAttempt)) {
 				AtrCollectionName: req.AtrCollectionName,
 				AtrScopeName:      req.AtrScopeName,
 				AtrBucketName:     req.AtrBucketName,
-				Request:           req})
+				Request:           req,
+			})
 			continue
 		}
 
@@ -232,9 +209,7 @@ func (c *stdCleaner) ForceCleanupQueue(cb func([]CleanupAttempt)) {
 
 // Used only for tests
 func (c *stdCleaner) QueueLength() int32 {
-	c.qLock.Lock()
-	defer c.qLock.Unlock()
-	return int32(c.q.Len())
+	return int32(len(c.q))
 }
 
 // Used only for tests
@@ -243,72 +218,31 @@ func (c *stdCleaner) Close() {
 }
 
 func (c *stdCleaner) processQ() {
-	q := make(chan *CleanupRequest, c.qSize)
-	go func() {
-		for {
-			select {
-			case <-c.stop:
+	for {
+		select {
+		case req := <-c.q:
+			agent, err := c.bucketAgentProvider(req.AtrBucketName)
+			if err != nil {
+				logDebugf("Failed to get agent for request: %s, err: %v", req.String(), err)
 				return
-			case <-time.After(100 * time.Millisecond):
 			}
-			for {
-				req := c.PopRequest()
-				if req == nil {
-					break
+
+			logTracef("Running cleanup for request: %s", req.String())
+			waitCh := make(chan struct{}, 1)
+			c.CleanupAttempt(agent, req, true, func(attempt CleanupAttempt) {
+				if !attempt.Success {
+					logDebugf("Cleanup attempt failed for entry: %s",
+						attempt.String())
 				}
 
-				q <- req
-			}
+				waitCh <- struct{}{}
+			})
+			<-waitCh
+
+		case <-c.stop:
+			return
 		}
-	}()
-
-	go func() {
-		for {
-			select {
-			case <-c.stop:
-				return
-			case req := <-q:
-				agent, err := c.bucketAgentProvider(req.AtrBucketName)
-				if err != nil {
-					go func() {
-						logDebugf("Failed to get agent for request: %s, err: %v", req.String(), err)
-						select {
-						case <-time.After(10 * time.Second):
-							c.AddRequest(req)
-						case <-c.stop:
-						}
-					}()
-					return
-				}
-
-				logTracef("Running cleanup for request: %s", req.String())
-				waitCh := make(chan struct{}, 1)
-				c.CleanupAttempt(agent, req, true, func(attempt CleanupAttempt) {
-
-					if !attempt.Success {
-						go func() {
-							age := time.Now().Sub(req.readyTime)
-							logDebugf("Cleanup attempt failed for entry: %s, age is %s",
-								attempt.String(), age)
-
-							if age > 2*time.Hour {
-								logWarnf("Cleanup request is %s old which could indicate a serious error - "+
-									"please raise with support.", age)
-							}
-
-							select {
-							case <-time.After(10 * time.Second):
-								c.AddRequest(req)
-							case <-c.stop:
-							}
-						}()
-					}
-					waitCh <- struct{}{}
-				})
-				<-waitCh
-			}
-		}
-	}()
+	}
 }
 
 func (c *stdCleaner) checkForwardCompatability(

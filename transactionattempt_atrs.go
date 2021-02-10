@@ -592,7 +592,36 @@ func (t *transactionAttempt) setATRCompletedLocked(
 			return
 		}
 
+		if t.isExpiryOvertimeAtomic() {
+			cb(t.operationFailed(operationFailedDef{
+				Cerr: classifyError(
+					errors.Wrap(ErrAttemptExpired, "completed atr removal failed during overtime")),
+				ShouldNotRetry:    true,
+				ShouldNotRollback: true,
+				Reason:            ErrorReasonTransactionFailedPostCommit,
+			}))
+			return
+		}
+
 		switch cerr.Class {
+		case ErrorClassFailDocNotFound:
+			fallthrough
+		case ErrorClassFailPathNotFound:
+			// This is technically a full success, but FIT expects unstagingCompleted=false...
+			cb(t.operationFailed(operationFailedDef{
+				Cerr:              cerr,
+				ShouldNotRetry:    true,
+				ShouldNotRollback: true,
+				Reason:            ErrorReasonTransactionFailedPostCommit,
+			}))
+		case ErrorClassFailExpiry:
+			cb(t.operationFailed(operationFailedDef{
+				Cerr: classifyError(
+					errors.Wrap(ErrAttemptExpired, "completed atr removal operation expired")),
+				ShouldNotRetry:    true,
+				ShouldNotRollback: true,
+				Reason:            ErrorReasonTransactionFailedPostCommit,
+			}))
 		case ErrorClassFailHard:
 			cb(t.operationFailed(operationFailedDef{
 				Cerr:              cerr,
@@ -629,28 +658,12 @@ func (t *transactionAttempt) setATRCompletedLocked(
 
 			deadline, duraTimeout := mutationTimeouts(t.keyValueTimeout, t.durabilityLevel)
 
-			var marshalErr error
-			atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag) gocbcore.SubDocOp {
-				bytes, err := json.Marshal(data)
-				if err != nil {
-					marshalErr = err
-				}
-
-				return gocbcore.SubDocOp{
-					Op:    memd.SubDocOpDictSet,
-					Flags: flags,
-					Path:  "attempts." + t.id + "." + fieldName,
-					Value: bytes,
-				}
-			}
-
 			atrOps := []gocbcore.SubDocOp{
-				atrFieldOp("st", jsonAtrStateCompleted, memd.SubdocFlagXattrPath),
-				atrFieldOp("tsco", "${Mutation.CAS}", memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros),
-			}
-			if marshalErr != nil {
-				ecCb(classifyError(marshalErr))
-				return
+				{
+					Op:    memd.SubDocOpDelete,
+					Flags: memd.SubdocFlagXattrPath,
+					Path:  "attempts." + t.id,
+				},
 			}
 
 			_, err = atrAgent.MutateIn(gocbcore.MutateInOptions{
@@ -1010,7 +1023,7 @@ func (t *transactionAttempt) setATRRolledBackLocked(
 		if t.isExpiryOvertimeAtomic() {
 			cb(t.operationFailed(operationFailedDef{
 				Cerr: classifyError(
-					errors.Wrap(ErrAttemptExpired, "atr rolledback failed during overtime")),
+					errors.Wrap(ErrAttemptExpired, "rolled back atr removal failed during overtime")),
 				ShouldNotRetry:    true,
 				ShouldNotRollback: true,
 				Reason:            ErrorReasonTransactionExpired,
@@ -1019,21 +1032,19 @@ func (t *transactionAttempt) setATRRolledBackLocked(
 		}
 
 		switch cerr.Class {
+		case ErrorClassFailDocNotFound:
+			fallthrough
 		case ErrorClassFailPathNotFound:
 			cb(nil)
 			return
-		case ErrorClassFailDocNotFound:
+		case ErrorClassFailExpiry:
 			cb(t.operationFailed(operationFailedDef{
-				Cerr:              cerr.Wrap(ErrAtrNotFound),
+				Cerr: classifyError(
+					errors.Wrap(ErrAttemptExpired, "rolled back atr removal operation expired")),
 				ShouldNotRetry:    true,
 				ShouldNotRollback: true,
-				Reason:            ErrorReasonTransactionFailed,
+				Reason:            ErrorReasonTransactionExpired,
 			}))
-		case ErrorClassFailExpiry:
-			t.setExpiryOvertimeAtomic()
-			time.AfterFunc(3*time.Millisecond, func() {
-				t.setATRRolledBackLocked(cb)
-			})
 		case ErrorClassFailHard:
 			cb(t.operationFailed(operationFailedDef{
 				Cerr:              cerr,
@@ -1067,28 +1078,12 @@ func (t *transactionAttempt) setATRRolledBackLocked(
 
 			deadline, duraTimeout := mutationTimeouts(t.keyValueTimeout, t.durabilityLevel)
 
-			var marshalErr error
-			atrFieldOp := func(fieldName string, data interface{}, flags memd.SubdocFlag) gocbcore.SubDocOp {
-				bytes, err := json.Marshal(data)
-				if err != nil {
-					marshalErr = err
-				}
-
-				return gocbcore.SubDocOp{
-					Op:    memd.SubDocOpDictSet,
-					Flags: flags,
-					Path:  "attempts." + t.id + "." + fieldName,
-					Value: bytes,
-				}
-			}
-
 			atrOps := []gocbcore.SubDocOp{
-				atrFieldOp("st", jsonAtrStateRolledBack, memd.SubdocFlagXattrPath),
-				atrFieldOp("tsrc", "${Mutation.CAS}", memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros),
-			}
-			if marshalErr != nil {
-				ecCb(classifyError(marshalErr))
-				return
+				{
+					Op:    memd.SubDocOpDelete,
+					Flags: memd.SubdocFlagXattrPath,
+					Path:  "attempts." + t.id,
+				},
 			}
 
 			_, err = atrAgent.MutateIn(gocbcore.MutateInOptions{
