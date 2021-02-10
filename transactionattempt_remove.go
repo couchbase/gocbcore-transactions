@@ -304,13 +304,13 @@ func (t *transactionAttempt) stageRemove(
 
 				stagedInfo.Cas = result.Cas
 
-				t.recordStagedMutation(stagedInfo, func() {
+				t.hooks.AfterStagedRemoveComplete(key, func(err error) {
+					if err != nil {
+						ecCb(nil, classifyHookError(err))
+						return
+					}
 
-					t.hooks.AfterStagedRemoveComplete(key, func(err error) {
-						if err != nil {
-							ecCb(nil, classifyHookError(err))
-							return
-						}
+					t.recordStagedMutation(stagedInfo, func() {
 
 						ecCb(&GetResult{
 							agent:          stagedInfo.Agent,
