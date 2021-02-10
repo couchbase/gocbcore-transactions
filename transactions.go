@@ -120,20 +120,20 @@ func (t *Manager) BeginTransaction(perConfig *PerTransactionConfig) (*Transactio
 
 	now := time.Now()
 	return &Transaction{
-		parent:              t,
-		expiryTime:          now.Add(expirationTime),
-		startTime:           now,
-		durabilityLevel:     durabilityLevel,
-		transactionID:       transactionUUID,
-		keyValueTimeout:     keyValueTimeout,
-		atrLocation:         customATRLocation,
-		addCleanupRequest:   t.addCleanupRequest,
-		hooks:               t.config.Internal.Hooks,
-		enableNonFatalGets:  t.config.Internal.EnableNonFatalGets,
-		disableCompoundOps:  t.config.Internal.DisableCompoundOps,
-		serialUnstaging:     t.config.Internal.SerialUnstaging,
-		explicitATRs:        t.config.Internal.ExplicitATRs,
-		bucketAgentProvider: bucketAgentProvider,
+		parent:                  t,
+		expiryTime:              now.Add(expirationTime),
+		startTime:               now,
+		durabilityLevel:         durabilityLevel,
+		transactionID:           transactionUUID,
+		keyValueTimeout:         keyValueTimeout,
+		atrLocation:             customATRLocation,
+		addCleanupRequest:       t.addCleanupRequest,
+		hooks:                   t.config.Internal.Hooks,
+		enableNonFatalGets:      t.config.Internal.EnableNonFatalGets,
+		enableCompoundOps:       t.config.Internal.EnableCompoundOps,
+		enableParallelUnstaging: t.config.Internal.EnableParallelUnstaging,
+		enableExplicitATRs:      t.config.Internal.EnableExplicitATRs,
+		bucketAgentProvider:     bucketAgentProvider,
 	}, nil
 }
 
@@ -198,20 +198,20 @@ func (t *Manager) ResumeTransactionAttempt(txnBytes []byte) (*Transaction, error
 
 	now := time.Now()
 	txn := &Transaction{
-		parent:              t,
-		expiryTime:          now.Add(expirationTime),
-		startTime:           now,
-		durabilityLevel:     durabilityLevel,
-		transactionID:       transactionUUID,
-		keyValueTimeout:     keyValueTimeout,
-		atrLocation:         atrLocation,
-		addCleanupRequest:   t.addCleanupRequest,
-		hooks:               t.config.Internal.Hooks,
-		enableNonFatalGets:  t.config.Internal.EnableNonFatalGets,
-		disableCompoundOps:  t.config.Internal.DisableCompoundOps,
-		serialUnstaging:     t.config.Internal.SerialUnstaging,
-		explicitATRs:        t.config.Internal.ExplicitATRs,
-		bucketAgentProvider: t.config.BucketAgentProvider,
+		parent:                  t,
+		expiryTime:              now.Add(expirationTime),
+		startTime:               now,
+		durabilityLevel:         durabilityLevel,
+		transactionID:           transactionUUID,
+		keyValueTimeout:         keyValueTimeout,
+		atrLocation:             atrLocation,
+		addCleanupRequest:       t.addCleanupRequest,
+		hooks:                   t.config.Internal.Hooks,
+		enableNonFatalGets:      t.config.Internal.EnableNonFatalGets,
+		enableCompoundOps:       t.config.Internal.EnableCompoundOps,
+		enableParallelUnstaging: t.config.Internal.EnableParallelUnstaging,
+		enableExplicitATRs:      t.config.Internal.EnableExplicitATRs,
+		bucketAgentProvider:     t.config.BucketAgentProvider,
 	}
 
 	err = txn.resumeAttempt(&txnData)

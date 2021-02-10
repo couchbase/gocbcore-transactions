@@ -17,16 +17,16 @@ type addCleanupRequest func(req *CleanupRequest) bool
 type Transaction struct {
 	parent *Manager
 
-	expiryTime          time.Time
-	startTime           time.Time
-	keyValueTimeout     time.Duration
-	durabilityLevel     DurabilityLevel
-	serialUnstaging     bool
-	enableNonFatalGets  bool
-	disableCompoundOps  bool
-	explicitATRs        bool
-	atrLocation         ATRLocation
-	bucketAgentProvider BucketAgentProviderFn
+	expiryTime              time.Time
+	startTime               time.Time
+	keyValueTimeout         time.Duration
+	durabilityLevel         DurabilityLevel
+	enableParallelUnstaging bool
+	enableNonFatalGets      bool
+	enableCompoundOps       bool
+	enableExplicitATRs      bool
+	atrLocation             ATRLocation
+	bucketAgentProvider     BucketAgentProviderFn
 
 	transactionID string
 	attempt       *transactionAttempt
@@ -54,17 +54,17 @@ func (t *Transaction) NewAttempt() error {
 	attemptUUID := uuid.New().String()
 
 	t.attempt = &transactionAttempt{
-		expiryTime:          t.expiryTime,
-		txnStartTime:        t.startTime,
-		keyValueTimeout:     t.keyValueTimeout,
-		durabilityLevel:     t.durabilityLevel,
-		transactionID:       t.transactionID,
-		enableNonFatalGets:  t.enableNonFatalGets,
-		disableCompoundOps:  t.disableCompoundOps,
-		serialUnstaging:     t.serialUnstaging,
-		explicitAtrs:        t.explicitATRs,
-		atrLocation:         t.atrLocation,
-		bucketAgentProvider: t.bucketAgentProvider,
+		expiryTime:              t.expiryTime,
+		txnStartTime:            t.startTime,
+		keyValueTimeout:         t.keyValueTimeout,
+		durabilityLevel:         t.durabilityLevel,
+		transactionID:           t.transactionID,
+		enableNonFatalGets:      t.enableNonFatalGets,
+		enableCompoundOps:       t.enableCompoundOps,
+		enableParallelUnstaging: t.enableParallelUnstaging,
+		enableExplicitATRs:      t.enableExplicitATRs,
+		atrLocation:             t.atrLocation,
+		bucketAgentProvider:     t.bucketAgentProvider,
 
 		id:                attemptUUID,
 		state:             AttemptStateNothingWritten,
@@ -161,17 +161,17 @@ func (t *Transaction) resumeAttempt(txnData *jsonSerializedAttempt) error {
 	}
 
 	t.attempt = &transactionAttempt{
-		expiryTime:          t.expiryTime,
-		txnStartTime:        t.startTime,
-		keyValueTimeout:     t.keyValueTimeout,
-		durabilityLevel:     t.durabilityLevel,
-		transactionID:       t.transactionID,
-		enableNonFatalGets:  t.enableNonFatalGets,
-		disableCompoundOps:  t.disableCompoundOps,
-		serialUnstaging:     t.serialUnstaging,
-		explicitAtrs:        t.explicitATRs,
-		atrLocation:         t.atrLocation,
-		bucketAgentProvider: t.bucketAgentProvider,
+		expiryTime:              t.expiryTime,
+		txnStartTime:            t.startTime,
+		keyValueTimeout:         t.keyValueTimeout,
+		durabilityLevel:         t.durabilityLevel,
+		transactionID:           t.transactionID,
+		enableNonFatalGets:      t.enableNonFatalGets,
+		enableCompoundOps:       t.enableCompoundOps,
+		enableParallelUnstaging: t.enableParallelUnstaging,
+		enableExplicitATRs:      t.enableExplicitATRs,
+		atrLocation:             t.atrLocation,
+		bucketAgentProvider:     t.bucketAgentProvider,
 
 		id:                attemptUUID,
 		state:             txnState,

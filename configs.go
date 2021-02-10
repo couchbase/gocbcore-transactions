@@ -132,14 +132,14 @@ type Config struct {
 	// Internal specifies a set of options for internal use.
 	// Internal: This should never be used and is not supported.
 	Internal struct {
-		Hooks              TransactionHooks
-		CleanUpHooks       CleanUpHooks
-		ClientRecordHooks  ClientRecordHooks
-		EnableNonFatalGets bool
-		DisableCompoundOps bool
-		SerialUnstaging    bool
-		ExplicitATRs       bool
-		NumATRs            int
+		Hooks                   TransactionHooks
+		CleanUpHooks            CleanUpHooks
+		ClientRecordHooks       ClientRecordHooks
+		EnableNonFatalGets      bool
+		EnableCompoundOps       bool
+		EnableParallelUnstaging bool
+		EnableExplicitATRs      bool
+		NumATRs                 int
 	}
 }
 

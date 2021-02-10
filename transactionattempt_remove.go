@@ -65,7 +65,7 @@ func (t *transactionAttempt) remove(
 			if existingMutation != nil {
 				switch existingMutation.OpType {
 				case StagedMutationInsert:
-					if t.disableCompoundOps {
+					if !t.enableCompoundOps {
 						endAndCb(nil, t.operationFailed(operationFailedDef{
 							Cerr: classifyError(
 								errors.Wrap(ErrIllegalState, "attempted to remove a document previously inserted in this transaction")),

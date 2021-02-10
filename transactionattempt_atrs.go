@@ -43,7 +43,7 @@ func (t *transactionAttempt) selectAtrLocked(
 			atrScopeName = t.atrLocation.ScopeName
 			atrCollectionName = t.atrLocation.CollectionName
 		} else {
-			if t.explicitAtrs {
+			if t.enableExplicitATRs {
 				cb(t.operationFailed(operationFailedDef{
 					Cerr:              classifyError(errors.New("atrs must be explicitly defined")),
 					ShouldNotRetry:    true,

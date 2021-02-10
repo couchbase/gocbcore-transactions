@@ -121,7 +121,7 @@ func (t *transactionAttempt) commit(
 					}
 
 					var mutErrs []*TransactionOperationFailedError
-					if t.serialUnstaging {
+					if !t.enableParallelUnstaging {
 						for _, mutation := range t.stagedMutations {
 							waitCh := make(chan struct{}, 1)
 
