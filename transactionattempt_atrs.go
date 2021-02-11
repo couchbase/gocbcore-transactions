@@ -1034,13 +1034,6 @@ func (t *transactionAttempt) setATRRolledBackLocked(
 			time.AfterFunc(3*time.Millisecond, func() {
 				t.setATRRolledBackLocked(cb)
 			})
-		case ErrorClassFailOutOfSpace:
-			cb(t.operationFailed(operationFailedDef{
-				Cerr:              cerr.Wrap(ErrAtrFull),
-				ShouldNotRetry:    true,
-				ShouldNotRollback: true,
-				Reason:            ErrorReasonTransactionFailed,
-			}))
 		case ErrorClassFailHard:
 			cb(t.operationFailed(operationFailedDef{
 				Cerr:              cerr,
