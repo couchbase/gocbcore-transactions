@@ -300,6 +300,10 @@ func (t *transactionAttempt) recordStagedMutation(
 	stagedInfo *stagedMutation,
 	cb func(),
 ) {
+	if !t.enableMutationCaching {
+		stagedInfo.Staged = nil
+	}
+
 	t.lock.Lock(func(unlock func()) {
 		mutIdx, _ := t.getStagedMutationLocked(
 			stagedInfo.Agent.BucketName(),

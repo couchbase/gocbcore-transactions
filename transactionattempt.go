@@ -23,6 +23,7 @@ type transactionAttempt struct {
 	enableCompoundOps       bool
 	enableParallelUnstaging bool
 	enableExplicitATRs      bool
+	enableMutationCaching   bool
 	atrLocation             ATRLocation
 	bucketAgentProvider     BucketAgentProviderFn
 

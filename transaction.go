@@ -25,6 +25,7 @@ type Transaction struct {
 	enableNonFatalGets      bool
 	enableCompoundOps       bool
 	enableExplicitATRs      bool
+	enableMutationCaching   bool
 	atrLocation             ATRLocation
 	bucketAgentProvider     BucketAgentProviderFn
 
@@ -62,6 +63,7 @@ func (t *Transaction) NewAttempt() error {
 		enableNonFatalGets:      t.enableNonFatalGets,
 		enableCompoundOps:       t.enableCompoundOps,
 		enableParallelUnstaging: t.enableParallelUnstaging,
+		enableMutationCaching:   t.enableMutationCaching,
 		enableExplicitATRs:      t.enableExplicitATRs,
 		atrLocation:             t.atrLocation,
 		bucketAgentProvider:     t.bucketAgentProvider,
@@ -169,6 +171,7 @@ func (t *Transaction) resumeAttempt(txnData *jsonSerializedAttempt) error {
 		enableNonFatalGets:      t.enableNonFatalGets,
 		enableCompoundOps:       t.enableCompoundOps,
 		enableParallelUnstaging: t.enableParallelUnstaging,
+		enableMutationCaching:   t.enableMutationCaching,
 		enableExplicitATRs:      t.enableExplicitATRs,
 		atrLocation:             t.atrLocation,
 		bucketAgentProvider:     t.bucketAgentProvider,

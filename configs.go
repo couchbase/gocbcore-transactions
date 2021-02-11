@@ -139,6 +139,7 @@ type Config struct {
 		EnableCompoundOps       bool
 		EnableParallelUnstaging bool
 		EnableExplicitATRs      bool
+		EnableMutationCaching   bool
 		NumATRs                 int
 	}
 }

@@ -133,6 +133,7 @@ func (t *Manager) BeginTransaction(perConfig *PerTransactionConfig) (*Transactio
 		enableCompoundOps:       t.config.Internal.EnableCompoundOps,
 		enableParallelUnstaging: t.config.Internal.EnableParallelUnstaging,
 		enableExplicitATRs:      t.config.Internal.EnableExplicitATRs,
+		enableMutationCaching:   t.config.Internal.EnableMutationCaching,
 		bucketAgentProvider:     bucketAgentProvider,
 	}, nil
 }
@@ -211,6 +212,7 @@ func (t *Manager) ResumeTransactionAttempt(txnBytes []byte) (*Transaction, error
 		enableCompoundOps:       t.config.Internal.EnableCompoundOps,
 		enableParallelUnstaging: t.config.Internal.EnableParallelUnstaging,
 		enableExplicitATRs:      t.config.Internal.EnableExplicitATRs,
+		enableMutationCaching:   t.config.Internal.EnableMutationCaching,
 		bucketAgentProvider:     t.config.BucketAgentProvider,
 	}
 
