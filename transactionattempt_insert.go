@@ -73,6 +73,17 @@ func (t *transactionAttempt) insert(
 						})
 					return
 				case StagedMutationInsert:
+					if !t.enableCompoundOps {
+						endAndCb(nil, t.operationFailed(operationFailedDef{
+							Cerr: classifyError(
+								errors.Wrap(ErrIllegalState, "attempted to insert a document previously inserted in this transaction")),
+							ShouldNotRetry:    true,
+							ShouldNotRollback: false,
+							Reason:            ErrorReasonTransactionFailed,
+						}))
+						return
+					}
+
 					endAndCb(nil, t.operationFailed(operationFailedDef{
 						Cerr: classifyError(
 							errors.Wrap(ErrDocumentAlreadyExists, "attempted to insert a document previously inserted in this transaction")),
