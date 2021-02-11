@@ -1,4 +1,4 @@
-module github.com/couchbaselabs/gocbcore-transactions
+module github.com/couchbase/gocbcore-transactions
 
 go 1.13
 
