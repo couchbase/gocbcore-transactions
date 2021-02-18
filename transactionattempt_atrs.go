@@ -719,132 +719,6 @@ func (t *transactionAttempt) setATRCompletedLocked(
 	})
 }
 
-func (t *transactionAttempt) resolveATRAbortConflictLocked(
-	cb func(*TransactionOperationFailedError),
-) {
-	ecCb := func(cerr *classifiedError) {
-		if cerr == nil {
-			cb(nil)
-			return
-		}
-
-		if t.isExpiryOvertimeAtomic() {
-			cb(t.operationFailed(operationFailedDef{
-				Cerr: classifyError(
-					errors.Wrap(ErrAttemptExpired, "atr abort ambiguity resolution failed during overtime")),
-				ShouldNotRetry:    true,
-				ShouldNotRollback: true,
-				Reason:            ErrorReasonTransactionExpired,
-			}))
-			return
-		}
-
-		switch cerr.Class {
-		case ErrorClassFailTransient:
-			time.AfterFunc(3*time.Millisecond, func() {
-				t.resolveATRAbortConflictLocked(cb)
-			})
-		case ErrorClassFailExpiry:
-			t.setExpiryOvertimeAtomic()
-			time.AfterFunc(3*time.Millisecond, func() {
-				t.resolveATRAbortConflictLocked(cb)
-			})
-		case ErrorClassFailPathNotFound:
-			cb(t.operationFailed(operationFailedDef{
-				Cerr:              cerr.Wrap(ErrAtrEntryNotFound),
-				ShouldNotRetry:    true,
-				ShouldNotRollback: true,
-				Reason:            ErrorReasonTransactionFailed,
-			}))
-		case ErrorClassFailDocNotFound:
-			cb(t.operationFailed(operationFailedDef{
-				Cerr:              cerr.Wrap(ErrAtrNotFound),
-				ShouldNotRetry:    true,
-				ShouldNotRollback: true,
-				Reason:            ErrorReasonTransactionFailed,
-			}))
-		case ErrorClassFailHard:
-			cb(t.operationFailed(operationFailedDef{
-				Cerr:              cerr,
-				ShouldNotRetry:    true,
-				ShouldNotRollback: true,
-				Reason:            ErrorReasonTransactionFailed,
-			}))
-		default:
-			cb(t.operationFailed(operationFailedDef{
-				Cerr:              cerr,
-				ShouldNotRetry:    true,
-				ShouldNotRollback: false,
-				Reason:            ErrorReasonTransactionFailed,
-			}))
-		}
-	}
-
-	t.checkExpiredAtomic(hookATRAbort, []byte{}, true, func(cerr *classifiedError) {
-		if cerr != nil {
-			ecCb(cerr)
-			return
-		}
-
-		var deadline time.Time
-		if t.keyValueTimeout > 0 {
-			deadline = time.Now().Add(t.keyValueTimeout)
-		}
-
-		_, err := t.atrAgent.LookupIn(gocbcore.LookupInOptions{
-			ScopeName:      t.atrScopeName,
-			CollectionName: t.atrCollectionName,
-			Key:            t.atrKey,
-			Ops: []gocbcore.SubDocOp{
-				{
-					Op:    memd.SubDocOpGet,
-					Path:  "attempts." + t.id + ".st",
-					Flags: memd.SubdocFlagXattrPath,
-				},
-			},
-			Deadline: deadline,
-			Flags:    memd.SubdocDocFlagNone,
-		}, func(result *gocbcore.LookupInResult, err error) {
-			if err != nil {
-				ecCb(classifyError(err))
-				return
-			}
-
-			if result.Ops[0].Err != nil {
-				ecCb(classifyError(err))
-				return
-			}
-
-			var st jsonAtrState
-			if err := json.Unmarshal(result.Ops[0].Value, &st); err != nil {
-				ecCb(classifyError(err))
-				return
-			}
-
-			switch st {
-			case jsonAtrStateCommitted:
-				ecCb(classifyError(
-					errors.Wrap(ErrIllegalState, "transaction became committed during abort")))
-			case jsonAtrStatePending:
-				ecCb(classifyError(
-					errors.Wrap(ErrIllegalState, "transaction still pending even with p set during abort")))
-			case jsonAtrStateAborted:
-				ecCb(nil)
-			case jsonAtrStateRolledBack:
-				ecCb(classifyError(
-					errors.Wrap(ErrIllegalState, "transaction already rolled back during abort")))
-			default:
-				ecCb(classifyError(
-					errors.Wrap(ErrIllegalState, fmt.Sprintf("illegal transaction state during abort: %s", st))))
-			}
-		})
-		if err != nil {
-			ecCb(classifyError(err))
-			return
-		}
-	})
-}
-
 func (t *transactionAttempt) setATRAbortedLocked(
 	cb func(*TransactionOperationFailedError),
 ) {
@@ -866,15 +740,6 @@ func (t *transactionAttempt) setATRAbortedLocked(
 		}
 
 		switch cerr.Class {
-		case ErrorClassFailAmbiguous:
-			time.AfterFunc(3*time.Millisecond, func() {
-				t.setATRAbortedLocked(cb)
-			})
-		case ErrorClassFailPathAlreadyExists:
-			time.AfterFunc(3*time.Millisecond, func() {
-				t.resolveATRAbortConflictLocked(cb)
-			})
-			return
 		case ErrorClassFailExpiry:
 			t.setExpiryOvertimeAtomic()
 			time.AfterFunc(3*time.Millisecond, func() {
@@ -976,7 +841,6 @@ func (t *transactionAttempt) setATRAbortedLocked(
 			atrOps := []gocbcore.SubDocOp{
 				atrFieldOp("st", jsonAtrStateAborted, memd.SubdocFlagXattrPath),
 				atrFieldOp("tsrs", "${Mutation.CAS}", memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros),
-				atrFieldOp("p", 0, memd.SubdocFlagXattrPath),
 				atrFieldOp("ins", insMutations, memd.SubdocFlagXattrPath),
 				atrFieldOp("rep", repMutations, memd.SubdocFlagXattrPath),
 				atrFieldOp("rem", remMutations, memd.SubdocFlagXattrPath),
