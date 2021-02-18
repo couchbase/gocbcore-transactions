@@ -642,12 +642,6 @@ func (t *transactionAttempt) writeWriteConflictPoll(
 							return
 						}
 
-						// If the transaction expired, we are safe to overwrite.
-						if time.Now().After(expiry) {
-							cb(nil)
-							return
-						}
-
 						state := jsonAtrState(attempt.State)
 						if state == jsonAtrStateCompleted || state == jsonAtrStateRolledBack {
 							// If we have progressed enough to continue, let's do that.
