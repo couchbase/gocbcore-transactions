@@ -98,8 +98,6 @@ type BucketAgentProviderFn func(bucketName string) (*gocbcore.Agent, error)
 // lost transactions cleanup.
 type LostCleanupATRLocationProviderFn func() ([]LostATRLocation, error)
 
-// BUG(TXNG-28): KeyValueTimeout, KvDurableTimeout are deprecated in Config.
-
 // Config specifies various tunable options related to transactions.
 type Config struct {
 	// CustomATRLocation specifies a specific location to place meta-data.
@@ -115,9 +113,6 @@ type Config struct {
 
 	// KeyValueTimeout specifies the default timeout used for all KV writes.
 	KeyValueTimeout time.Duration
-
-	// KeyValueTimeout specifies the default timeout used for durable KV writes.
-	KvDurableTimeout time.Duration
 
 	// CleanupWindow specifies how often to the cleanup process runs
 	// attempting to garbage collection transactions that have failed but
@@ -157,8 +152,6 @@ type Config struct {
 	}
 }
 
-// BUG(TXNG-28): KeyValueTimeout, KvDurableTimeout are deprecated in PerTransactionConfig.
-
 // PerTransactionConfig specifies options which can be overriden on a per transaction basis.
 type PerTransactionConfig struct {
 	// CustomATRLocation specifies a specific location to place meta-data.
@@ -174,9 +167,6 @@ type PerTransactionConfig struct {
 
 	// KeyValueTimeout specifies the timeout used for all KV writes.
 	KeyValueTimeout time.Duration
-
-	// KeyValueTimeout specifies the timeout used for durable KV writes.
-	KvDurableTimeout time.Duration
 
 	// BucketAgentProvider provides a function which returns an agent for
 	// a particular bucket by name.
