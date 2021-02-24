@@ -908,12 +908,14 @@ func (ltc *stdLostTransactionCleaner) pollForLocations() {
 		}
 
 		ltc.locationsLock.Lock()
+		// Remove any locations that are no longer in the list and close down the associated cleanup goroutine.
 		for location, shutdown := range ltc.locations {
 			if _, ok := locationMap[location]; ok {
 				continue
 			}
 
 			close(shutdown)
+			delete(ltc.locations, location)
 		}
 		ltc.locationsLock.Unlock()
 	}
