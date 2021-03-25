@@ -354,7 +354,7 @@ func (ltc *stdLostTransactionCleaner) perLocation(agent *gocbcore.Agent, collect
 func (ltc *stdLostTransactionCleaner) process(agent *gocbcore.Agent, collection, scope string, cb func(error)) {
 	ltc.ProcessClient(agent, collection, scope, ltc.uuid, func(recordDetails *ClientRecordDetails, err error) {
 		if err != nil {
-			logDebugf("Failed to process client %s on bucket %s", ltc.uuid, agent.BucketName())
+			logDebugf("Failed to process client %s on %s.%s.%s", ltc.uuid, agent.BucketName(), scope, collection)
 			cb(err)
 			return
 		}
@@ -500,7 +500,7 @@ func (ltc *stdLostTransactionCleaner) ProcessClient(agent *gocbcore.Agent, colle
 func (ltc *stdLostTransactionCleaner) ProcessATR(agent *gocbcore.Agent, collection, scope, atrID string, cb func([]CleanupAttempt, ProcessATRStats)) {
 	ltc.getATR(agent, collection, scope, atrID, func(attempts map[string]jsonAtrAttempt, hlc int64, err error) {
 		if err != nil {
-			logDebugf("Failed to get atr %s on bucket %s", atrID, agent.BucketName())
+			logDebugf("Failed to get atr %s on %s.%s.%s", atrID, agent.BucketName(), scope, collection)
 			cb(nil, ProcessATRStats{})
 			return
 		}
