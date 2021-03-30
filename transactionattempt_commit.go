@@ -284,15 +284,6 @@ func (t *transactionAttempt) fetchBeforeUnstage(
 				return
 			}
 
-			if result.Cas != mutation.Cas {
-				// Something changed the document, we leave the staged data blank
-				// knowing that the operation against it will fail anyways.  We do
-				// need to check this first, so we don't accidentally include path
-				// errors that occurred below DUE to the CAS change.
-				ecCb(nil)
-				return
-			}
-
 			if result.Ops[0].Err != nil {
 				ecCb(classifyError(result.Ops[0].Err))
 				return
@@ -411,11 +402,9 @@ func (t *transactionAttempt) commitStagedReplace(
 				cas = 0
 			}
 
-			stagedData := mutation.Staged
-			if stagedData == nil {
-				// If there is no staged data, it probably means we are about to CAS conflict
-				// and fail, but we need to keep the data valid for the call to CAS fail.
-				stagedData = []byte{0}
+			if mutation.Staged == nil {
+				ecCb(classifyError(
+					errors.Wrap(ErrIllegalState, "staged content is missing")))
 			}
 
 			_, err = mutation.Agent.MutateIn(gocbcore.MutateInOptions{
@@ -438,7 +427,7 @@ func (t *transactionAttempt) commitStagedReplace(
 					{
 						Op:    memd.SubDocOpSetDoc,
 						Path:  "",
-						Value: stagedData,
+						Value: mutation.Staged,
 					},
 				},
 				Deadline:               deadline,
@@ -560,6 +549,11 @@ func (t *transactionAttempt) commitStagedInsert(
 			}
 
 			deadline, duraTimeout := mutationTimeouts(t.keyValueTimeout, t.durabilityLevel)
+
+			if mutation.Staged == nil {
+				ecCb(classifyError(
+					errors.Wrap(ErrIllegalState, "staged content is missing")))
+			}
 
 			_, err = mutation.Agent.Add(gocbcore.AddOptions{
 				ScopeName:              mutation.ScopeName,
