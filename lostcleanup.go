@@ -159,7 +159,7 @@ func (ltc *stdLostTransactionCleaner) start() {
 			select {
 			case <-ltc.stop:
 				return
-			case <-time.After(10 * time.Minute):
+			case <-time.After(1 * time.Second):
 			}
 		}
 	}()
