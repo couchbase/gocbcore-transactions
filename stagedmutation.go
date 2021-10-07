@@ -18,7 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 
-	gocbcore "github.com/couchbase/gocbcore/v9"
+	gocbcore "github.com/couchbase/gocbcore/v10"
 )
 
 // StagedMutationType represents the type of a mutation performed in a transaction.

@@ -22,7 +22,7 @@ import (
 	"time"
 
 	gocb "github.com/couchbase/gocb/v2"
-	"github.com/couchbase/gocbcore/v9"
+	"github.com/couchbase/gocbcore/v10"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -628,7 +628,7 @@ func TestSomething(t *testing.T) {
 
 	fetchStagedOpData := func(key string) (jsonMutationType, []byte, bool) {
 		lookupOpts := &gocb.LookupInOptions{}
-		lookupOpts.Internal.AccessDeleted = true
+		lookupOpts.Internal.DocFlags |= gocb.SubdocDocFlagAccessDeleted
 		res, err := collection.LookupIn(string(key), []gocb.LookupInSpec{
 			gocb.GetSpec("txn.op.type", &gocb.GetSpecOptions{
 				IsXattr: true,

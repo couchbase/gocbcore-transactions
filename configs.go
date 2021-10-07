@@ -18,7 +18,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/couchbase/gocbcore/v9"
+	"github.com/couchbase/gocbcore/v10"
 )
 
 // DurabilityLevel specifies the durability level to use for a mutation.

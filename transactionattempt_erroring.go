@@ -18,7 +18,7 @@ import (
 	"errors"
 	"sync/atomic"
 
-	"github.com/couchbase/gocbcore/v9"
+	"github.com/couchbase/gocbcore/v10"
 )
 
 func mergeOperationFailedErrors(errs []*TransactionOperationFailedError) *TransactionOperationFailedError {
