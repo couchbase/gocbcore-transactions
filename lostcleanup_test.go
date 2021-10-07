@@ -60,10 +60,10 @@ func TestLostCleanupProcessATR(t *testing.T) {
 
 	transactions, err := Init(&Config{
 		DurabilityLevel: DurabilityLevelNone,
-		BucketAgentProvider: func(bucketName string) (*gocbcore.Agent, error) {
+		BucketAgentProvider: func(bucketName string) (*gocbcore.Agent, string, error) {
 			// We can always return just this one agent as we only actually
 			// use a single bucket for this entire test.
-			return agent, nil
+			return agent, "", nil
 		},
 		ExpirationTime:  500 * time.Millisecond,
 		KeyValueTimeout: 2500 * time.Millisecond,
@@ -117,10 +117,10 @@ func TestLostCleanupProcessATR(t *testing.T) {
 
 	config := &Config{}
 	config.DurabilityLevel = DurabilityLevelNone
-	config.BucketAgentProvider = func(bucketName string) (*gocbcore.Agent, error) {
+	config.BucketAgentProvider = func(bucketName string) (*gocbcore.Agent, string, error) {
 		// We can always return just this one agent as we only actually
 		// use a single bucket for this entire test.
-		return agent, nil
+		return agent, "", nil
 	}
 	config.ExpirationTime = 500 * time.Millisecond
 	config.KeyValueTimeout = 2500 * time.Millisecond
@@ -132,7 +132,7 @@ func TestLostCleanupProcessATR(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	wait := make(chan []CleanupAttempt)
-	cleaner.ProcessATR(agent, "", "", string(a.AtrID), func(attempts []CleanupAttempt, stats ProcessATRStats) {
+	cleaner.ProcessATR(agent, "", "", "", string(a.AtrID), func(attempts []CleanupAttempt, stats ProcessATRStats) {
 		wait <- attempts
 	})
 
@@ -190,10 +190,10 @@ func TestLostCleanupProcessClient(t *testing.T) {
 
 	transactions, err := Init(&Config{
 		DurabilityLevel: DurabilityLevelNone,
-		BucketAgentProvider: func(bucketName string) (*gocbcore.Agent, error) {
+		BucketAgentProvider: func(bucketName string) (*gocbcore.Agent, string, error) {
 			// We can always return just this one agent as we only actually
 			// use a single bucket for this entire test.
-			return agent, nil
+			return agent, "", nil
 		},
 		ExpirationTime:  500 * time.Millisecond,
 		KeyValueTimeout: 2500 * time.Millisecond,
@@ -248,10 +248,10 @@ func TestLostCleanupProcessClient(t *testing.T) {
 	clientUUID := uuid.New().String()
 	config := &Config{}
 	config.DurabilityLevel = DurabilityLevelNone
-	config.BucketAgentProvider = func(bucketName string) (*gocbcore.Agent, error) {
+	config.BucketAgentProvider = func(bucketName string) (*gocbcore.Agent, string, error) {
 		// We can always return just this one agent as we only actually
 		// use a single bucket for this entire test.
-		return agent, nil
+		return agent, "", nil
 	}
 	config.CleanupWindow = 1 * time.Second
 	config.ExpirationTime = 500 * time.Millisecond
@@ -269,7 +269,7 @@ func TestLostCleanupProcessClient(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	wait := make(chan error, 1)
-	cleaner.process(agent, "", "", func(err error) {
+	cleaner.process(agent, "", "", "", func(err error) {
 		wait <- err
 	})
 	err = <-wait
@@ -389,10 +389,10 @@ func TestLostCleanupCleansUpExpiredClients(t *testing.T) {
 
 	transactions, err := Init(&Config{
 		DurabilityLevel: DurabilityLevelNone,
-		BucketAgentProvider: func(bucketName string) (*gocbcore.Agent, error) {
+		BucketAgentProvider: func(bucketName string) (*gocbcore.Agent, string, error) {
 			// We can always return just this one agent as we only actually
 			// use a single bucket for this entire test.
-			return agent, nil
+			return agent, "", nil
 		},
 		ExpirationTime:  500 * time.Millisecond,
 		KeyValueTimeout: 2500 * time.Millisecond,
@@ -445,10 +445,10 @@ func TestLostCleanupCleansUpExpiredClients(t *testing.T) {
 	clientUUID := uuid.New().String()
 	config := &Config{}
 	config.DurabilityLevel = DurabilityLevelNone
-	config.BucketAgentProvider = func(bucketName string) (*gocbcore.Agent, error) {
+	config.BucketAgentProvider = func(bucketName string) (*gocbcore.Agent, string, error) {
 		// We can always return just this one agent as we only actually
 		// use a single bucket for this entire test.
-		return agent, nil
+		return agent, "", nil
 	}
 	config.CleanupWindow = 1 * time.Second
 	config.ExpirationTime = 500 * time.Millisecond
@@ -461,7 +461,7 @@ func TestLostCleanupCleansUpExpiredClients(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
 	wait := make(chan error, 1)
-	cleaner.ProcessClient(agent, "", "", clientUUID, func(details *ClientRecordDetails, err error) {
+	cleaner.ProcessClient(agent, "", "", "", clientUUID, func(details *ClientRecordDetails, err error) {
 		wait <- err
 	})
 	err = <-wait

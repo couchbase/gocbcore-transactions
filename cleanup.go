@@ -80,7 +80,7 @@ type Cleaner interface {
 	PopRequest() *CleanupRequest
 	ForceCleanupQueue(cb func([]CleanupAttempt))
 	QueueLength() int32
-	CleanupAttempt(atrAgent *gocbcore.Agent, req *CleanupRequest, regular bool, cb func(attempt CleanupAttempt))
+	CleanupAttempt(atrAgent *gocbcore.Agent, atrOboUser string, req *CleanupRequest, regular bool, cb func(attempt CleanupAttempt))
 	Close()
 }
 
@@ -108,7 +108,7 @@ func (nc *noopCleaner) QueueLength() int32 {
 	return 0
 }
 
-func (nc *noopCleaner) CleanupAttempt(atrAgent *gocbcore.Agent, req *CleanupRequest, regular bool, cb func(attempt CleanupAttempt)) {
+func (nc *noopCleaner) CleanupAttempt(atrAgent *gocbcore.Agent, atrOboUser string, req *CleanupRequest, regular bool, cb func(attempt CleanupAttempt)) {
 	cb(CleanupAttempt{})
 }
 
@@ -200,7 +200,7 @@ func (c *stdCleaner) ForceCleanupQueue(cb func([]CleanupAttempt)) {
 	}
 
 	for _, req := range reqs {
-		agent, err := c.bucketAgentProvider(req.AtrBucketName)
+		agent, oboUser, err := c.bucketAgentProvider(req.AtrBucketName)
 		if err != nil {
 			handler(CleanupAttempt{
 				Success:           false,
@@ -215,7 +215,7 @@ func (c *stdCleaner) ForceCleanupQueue(cb func([]CleanupAttempt)) {
 			continue
 		}
 
-		c.CleanupAttempt(agent, req, true, func(attempt CleanupAttempt) {
+		c.CleanupAttempt(agent, oboUser, req, true, func(attempt CleanupAttempt) {
 			handler(attempt)
 		})
 	}
@@ -235,7 +235,7 @@ func (c *stdCleaner) processQ() {
 	for {
 		select {
 		case req := <-c.q:
-			agent, err := c.bucketAgentProvider(req.AtrBucketName)
+			agent, oboUser, err := c.bucketAgentProvider(req.AtrBucketName)
 			if err != nil {
 				logDebugf("Failed to get agent for request: %s, err: %v", req.String(), err)
 				return
@@ -243,7 +243,7 @@ func (c *stdCleaner) processQ() {
 
 			logTracef("Running cleanup for request: %s", req.String())
 			waitCh := make(chan struct{}, 1)
-			c.CleanupAttempt(agent, req, true, func(attempt CleanupAttempt) {
+			c.CleanupAttempt(agent, oboUser, req, true, func(attempt CleanupAttempt) {
 				if !attempt.Success {
 					logDebugf("Cleanup attempt failed for entry: %s",
 						attempt.String())
@@ -278,7 +278,7 @@ func (c *stdCleaner) checkForwardCompatability(
 	cb(nil)
 }
 
-func (c *stdCleaner) CleanupAttempt(atrAgent *gocbcore.Agent, req *CleanupRequest, regular bool, cb func(attempt CleanupAttempt)) {
+func (c *stdCleaner) CleanupAttempt(atrAgent *gocbcore.Agent, atrOboUser string, req *CleanupRequest, regular bool, cb func(attempt CleanupAttempt)) {
 	c.checkForwardCompatability(forwardCompatStageGetsCleanupEntry, req.ForwardCompat, func(err error) {
 		if err != nil {
 			cb(CleanupAttempt{
@@ -309,7 +309,7 @@ func (c *stdCleaner) CleanupAttempt(atrAgent *gocbcore.Agent, req *CleanupReques
 				return
 			}
 
-			c.cleanupATR(atrAgent, req, func(err error) {
+			c.cleanupATR(atrAgent, atrOboUser, req, func(err error) {
 				success := true
 				if err != nil {
 					success = false
@@ -330,7 +330,7 @@ func (c *stdCleaner) CleanupAttempt(atrAgent *gocbcore.Agent, req *CleanupReques
 	})
 }
 
-func (c *stdCleaner) cleanupATR(agent *gocbcore.Agent, req *CleanupRequest, cb func(error)) {
+func (c *stdCleaner) cleanupATR(agent *gocbcore.Agent, oboUser string, req *CleanupRequest, cb func(error)) {
 	c.hooks.BeforeATRRemove(req.AtrID, func(err error) {
 		if err != nil {
 			if errors.Is(err, gocbcore.ErrPathNotFound) {
@@ -370,6 +370,7 @@ func (c *stdCleaner) cleanupATR(agent *gocbcore.Agent, req *CleanupRequest, cb f
 			Deadline:               deadline,
 			DurabilityLevel:        durabilityLevelToMemd(req.DurabilityLevel),
 			DurabilityLevelTimeout: duraTimeout,
+			User:                   oboUser,
 		}, func(result *gocbcore.MutateInResult, err error) {
 			if err != nil {
 				if errors.Is(err, gocbcore.ErrPathNotFound) {
@@ -487,13 +488,13 @@ func (c *stdCleaner) rollbackRepRemDocs(attemptID string, docs []DocRecord, dead
 	for _, doc := range docs {
 		waitCh := make(chan error, 1)
 
-		agent, err := c.bucketAgentProvider(doc.BucketName)
+		agent, oboUser, err := c.bucketAgentProvider(doc.BucketName)
 		if err != nil {
 			cb(err)
 			return
 		}
 
-		c.perDoc(false, attemptID, doc, agent, func(getRes *getDoc, err error) {
+		c.perDoc(false, attemptID, doc, agent, oboUser, func(getRes *getDoc, err error) {
 			if err != nil {
 				waitCh <- err
 				return
@@ -527,6 +528,7 @@ func (c *stdCleaner) rollbackRepRemDocs(attemptID string, docs []DocRecord, dead
 					Deadline:               deadline,
 					DurabilityLevel:        durability,
 					DurabilityLevelTimeout: duraTimeout,
+					User:                   oboUser,
 				}, func(result *gocbcore.MutateInResult, err error) {
 					if err != nil {
 						logDebugf("Failed to rollback for bucket: %s, collection: %s, scope: %s, id: %s, err: %v",
@@ -561,13 +563,13 @@ func (c *stdCleaner) rollbackInsDocs(attemptID string, docs []DocRecord, deadlin
 	for _, doc := range docs {
 		waitCh := make(chan error, 1)
 
-		agent, err := c.bucketAgentProvider(doc.BucketName)
+		agent, oboUser, err := c.bucketAgentProvider(doc.BucketName)
 		if err != nil {
 			cb(err)
 			return
 		}
 
-		c.perDoc(false, attemptID, doc, agent, func(getRes *getDoc, err error) {
+		c.perDoc(false, attemptID, doc, agent, oboUser, func(getRes *getDoc, err error) {
 			if err != nil {
 				waitCh <- err
 				return
@@ -602,6 +604,7 @@ func (c *stdCleaner) rollbackInsDocs(attemptID string, docs []DocRecord, deadlin
 						Deadline:               deadline,
 						DurabilityLevel:        durability,
 						DurabilityLevelTimeout: duraTimeout,
+						User:                   oboUser,
 					}, func(result *gocbcore.MutateInResult, err error) {
 						if err != nil {
 							logDebugf("Failed to rollback for bucket: %s, collection: %s, scope: %s, id: %s, err: %v",
@@ -625,6 +628,7 @@ func (c *stdCleaner) rollbackInsDocs(attemptID string, docs []DocRecord, deadlin
 						Deadline:               deadline,
 						DurabilityLevel:        durability,
 						DurabilityLevelTimeout: duraTimeout,
+						User:                   oboUser,
 					}, func(result *gocbcore.DeleteResult, err error) {
 						if err != nil {
 							logDebugf("Failed to rollback for bucket: %s, collection: %s, scope: %s, id: %s, err: %v",
@@ -658,13 +662,13 @@ func (c *stdCleaner) commitRemDocs(attemptID string, docs []DocRecord, deadline 
 	for _, doc := range docs {
 		waitCh := make(chan error, 1)
 
-		agent, err := c.bucketAgentProvider(doc.BucketName)
+		agent, oboUser, err := c.bucketAgentProvider(doc.BucketName)
 		if err != nil {
 			cb(err)
 			return
 		}
 
-		c.perDoc(true, attemptID, doc, agent, func(getRes *getDoc, err error) {
+		c.perDoc(true, attemptID, doc, agent, oboUser, func(getRes *getDoc, err error) {
 			if err != nil {
 				waitCh <- err
 				return
@@ -695,6 +699,7 @@ func (c *stdCleaner) commitRemDocs(attemptID string, docs []DocRecord, deadline 
 					Deadline:               deadline,
 					DurabilityLevel:        durability,
 					DurabilityLevelTimeout: duraTimeout,
+					User:                   oboUser,
 				}, func(result *gocbcore.DeleteResult, err error) {
 					if err != nil {
 						logDebugf("Failed to commit for bucket: %s, collection: %s, scope: %s, id: %s, err: %v",
@@ -727,13 +732,13 @@ func (c *stdCleaner) commitInsRepDocs(attemptID string, docs []DocRecord, deadli
 	for _, doc := range docs {
 		waitCh := make(chan error, 1)
 
-		agent, err := c.bucketAgentProvider(doc.BucketName)
+		agent, oboUser, err := c.bucketAgentProvider(doc.BucketName)
 		if err != nil {
 			cb(err)
 			return
 		}
 
-		c.perDoc(true, attemptID, doc, agent, func(getRes *getDoc, err error) {
+		c.perDoc(true, attemptID, doc, agent, oboUser, func(getRes *getDoc, err error) {
 			if err != nil {
 				waitCh <- err
 				return
@@ -760,6 +765,7 @@ func (c *stdCleaner) commitInsRepDocs(attemptID string, docs []DocRecord, deadli
 						Deadline:               deadline,
 						DurabilityLevel:        durability,
 						DurabilityLevelTimeout: duraTimeout,
+						User:                   oboUser,
 					}, func(result *gocbcore.StoreResult, err error) {
 						if err != nil {
 							logDebugf("Failed to commit for bucket: %s, collection: %s, scope: %s, id: %s, err: %v",
@@ -795,6 +801,7 @@ func (c *stdCleaner) commitInsRepDocs(attemptID string, docs []DocRecord, deadli
 						Deadline:               deadline,
 						DurabilityLevel:        durability,
 						DurabilityLevelTimeout: duraTimeout,
+						User:                   oboUser,
 					}, func(result *gocbcore.MutateInResult, err error) {
 						if err != nil {
 							logDebugf("Failed to commit for bucket: %s, collection: %s, scope: %s, id: %s, err: %v",
@@ -821,7 +828,7 @@ func (c *stdCleaner) commitInsRepDocs(attemptID string, docs []DocRecord, deadli
 	cb(overallErr)
 }
 
-func (c *stdCleaner) perDoc(crc32MatchStaging bool, attemptID string, dr DocRecord, agent *gocbcore.Agent,
+func (c *stdCleaner) perDoc(crc32MatchStaging bool, attemptID string, dr DocRecord, agent *gocbcore.Agent, oboUser string,
 	cb func(getRes *getDoc, err error)) {
 	c.hooks.BeforeDocGet(dr.ID, func(err error) {
 		if err != nil {
@@ -852,6 +859,7 @@ func (c *stdCleaner) perDoc(crc32MatchStaging bool, attemptID string, dr DocReco
 			},
 			Deadline: deadline,
 			Flags:    memd.SubdocDocFlagAccessDeleted,
+			User:     oboUser,
 		}, func(result *gocbcore.LookupInResult, err error) {
 			if err != nil {
 				if errors.Is(err, gocbcore.ErrDocumentNotFound) {

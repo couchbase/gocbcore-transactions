@@ -238,6 +238,7 @@ func (t *transactionAttempt) checkExpiredAtomic(stage string, id []byte, proceed
 
 func (t *transactionAttempt) confirmATRPending(
 	firstAgent *gocbcore.Agent,
+	firstOboUser string,
 	firstScopeName string,
 	firstCollectionName string,
 	firstKey []byte,
@@ -256,6 +257,7 @@ func (t *transactionAttempt) confirmATRPending(
 
 		t.selectAtrLocked(
 			firstAgent,
+			firstOboUser,
 			firstScopeName,
 			firstCollectionName,
 			firstKey,
@@ -433,7 +435,7 @@ func (t *transactionAttempt) getTxnState(
 		}
 	}
 
-	atrAgent, err := t.bucketAgentProvider(atrBucketName)
+	atrAgent, atrOboUser, err := t.bucketAgentProvider(atrBucketName)
 	if err != nil {
 		ecCb(nil, time.Time{}, classifyError(err))
 		return
@@ -467,6 +469,7 @@ func (t *transactionAttempt) getTxnState(
 				},
 			},
 			Deadline: deadline,
+			User:     atrOboUser,
 		}, func(result *gocbcore.LookupInResult, err error) {
 			if err != nil {
 				ecCb(nil, time.Time{}, classifyError(err))
@@ -523,6 +526,7 @@ func (t *transactionAttempt) getTxnState(
 func (t *transactionAttempt) writeWriteConflictPoll(
 	stage forwardCompatStage,
 	agent *gocbcore.Agent,
+	oboUser string,
 	scopeName string,
 	collectionName string,
 	key []byte,

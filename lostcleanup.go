@@ -77,8 +77,8 @@ type ProcessATRStats struct {
 // LostTransactionCleaner is responsible for cleaning up lost transactions.
 // Internal: This should never be used and is not supported.
 type LostTransactionCleaner interface {
-	ProcessClient(agent *gocbcore.Agent, collection, scope, uuid string, cb func(*ClientRecordDetails, error))
-	ProcessATR(agent *gocbcore.Agent, collection, scope, atrID string, cb func([]CleanupAttempt, ProcessATRStats))
+	ProcessClient(agent *gocbcore.Agent, oboUser string, collection, scope, uuid string, cb func(*ClientRecordDetails, error))
+	ProcessATR(agent *gocbcore.Agent, oboUser string, collection, scope, atrID string, cb func([]CleanupAttempt, ProcessATRStats))
 	RemoveClientFromAllBuckets(uuid string) error
 	Close()
 }
@@ -169,14 +169,14 @@ func (ltc *stdLostTransactionCleaner) start() {
 		case <-ltc.stop:
 			return
 		case location := <-ltc.newLocationCh:
-			agent, err := ltc.bucketAgentProvider(location.location.BucketName)
+			agent, oboUser, err := ltc.bucketAgentProvider(location.location.BucketName)
 			if err != nil {
 				logDebugf("Failed to fetch agent for %v:, err: %v",
 					location, err)
 				// We should probably do something here...
 				return
 			}
-			go ltc.perLocation(agent, location.location.CollectionName, location.location.ScopeName, location.shutdown)
+			go ltc.perLocation(agent, oboUser, location.location.CollectionName, location.location.ScopeName, location.shutdown)
 		}
 	}
 }
@@ -248,7 +248,7 @@ func (ltc *stdLostTransactionCleaner) removeClient(uuid string, locations map[Lo
 }
 
 func (ltc *stdLostTransactionCleaner) unregisterClientRecord(location LostATRLocation, uuid string, deadline time.Time, cb func(error)) {
-	agent, err := ltc.bucketAgentProvider(location.BucketName)
+	agent, oboUser, err := ltc.bucketAgentProvider(location.BucketName)
 	if err != nil {
 		select {
 		case <-time.After(deadline.Sub(time.Now())):
@@ -294,6 +294,7 @@ func (ltc *stdLostTransactionCleaner) unregisterClientRecord(location LostATRLoc
 			Deadline:       opDeadline,
 			CollectionName: location.CollectionName,
 			ScopeName:      location.ScopeName,
+			User:           oboUser,
 		}, func(result *gocbcore.MutateInResult, err error) {
 			if err != nil {
 				if errors.Is(err, gocbcore.ErrDocumentNotFound) || errors.Is(err, gocbcore.ErrPathNotFound) {
@@ -326,8 +327,8 @@ func (ltc *stdLostTransactionCleaner) unregisterClientRecord(location LostATRLoc
 	})
 }
 
-func (ltc *stdLostTransactionCleaner) perLocation(agent *gocbcore.Agent, collection, scope string, shutdownCh chan struct{}) {
-	ltc.process(agent, collection, scope, func(err error) {
+func (ltc *stdLostTransactionCleaner) perLocation(agent *gocbcore.Agent, oboUser string, collection, scope string, shutdownCh chan struct{}) {
+	ltc.process(agent, oboUser, collection, scope, func(err error) {
 		if err != nil {
 			select {
 			case <-ltc.stop:
@@ -335,7 +336,7 @@ func (ltc *stdLostTransactionCleaner) perLocation(agent *gocbcore.Agent, collect
 			case <-shutdownCh:
 				return
 			case <-time.After(1 * time.Second):
-				ltc.perLocation(agent, collection, scope, shutdownCh)
+				ltc.perLocation(agent, oboUser, collection, scope, shutdownCh)
 				return
 			}
 		}
@@ -347,12 +348,12 @@ func (ltc *stdLostTransactionCleaner) perLocation(agent *gocbcore.Agent, collect
 			return
 		default:
 		}
-		ltc.perLocation(agent, collection, scope, shutdownCh)
+		ltc.perLocation(agent, oboUser, collection, scope, shutdownCh)
 	})
 }
 
-func (ltc *stdLostTransactionCleaner) process(agent *gocbcore.Agent, collection, scope string, cb func(error)) {
-	ltc.ProcessClient(agent, collection, scope, ltc.uuid, func(recordDetails *ClientRecordDetails, err error) {
+func (ltc *stdLostTransactionCleaner) process(agent *gocbcore.Agent, oboUser string, collection, scope string, cb func(error)) {
+	ltc.ProcessClient(agent, oboUser, collection, scope, ltc.uuid, func(recordDetails *ClientRecordDetails, err error) {
 		if err != nil {
 			logDebugf("Failed to process client %s on %s.%s.%s", ltc.uuid, agent.BucketName(), scope, collection)
 			cb(err)
@@ -372,7 +373,7 @@ func (ltc *stdLostTransactionCleaner) process(agent *gocbcore.Agent, collection,
 				}
 
 				waitCh := make(chan struct{}, 1)
-				ltc.ProcessATR(agent, collection, scope, atr, func(attempts []CleanupAttempt, _ ProcessATRStats) {
+				ltc.ProcessATR(agent, oboUser, collection, scope, atr, func(attempts []CleanupAttempt, _ ProcessATRStats) {
 					// We don't actually care what happened
 					waitCh <- struct{}{}
 				})
@@ -385,7 +386,7 @@ func (ltc *stdLostTransactionCleaner) process(agent *gocbcore.Agent, collection,
 }
 
 // We pass uuid to this so that it's testable externally.
-func (ltc *stdLostTransactionCleaner) ProcessClient(agent *gocbcore.Agent, collection, scope, uuid string, cb func(*ClientRecordDetails, error)) {
+func (ltc *stdLostTransactionCleaner) ProcessClient(agent *gocbcore.Agent, oboUser string, collection, scope, uuid string, cb func(*ClientRecordDetails, error)) {
 	ltc.clientRecordHooks.BeforeGetRecord(func(err error) {
 		if err != nil {
 			ec := classifyHookError(err)
@@ -420,19 +421,20 @@ func (ltc *stdLostTransactionCleaner) ProcessClient(agent *gocbcore.Agent, colle
 			Deadline:       deadline,
 			CollectionName: collection,
 			ScopeName:      scope,
+			User:           oboUser,
 		}, func(result *gocbcore.LookupInResult, err error) {
 			if err != nil {
 				ec := classifyError(err)
 
 				switch ec.Class {
 				case ErrorClassFailDocNotFound:
-					ltc.createClientRecord(agent, collection, scope, func(err error) {
+					ltc.createClientRecord(agent, oboUser, collection, scope, func(err error) {
 						if err != nil {
 							cb(nil, err)
 							return
 						}
 
-						ltc.ProcessClient(agent, collection, scope, uuid, cb)
+						ltc.ProcessClient(agent, oboUser, collection, scope, uuid, cb)
 					})
 				default:
 					cb(nil, err)
@@ -484,7 +486,7 @@ func (ltc *stdLostTransactionCleaner) ProcessClient(agent *gocbcore.Agent, colle
 				return
 			}
 
-			ltc.processClientRecord(agent, collection, scope, uuid, recordDetails, func(err error) {
+			ltc.processClientRecord(agent, oboUser, collection, scope, uuid, recordDetails, func(err error) {
 				if err != nil {
 					cb(nil, err)
 					return
@@ -497,8 +499,8 @@ func (ltc *stdLostTransactionCleaner) ProcessClient(agent *gocbcore.Agent, colle
 	})
 }
 
-func (ltc *stdLostTransactionCleaner) ProcessATR(agent *gocbcore.Agent, collection, scope, atrID string, cb func([]CleanupAttempt, ProcessATRStats)) {
-	ltc.getATR(agent, collection, scope, atrID, func(attempts map[string]jsonAtrAttempt, hlc int64, err error) {
+func (ltc *stdLostTransactionCleaner) ProcessATR(agent *gocbcore.Agent, oboUser string, collection, scope, atrID string, cb func([]CleanupAttempt, ProcessATRStats)) {
+	ltc.getATR(agent, oboUser, collection, scope, atrID, func(attempts map[string]jsonAtrAttempt, hlc int64, err error) {
 		if err != nil {
 			logDebugf("Failed to get atr %s on %s.%s.%s", atrID, agent.BucketName(), scope, collection)
 			cb(nil, ProcessATRStats{})
@@ -588,7 +590,7 @@ func (ltc *stdLostTransactionCleaner) ProcessATR(agent *gocbcore.Agent, collecti
 					}
 
 					waitCh := make(chan CleanupAttempt, 1)
-					ltc.cleaner.CleanupAttempt(agent, req, false, func(attempt CleanupAttempt) {
+					ltc.cleaner.CleanupAttempt(agent, oboUser, req, false, func(attempt CleanupAttempt) {
 						waitCh <- attempt
 					})
 					attempt := <-waitCh
@@ -601,7 +603,7 @@ func (ltc *stdLostTransactionCleaner) ProcessATR(agent *gocbcore.Agent, collecti
 	})
 }
 
-func (ltc *stdLostTransactionCleaner) getATR(agent *gocbcore.Agent, collection, scope, atrID string,
+func (ltc *stdLostTransactionCleaner) getATR(agent *gocbcore.Agent, oboUser string, collection, scope, atrID string,
 	cb func(map[string]jsonAtrAttempt, int64, error)) {
 	ltc.cleanupHooks.BeforeATRGet([]byte(atrID), func(err error) {
 		if err != nil {
@@ -631,6 +633,7 @@ func (ltc *stdLostTransactionCleaner) getATR(agent *gocbcore.Agent, collection, 
 			Deadline:       deadline,
 			CollectionName: collection,
 			ScopeName:      scope,
+			User:           oboUser,
 		}, func(result *gocbcore.LookupInResult, err error) {
 			if err != nil {
 				cb(nil, 0, err)
@@ -755,7 +758,7 @@ func (ltc *stdLostTransactionCleaner) parseClientRecords(records jsonClientRecor
 	}, nil
 }
 
-func (ltc *stdLostTransactionCleaner) processClientRecord(agent *gocbcore.Agent, collection, scope, uuid string,
+func (ltc *stdLostTransactionCleaner) processClientRecord(agent *gocbcore.Agent, oboUser string, collection, scope, uuid string,
 	recordDetails ClientRecordDetails, cb func(error)) {
 	ltc.clientRecordHooks.BeforeUpdateRecord(func(err error) {
 		if err != nil {
@@ -785,22 +788,17 @@ func (ltc *stdLostTransactionCleaner) processClientRecord(agent *gocbcore.Agent,
 			return
 		}
 
-		opts := gocbcore.MutateInOptions{
-			Key: clientRecordKey,
-			Ops: []gocbcore.SubDocOp{
-				fieldOp("heartbeat_ms", "${Mutation.CAS}", memd.SubDocOpDictSet,
-					memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros|memd.SubdocFlagMkDirP),
-				fieldOp("expires_ms", (ltc.cleanupWindow + 20000*time.Millisecond).Milliseconds(),
-					memd.SubDocOpDictSet, memd.SubdocFlagXattrPath),
-				fieldOp("num_atrs", ltc.numAtrs, memd.SubDocOpDictSet, memd.SubdocFlagXattrPath),
-				{
-					Op:    memd.SubDocOpSetDoc,
-					Flags: memd.SubdocFlagNone,
-					Value: []byte{0},
-				},
+		ops := []gocbcore.SubDocOp{
+			fieldOp("heartbeat_ms", "${Mutation.CAS}", memd.SubDocOpDictSet,
+				memd.SubdocFlagXattrPath|memd.SubdocFlagExpandMacros|memd.SubdocFlagMkDirP),
+			fieldOp("expires_ms", (ltc.cleanupWindow + 20000*time.Millisecond).Milliseconds(),
+				memd.SubDocOpDictSet, memd.SubdocFlagXattrPath),
+			fieldOp("num_atrs", ltc.numAtrs, memd.SubDocOpDictSet, memd.SubdocFlagXattrPath),
+			{
+				Op:    memd.SubDocOpSetDoc,
+				Flags: memd.SubdocFlagNone,
+				Value: []byte{0},
 			},
-			CollectionName: collection,
-			ScopeName:      scope,
 		}
 
 		numOps := 12
@@ -809,17 +807,26 @@ func (ltc *stdLostTransactionCleaner) processClientRecord(agent *gocbcore.Agent,
 		}
 
 		for i := 0; i < numOps; i++ {
-			opts.Ops = append(opts.Ops, gocbcore.SubDocOp{
+			ops = append(ops, gocbcore.SubDocOp{
 				Op:    memd.SubDocOpDelete,
 				Flags: memd.SubdocFlagXattrPath,
 				Path:  "records.clients." + recordDetails.ExpiredClientIDs[i],
 			})
 		}
 
+		deadline := time.Time{}
 		if ltc.keyValueTimeout > 0 {
-			opts.Deadline = time.Now().Add(ltc.keyValueTimeout)
+			deadline = time.Now().Add(ltc.keyValueTimeout)
 		}
-		_, err = agent.MutateIn(opts, func(result *gocbcore.MutateInResult, err error) {
+
+		_, err = agent.MutateIn(gocbcore.MutateInOptions{
+			Key:            clientRecordKey,
+			Ops:            ops,
+			CollectionName: collection,
+			ScopeName:      scope,
+			Deadline:       deadline,
+			User:           oboUser,
+		}, func(result *gocbcore.MutateInResult, err error) {
 			if err != nil {
 				cb(err)
 				return
@@ -834,7 +841,7 @@ func (ltc *stdLostTransactionCleaner) processClientRecord(agent *gocbcore.Agent,
 	})
 }
 
-func (ltc *stdLostTransactionCleaner) createClientRecord(agent *gocbcore.Agent, collection, scope string, cb func(error)) {
+func (ltc *stdLostTransactionCleaner) createClientRecord(agent *gocbcore.Agent, oboUser string, collection, scope string, cb func(error)) {
 	ltc.clientRecordHooks.BeforeCreateRecord(func(err error) {
 		if err != nil {
 			ec := classifyHookError(err)
@@ -872,6 +879,7 @@ func (ltc *stdLostTransactionCleaner) createClientRecord(agent *gocbcore.Agent, 
 			Deadline:       deadline,
 			CollectionName: collection,
 			ScopeName:      scope,
+			User:           oboUser,
 		}, func(result *gocbcore.MutateInResult, err error) {
 			if err != nil {
 				ec := classifyError(err)

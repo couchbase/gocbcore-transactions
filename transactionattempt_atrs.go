@@ -26,6 +26,7 @@ import (
 
 func (t *transactionAttempt) selectAtrLocked(
 	firstAgent *gocbcore.Agent,
+	firstOboUser string,
 	firstScopeName string,
 	firstCollectionName string,
 	firstKey []byte,
@@ -50,10 +51,12 @@ func (t *transactionAttempt) selectAtrLocked(
 		}
 
 		atrAgent := firstAgent
+		atrOboUser := firstOboUser
 		atrScopeName := "_default"
 		atrCollectionName := "_default"
 		if t.atrLocation.Agent != nil {
 			atrAgent = t.atrLocation.Agent
+			atrOboUser = t.atrLocation.OboUser
 			atrScopeName = t.atrLocation.ScopeName
 			atrCollectionName = t.atrLocation.CollectionName
 		} else {
@@ -69,6 +72,7 @@ func (t *transactionAttempt) selectAtrLocked(
 		}
 
 		t.atrAgent = atrAgent
+		t.atrOboUser = atrOboUser
 		t.atrScopeName = atrScopeName
 		t.atrCollectionName = atrCollectionName
 		t.atrKey = atrKey
@@ -190,6 +194,7 @@ func (t *transactionAttempt) setATRPendingLocked(
 				DurabilityLevelTimeout: duraTimeout,
 				Deadline:               deadline,
 				Flags:                  memd.SubdocDocFlagMkDoc,
+				User:                   t.atrOboUser,
 			}, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
 					ecCb(classifyError(err))
@@ -306,6 +311,7 @@ func (t *transactionAttempt) fetchATRCommitConflictLocked(
 				},
 				Deadline: deadline,
 				Flags:    memd.SubdocDocFlagNone,
+				User:     t.atrOboUser,
 			}, func(result *gocbcore.LookupInResult, err error) {
 				if err != nil {
 					ecCb(jsonAtrStateUnknown, classifyError(err))
@@ -488,6 +494,7 @@ func (t *transactionAttempt) setATRCommittedLocked(
 	}
 
 	atrAgent := t.atrAgent
+	atrOboUser := t.atrOboUser
 	atrScopeName := t.atrScopeName
 	atrKey := t.atrKey
 	atrCollectionName := t.atrCollectionName
@@ -567,6 +574,7 @@ func (t *transactionAttempt) setATRCommittedLocked(
 				DurabilityLevelTimeout: duraTimeout,
 				Flags:                  memd.SubdocDocFlagNone,
 				Deadline:               deadline,
+				User:                   atrOboUser,
 			}, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
 					ecCb(classifyError(err))
@@ -654,6 +662,7 @@ func (t *transactionAttempt) setATRCompletedLocked(
 	}
 
 	atrAgent := t.atrAgent
+	atrOboUser := t.atrOboUser
 	atrScopeName := t.atrScopeName
 	atrKey := t.atrKey
 	atrCollectionName := t.atrCollectionName
@@ -689,6 +698,7 @@ func (t *transactionAttempt) setATRCompletedLocked(
 				DurabilityLevelTimeout: duraTimeout,
 				Deadline:               deadline,
 				Flags:                  memd.SubdocDocFlagNone,
+				User:                   atrOboUser,
 			}, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
 					ecCb(classifyError(err))
@@ -781,6 +791,7 @@ func (t *transactionAttempt) setATRAbortedLocked(
 	}
 
 	atrAgent := t.atrAgent
+	atrOboUser := t.atrOboUser
 	atrScopeName := t.atrScopeName
 	atrKey := t.atrKey
 	atrCollectionName := t.atrCollectionName
@@ -859,6 +870,7 @@ func (t *transactionAttempt) setATRAbortedLocked(
 				DurabilityLevelTimeout: duraTimeout,
 				Flags:                  memd.SubdocDocFlagNone,
 				Deadline:               deadline,
+				User:                   atrOboUser,
 			}, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
 					ecCb(classifyError(err))
@@ -938,6 +950,7 @@ func (t *transactionAttempt) setATRRolledBackLocked(
 	}
 
 	atrAgent := t.atrAgent
+	atrOboUser := t.atrOboUser
 	atrScopeName := t.atrScopeName
 	atrKey := t.atrKey
 	atrCollectionName := t.atrCollectionName
@@ -973,6 +986,7 @@ func (t *transactionAttempt) setATRRolledBackLocked(
 				DurabilityLevelTimeout: duraTimeout,
 				Deadline:               deadline,
 				Flags:                  memd.SubdocDocFlagNone,
+				User:                   atrOboUser,
 			}, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
 					ecCb(classifyError(err))

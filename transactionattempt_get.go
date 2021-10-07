@@ -70,7 +70,7 @@ func (t *transactionAttempt) get(
 				return
 			}
 
-			t.mavRead(opts.Agent, opts.ScopeName, opts.CollectionName, opts.Key, opts.NoRYOW, "", forceNonFatal, func(result *GetResult, err *TransactionOperationFailedError) {
+			t.mavRead(opts.Agent, opts.OboUser, opts.ScopeName, opts.CollectionName, opts.Key, opts.NoRYOW, "", forceNonFatal, func(result *GetResult, err *TransactionOperationFailedError) {
 				if err != nil {
 					endAndCb(nil, err)
 					return
@@ -99,6 +99,7 @@ func (t *transactionAttempt) get(
 
 func (t *transactionAttempt) mavRead(
 	agent *gocbcore.Agent,
+	oboUser string,
 	scopeName string,
 	collectionName string,
 	key []byte,
@@ -109,6 +110,7 @@ func (t *transactionAttempt) mavRead(
 ) {
 	t.fetchDocWithMeta(
 		agent,
+		oboUser,
 		scopeName,
 		collectionName,
 		key,
@@ -143,6 +145,7 @@ func (t *transactionAttempt) mavRead(
 
 				cb(&GetResult{
 					agent:          agent,
+					oboUser:        oboUser,
 					scopeName:      scopeName,
 					collectionName: collectionName,
 					key:            key,
@@ -160,6 +163,7 @@ func (t *transactionAttempt) mavRead(
 				case jsonMutationReplace:
 					cb(&GetResult{
 						agent:          agent,
+						oboUser:        oboUser,
 						scopeName:      scopeName,
 						collectionName: collectionName,
 						key:            key,
@@ -203,6 +207,7 @@ func (t *transactionAttempt) mavRead(
 
 				cb(&GetResult{
 					agent:          agent,
+					oboUser:        oboUser,
 					scopeName:      scopeName,
 					collectionName: collectionName,
 					key:            key,
@@ -255,7 +260,7 @@ func (t *transactionAttempt) mavRead(
 							if attempt == nil {
 								// The ATR entry is missing, it's likely that we just raced the other transaction
 								// cleaning up it's documents and then cleaning itself up.  Lets run ATR resolution.
-								t.mavRead(agent, scopeName, collectionName, key, disableRYOW, doc.TxnMeta.ID.Attempt, forceNonFatal, cb)
+								t.mavRead(agent, oboUser, scopeName, collectionName, key, disableRYOW, doc.TxnMeta.ID.Attempt, forceNonFatal, cb)
 								return
 							}
 
@@ -274,6 +279,7 @@ func (t *transactionAttempt) mavRead(
 									case jsonMutationReplace:
 										cb(&GetResult{
 											agent:          agent,
+											oboUser:        oboUser,
 											scopeName:      scopeName,
 											collectionName: collectionName,
 											key:            key,
@@ -316,6 +322,7 @@ func (t *transactionAttempt) mavRead(
 
 								cb(&GetResult{
 									agent:          agent,
+									oboUser:        oboUser,
 									scopeName:      scopeName,
 									collectionName: collectionName,
 									key:            key,
@@ -331,6 +338,7 @@ func (t *transactionAttempt) mavRead(
 
 func (t *transactionAttempt) fetchDocWithMeta(
 	agent *gocbcore.Agent,
+	oboUser string,
 	scopeName string,
 	collectionName string,
 	key []byte,
@@ -415,6 +423,7 @@ func (t *transactionAttempt) fetchDocWithMeta(
 			},
 			Deadline: deadline,
 			Flags:    memd.SubdocDocFlagAccessDeleted,
+			User:     oboUser,
 		}, func(result *gocbcore.LookupInResult, err error) {
 			if err != nil {
 				ecCb(nil, classifyError(err))

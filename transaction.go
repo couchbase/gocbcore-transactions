@@ -104,6 +104,7 @@ func (t *Transaction) resumeAttempt(txnData *jsonSerializedAttempt) error {
 
 	var txnState AttemptState
 	var atrAgent *gocbcore.Agent
+	var atrOboUser string
 	var atrScope, atrCollection string
 	var atrKey []byte
 	if txnData.ATR.ID != "" {
@@ -113,13 +114,14 @@ func (t *Transaction) resumeAttempt(txnData *jsonSerializedAttempt) error {
 			return errors.New("invalid atr data - no bucket")
 		}
 
-		foundAtrAgent, err := t.parent.config.BucketAgentProvider(txnData.ATR.Bucket)
+		foundAtrAgent, foundAtrOboUser, err := t.parent.config.BucketAgentProvider(txnData.ATR.Bucket)
 		if err != nil {
 			return err
 		}
 
 		txnState = AttemptStatePending
 		atrAgent = foundAtrAgent
+		atrOboUser = foundAtrOboUser
 		atrScope = txnData.ATR.Scope
 		atrCollection = txnData.ATR.Collection
 		atrKey = []byte(txnData.ATR.ID)
@@ -128,6 +130,7 @@ func (t *Transaction) resumeAttempt(txnData *jsonSerializedAttempt) error {
 
 		txnState = AttemptStateNothingWritten
 		atrAgent = nil
+		atrOboUser = ""
 		atrScope = ""
 		atrCollection = ""
 		atrKey = nil
@@ -148,7 +151,7 @@ func (t *Transaction) resumeAttempt(txnData *jsonSerializedAttempt) error {
 			return errors.New("invalid staged mutation - no type")
 		}
 
-		agent, err := t.parent.config.BucketAgentProvider(mutationData.Bucket)
+		agent, oboUser, err := t.parent.config.BucketAgentProvider(mutationData.Bucket)
 		if err != nil {
 			return err
 		}
@@ -166,6 +169,7 @@ func (t *Transaction) resumeAttempt(txnData *jsonSerializedAttempt) error {
 		stagedMutations[mutationIdx] = &stagedMutation{
 			OpType:         opType,
 			Agent:          agent,
+			OboUser:        oboUser,
 			ScopeName:      mutationData.Scope,
 			CollectionName: mutationData.Collection,
 			Key:            []byte(mutationData.ID),
@@ -191,6 +195,7 @@ func (t *Transaction) resumeAttempt(txnData *jsonSerializedAttempt) error {
 		state:             txnState,
 		stagedMutations:   stagedMutations,
 		atrAgent:          atrAgent,
+		atrOboUser:        atrOboUser,
 		atrScopeName:      atrScope,
 		atrCollectionName: atrCollection,
 		atrKey:            atrKey,
@@ -205,6 +210,7 @@ func (t *Transaction) resumeAttempt(txnData *jsonSerializedAttempt) error {
 // GetOptions provides options for a Get operation.
 type GetOptions struct {
 	Agent          *gocbcore.Agent
+	OboUser        string
 	ScopeName      string
 	CollectionName string
 	Key            []byte
@@ -235,6 +241,7 @@ type MutableItemMeta struct {
 // GetResult represents the result of a Get or GetOptional operation.
 type GetResult struct {
 	agent          *gocbcore.Agent
+	oboUser        string
 	scopeName      string
 	collectionName string
 	key            []byte
@@ -259,6 +266,7 @@ func (t *Transaction) Get(opts GetOptions, cb GetCallback) error {
 // InsertOptions provides options for a Insert operation.
 type InsertOptions struct {
 	Agent          *gocbcore.Agent
+	OboUser        string
 	ScopeName      string
 	CollectionName string
 	Key            []byte

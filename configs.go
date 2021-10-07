@@ -78,6 +78,7 @@ func durabilityLevelFromString(level string) (DurabilityLevel, error) {
 // placed when performing transactions.
 type ATRLocation struct {
 	Agent          *gocbcore.Agent
+	OboUser        string
 	ScopeName      string
 	CollectionName string
 }
@@ -92,7 +93,7 @@ type LostATRLocation struct {
 
 // BucketAgentProviderFn is a function used to provide an agent for
 // a particular bucket by name.
-type BucketAgentProviderFn func(bucketName string) (*gocbcore.Agent, error)
+type BucketAgentProviderFn func(bucketName string) (*gocbcore.Agent, string, error)
 
 // LostCleanupATRLocationProviderFn is a function used to provide a list of ATRLocations for
 // lost transactions cleanup.

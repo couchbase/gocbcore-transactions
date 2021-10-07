@@ -278,6 +278,7 @@ func (t *transactionAttempt) fetchBeforeUnstage(
 			},
 			Deadline: deadline,
 			Flags:    flags,
+			User:     mutation.OboUser,
 		}, func(result *gocbcore.LookupInResult, err error) {
 			if err != nil {
 				ecCb(classifyError(err))
@@ -433,6 +434,7 @@ func (t *transactionAttempt) commitStagedReplace(
 				Deadline:               deadline,
 				DurabilityLevel:        durabilityLevelToMemd(t.durabilityLevel),
 				DurabilityLevelTimeout: duraTimeout,
+				User:                   mutation.OboUser,
 			}, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
 					ecCb(classifyError(err))
@@ -563,6 +565,7 @@ func (t *transactionAttempt) commitStagedInsert(
 				Deadline:               deadline,
 				DurabilityLevel:        durabilityLevelToMemd(t.durabilityLevel),
 				DurabilityLevelTimeout: duraTimeout,
+				User:                   mutation.OboUser,
 			}, func(result *gocbcore.StoreResult, err error) {
 				if err != nil {
 					ecCb(classifyError(err))
@@ -675,6 +678,7 @@ func (t *transactionAttempt) commitStagedRemove(
 				Deadline:               deadline,
 				DurabilityLevel:        durabilityLevelToMemd(t.durabilityLevel),
 				DurabilityLevelTimeout: duraTimeout,
+				User:                   mutation.OboUser,
 			}, func(result *gocbcore.DeleteResult, err error) {
 				if err != nil {
 					ecCb(classifyError(err))

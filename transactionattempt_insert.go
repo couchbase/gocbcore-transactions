@@ -56,6 +56,7 @@ func (t *transactionAttempt) insert(
 		}
 
 		agent := opts.Agent
+		oboUser := opts.OboUser
 		scopeName := opts.ScopeName
 		collectionName := opts.CollectionName
 		key := opts.Key
@@ -80,7 +81,7 @@ func (t *transactionAttempt) insert(
 				switch existingMutation.OpType {
 				case StagedMutationRemove:
 					t.stageReplace(
-						agent, scopeName, collectionName, key,
+						agent, oboUser, scopeName, collectionName, key,
 						value, existingMutation.Cas,
 						func(result *GetResult, err *TransactionOperationFailedError) {
 							endAndCb(result, err)
@@ -116,14 +117,14 @@ func (t *transactionAttempt) insert(
 				}
 			}
 
-			t.confirmATRPending(agent, scopeName, collectionName, key, func(err *TransactionOperationFailedError) {
+			t.confirmATRPending(agent, oboUser, scopeName, collectionName, key, func(err *TransactionOperationFailedError) {
 				if err != nil {
 					endAndCb(nil, err)
 					return
 				}
 
 				t.stageInsert(
-					agent, scopeName, collectionName, key,
+					agent, oboUser, scopeName, collectionName, key,
 					value, 0,
 					func(result *GetResult, err *TransactionOperationFailedError) {
 						endAndCb(result, err)
@@ -137,13 +138,14 @@ func (t *transactionAttempt) insert(
 
 func (t *transactionAttempt) resolveConflictedInsert(
 	agent *gocbcore.Agent,
+	oboUser string,
 	scopeName string,
 	collectionName string,
 	key []byte,
 	value json.RawMessage,
 	cb func(*GetResult, *TransactionOperationFailedError),
 ) {
-	t.getMetaForConflictedInsert(agent, scopeName, collectionName, key,
+	t.getMetaForConflictedInsert(agent, oboUser, scopeName, collectionName, key,
 		func(isTombstone bool, txnMeta *jsonTxnXattr, cas gocbcore.Cas, err *TransactionOperationFailedError) {
 			if err != nil {
 				cb(nil, err)
@@ -164,7 +166,7 @@ func (t *transactionAttempt) resolveConflictedInsert(
 				}
 
 				// There wasn't actually a staged mutation there.
-				t.stageInsert(agent, scopeName, collectionName, key, value, cas, cb)
+				t.stageInsert(agent, oboUser, scopeName, collectionName, key, value, cas, cb)
 				return
 			}
 
@@ -202,23 +204,23 @@ func (t *transactionAttempt) resolveConflictedInsert(
 				// is unneccessary, as is the forwards compatibility check when resolving conflicted inserts
 				// so we can safely just ignore it.
 				if meta.TransactionID == t.transactionID && meta.AttemptID == t.id {
-					t.stageInsert(agent, scopeName, collectionName, key, value, cas, cb)
+					t.stageInsert(agent, oboUser, scopeName, collectionName, key, value, cas, cb)
 					return
 				}
 
-				t.writeWriteConflictPoll(forwardCompatStageWWCInserting, agent, scopeName, collectionName, key, cas, meta, nil, func(err *TransactionOperationFailedError) {
+				t.writeWriteConflictPoll(forwardCompatStageWWCInserting, agent, oboUser, scopeName, collectionName, key, cas, meta, nil, func(err *TransactionOperationFailedError) {
 					if err != nil {
 						cb(nil, err)
 						return
 					}
 
-					t.cleanupStagedInsert(agent, scopeName, collectionName, key, cas, isTombstone, func(cas gocbcore.Cas, err *TransactionOperationFailedError) {
+					t.cleanupStagedInsert(agent, oboUser, scopeName, collectionName, key, cas, isTombstone, func(cas gocbcore.Cas, err *TransactionOperationFailedError) {
 						if err != nil {
 							cb(nil, err)
 							return
 						}
 
-						t.stageInsert(agent, scopeName, collectionName, key, value, cas, cb)
+						t.stageInsert(agent, oboUser, scopeName, collectionName, key, value, cas, cb)
 					})
 				})
 			})
@@ -227,6 +229,7 @@ func (t *transactionAttempt) resolveConflictedInsert(
 
 func (t *transactionAttempt) stageInsert(
 	agent *gocbcore.Agent,
+	oboUser string,
 	scopeName string,
 	collectionName string,
 	key []byte,
@@ -243,7 +246,7 @@ func (t *transactionAttempt) stageInsert(
 		switch cerr.Class {
 		case ErrorClassFailAmbiguous:
 			time.AfterFunc(3*time.Millisecond, func() {
-				t.stageInsert(agent, scopeName, collectionName, key, value, cas, cb)
+				t.stageInsert(agent, oboUser, scopeName, collectionName, key, value, cas, cb)
 			})
 		case ErrorClassFailExpiry:
 			t.setExpiryOvertimeAtomic()
@@ -270,7 +273,7 @@ func (t *transactionAttempt) stageInsert(
 		case ErrorClassFailDocAlreadyExists:
 			fallthrough
 		case ErrorClassFailCasMismatch:
-			t.resolveConflictedInsert(agent, scopeName, collectionName, key, value, cb)
+			t.resolveConflictedInsert(agent, oboUser, scopeName, collectionName, key, value, cb)
 		default:
 			cb(nil, t.operationFailed(operationFailedDef{
 				Cerr:              cerr,
@@ -296,6 +299,7 @@ func (t *transactionAttempt) stageInsert(
 			stagedInfo := &stagedMutation{
 				OpType:         StagedMutationInsert,
 				Agent:          agent,
+				OboUser:        oboUser,
 				ScopeName:      scopeName,
 				CollectionName: collectionName,
 				Key:            key,
@@ -352,6 +356,7 @@ func (t *transactionAttempt) stageInsert(
 				DurabilityLevelTimeout: duraTimeout,
 				Deadline:               deadline,
 				Flags:                  flags,
+				User:                   stagedInfo.OboUser,
 			}, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
 					ecCb(nil, classifyError(err))
@@ -370,6 +375,7 @@ func (t *transactionAttempt) stageInsert(
 
 						ecCb(&GetResult{
 							agent:          stagedInfo.Agent,
+							oboUser:        stagedInfo.OboUser,
 							scopeName:      stagedInfo.ScopeName,
 							collectionName: stagedInfo.CollectionName,
 							key:            stagedInfo.Key,
@@ -389,6 +395,7 @@ func (t *transactionAttempt) stageInsert(
 
 func (t *transactionAttempt) getMetaForConflictedInsert(
 	agent *gocbcore.Agent,
+	oboUser string,
 	scopeName string,
 	collectionName string,
 	key []byte,
@@ -446,6 +453,7 @@ func (t *transactionAttempt) getMetaForConflictedInsert(
 			},
 			Deadline: deadline,
 			Flags:    memd.SubdocDocFlagAccessDeleted,
+			User:     oboUser,
 		}, func(result *gocbcore.LookupInResult, err error) {
 			if err != nil {
 				ecCb(false, nil, 0, classifyError(err))
@@ -474,6 +482,7 @@ func (t *transactionAttempt) getMetaForConflictedInsert(
 
 func (t *transactionAttempt) cleanupStagedInsert(
 	agent *gocbcore.Agent,
+	oboUser string,
 	scopeName string,
 	collectionName string,
 	key []byte,
@@ -531,6 +540,7 @@ func (t *transactionAttempt) cleanupStagedInsert(
 			CollectionName: collectionName,
 			Key:            key,
 			Deadline:       deadline,
+			User:           oboUser,
 		}, func(result *gocbcore.DeleteResult, err error) {
 			if err != nil {
 				ecCb(0, classifyError(err))

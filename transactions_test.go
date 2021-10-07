@@ -58,10 +58,10 @@ func TestSomethingElse(t *testing.T) {
 
 	transactions, err := Init(&Config{
 		DurabilityLevel: DurabilityLevelNone,
-		BucketAgentProvider: func(bucketName string) (*gocbcore.Agent, error) {
+		BucketAgentProvider: func(bucketName string) (*gocbcore.Agent, string, error) {
 			// We can always return just this one agent as we only actually
 			// use a single bucket for this entire test.
-			return agent, nil
+			return agent, "", nil
 		},
 		ExpirationTime:        30 * time.Second,
 		CleanupClientAttempts: true,
@@ -186,10 +186,10 @@ func TestSomething(t *testing.T) {
 
 	transactions, err := Init(&Config{
 		DurabilityLevel: DurabilityLevelNone,
-		BucketAgentProvider: func(bucketName string) (*gocbcore.Agent, error) {
+		BucketAgentProvider: func(bucketName string) (*gocbcore.Agent, string, error) {
 			// We can always return just this one agent as we only actually
 			// use a single bucket for this entire test.
-			return agent, nil
+			return agent, "", nil
 		},
 		ExpirationTime: 60 * time.Second,
 	})
@@ -386,7 +386,7 @@ func TestSomething(t *testing.T) {
 
 	log.Printf("resume data was... %s", txnBytes)
 
-	txn, err = transactions.ResumeTransactionAttempt(txnBytes)
+	txn, err = transactions.ResumeTransactionAttempt(txnBytes, nil)
 	assert.NoError(t, err, "txn resume failed")
 
 	log.Printf("resumed attempt: %+v", txn.attempt)

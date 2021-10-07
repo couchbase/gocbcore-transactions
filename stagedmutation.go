@@ -78,6 +78,7 @@ type StagedMutation struct {
 type stagedMutation struct {
 	OpType         StagedMutationType
 	Agent          *gocbcore.Agent
+	OboUser        string
 	ScopeName      string
 	CollectionName string
 	Key            []byte

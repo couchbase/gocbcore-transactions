@@ -258,6 +258,7 @@ func (t *transactionAttempt) removeStagedInsert(
 						Flags: memd.SubdocFlagXattrPath,
 					},
 				},
+				User: mutation.OboUser,
 			}, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
 					ecCb(classifyError(err))
@@ -383,6 +384,7 @@ func (t *transactionAttempt) removeStagedRemoveReplace(
 						Flags: memd.SubdocFlagXattrPath,
 					},
 				},
+				User: mutation.OboUser,
 			}, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
 					ecCb(classifyError(err))

@@ -41,8 +41,8 @@ func Init(config *Config) (*Manager, error) {
 		CleanupWindow:         60000 * time.Millisecond,
 		CleanupClientAttempts: true,
 		CleanupLostAttempts:   true,
-		BucketAgentProvider: func(bucketName string) (*gocbcore.Agent, error) {
-			return nil, errors.New("no bucket agent provider was specified")
+		BucketAgentProvider: func(bucketName string) (*gocbcore.Agent, string, error) {
+			return nil, "", errors.New("no bucket agent provider was specified")
 		},
 	}
 
@@ -151,9 +151,24 @@ func (t *Manager) BeginTransaction(perConfig *PerTransactionConfig) (*Transactio
 	}, nil
 }
 
+// ResumeTransactionOptions specifies options which can be overriden for the resumed transaction.
+type ResumeTransactionOptions struct {
+	// BucketAgentProvider provides a function which returns an agent for
+	// a particular bucket by name.
+	BucketAgentProvider BucketAgentProviderFn
+}
+
 // ResumeTransactionAttempt allows the resumption of an existing transaction attempt
 // which was previously serialized, potentially by a different transaction client.
-func (t *Manager) ResumeTransactionAttempt(txnBytes []byte) (*Transaction, error) {
+func (t *Manager) ResumeTransactionAttempt(txnBytes []byte, options *ResumeTransactionOptions) (*Transaction, error) {
+	bucketAgentProvider := t.config.BucketAgentProvider
+
+	if options != nil {
+		if options.BucketAgentProvider != nil {
+			bucketAgentProvider = options.BucketAgentProvider
+		}
+	}
+
 	var txnData jsonSerializedAttempt
 	err := json.Unmarshal(txnBytes, &txnData)
 	if err != nil {
@@ -180,13 +195,14 @@ func (t *Manager) ResumeTransactionAttempt(txnBytes []byte) (*Transaction, error
 	if txnData.ATR.Bucket != "" && txnData.ATR.ID == "" {
 		// ATR references the specific ATR for this transaction.
 
-		foundAtrAgent, err := t.config.BucketAgentProvider(txnData.ATR.Bucket)
+		foundAtrAgent, foundAtrOboUser, err := t.config.BucketAgentProvider(txnData.ATR.Bucket)
 		if err != nil {
 			return nil, err
 		}
 
 		atrLocation = ATRLocation{
 			Agent:          foundAtrAgent,
+			OboUser:        foundAtrOboUser,
 			ScopeName:      txnData.ATR.Scope,
 			CollectionName: txnData.ATR.Collection,
 		}
@@ -195,6 +211,7 @@ func (t *Manager) ResumeTransactionAttempt(txnBytes []byte) (*Transaction, error
 
 		atrLocation = ATRLocation{
 			Agent:          nil,
+			OboUser:        "",
 			ScopeName:      "",
 			CollectionName: "",
 		}
@@ -225,7 +242,7 @@ func (t *Manager) ResumeTransactionAttempt(txnBytes []byte) (*Transaction, error
 		enableParallelUnstaging: t.config.Internal.EnableParallelUnstaging,
 		enableExplicitATRs:      t.config.Internal.EnableExplicitATRs,
 		enableMutationCaching:   t.config.Internal.EnableMutationCaching,
-		bucketAgentProvider:     t.config.BucketAgentProvider,
+		bucketAgentProvider:     bucketAgentProvider,
 	}
 
 	err = txn.resumeAttempt(&txnData)
@@ -266,6 +283,7 @@ func (t *Manager) Internal() *ManagerInternal {
 // CreateGetResultOptions exposes options for the Internal CreateGetResult method.
 type CreateGetResultOptions struct {
 	Agent          *gocbcore.Agent
+	OboUser        string
 	ScopeName      string
 	CollectionName string
 	Key            []byte
@@ -278,6 +296,7 @@ type CreateGetResultOptions struct {
 func (t *ManagerInternal) CreateGetResult(opts CreateGetResultOptions) *GetResult {
 	return &GetResult{
 		agent:          opts.Agent,
+		oboUser:        opts.OboUser,
 		scopeName:      opts.ScopeName,
 		collectionName: opts.CollectionName,
 		key:            opts.Key,

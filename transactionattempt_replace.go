@@ -55,6 +55,7 @@ func (t *transactionAttempt) replace(
 		}
 
 		agent := opts.Document.agent
+		oboUser := opts.Document.oboUser
 		scopeName := opts.Document.scopeName
 		collectionName := opts.Document.collectionName
 		key := opts.Document.key
@@ -81,7 +82,7 @@ func (t *transactionAttempt) replace(
 				switch existingMutation.OpType {
 				case StagedMutationInsert:
 					t.stageInsert(
-						agent, scopeName, collectionName, key,
+						agent, oboUser, scopeName, collectionName, key,
 						value, cas,
 						func(result *GetResult, err *TransactionOperationFailedError) {
 							endAndCb(result, err)
@@ -114,7 +115,7 @@ func (t *transactionAttempt) replace(
 
 			t.writeWriteConflictPoll(
 				forwardCompatStageWWCReplacing,
-				agent, scopeName, collectionName, key, cas,
+				agent, oboUser, scopeName, collectionName, key, cas,
 				meta,
 				existingMutation,
 				func(err *TransactionOperationFailedError) {
@@ -123,14 +124,14 @@ func (t *transactionAttempt) replace(
 						return
 					}
 
-					t.confirmATRPending(agent, scopeName, collectionName, key, func(err *TransactionOperationFailedError) {
+					t.confirmATRPending(agent, oboUser, scopeName, collectionName, key, func(err *TransactionOperationFailedError) {
 						if err != nil {
 							endAndCb(nil, err)
 							return
 						}
 
 						t.stageReplace(
-							agent, scopeName, collectionName, key,
+							agent, oboUser, scopeName, collectionName, key,
 							value, cas,
 							func(result *GetResult, err *TransactionOperationFailedError) {
 								endAndCb(result, err)
@@ -145,6 +146,7 @@ func (t *transactionAttempt) replace(
 
 func (t *transactionAttempt) stageReplace(
 	agent *gocbcore.Agent,
+	oboUser string,
 	scopeName string,
 	collectionName string,
 	key []byte,
@@ -231,6 +233,7 @@ func (t *transactionAttempt) stageReplace(
 			stagedInfo := &stagedMutation{
 				OpType:         StagedMutationReplace,
 				Agent:          agent,
+				OboUser:        oboUser,
 				ScopeName:      scopeName,
 				CollectionName: collectionName,
 				Key:            key,
@@ -301,6 +304,7 @@ func (t *transactionAttempt) stageReplace(
 				DurabilityLevel:        durabilityLevelToMemd(t.durabilityLevel),
 				DurabilityLevelTimeout: duraTimeout,
 				Deadline:               deadline,
+				User:                   stagedInfo.OboUser,
 			}, func(result *gocbcore.MutateInResult, err error) {
 				if err != nil {
 					ecCb(nil, classifyError(err))
@@ -319,6 +323,7 @@ func (t *transactionAttempt) stageReplace(
 
 						ecCb(&GetResult{
 							agent:          stagedInfo.Agent,
+							oboUser:        stagedInfo.OboUser,
 							scopeName:      stagedInfo.ScopeName,
 							collectionName: stagedInfo.CollectionName,
 							key:            stagedInfo.Key,
