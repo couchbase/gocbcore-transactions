@@ -375,6 +375,14 @@ func (t *Transaction) ShouldRetry() bool {
 	return t.attempt.ShouldRetry()
 }
 
+func (t *Transaction) TimeRemaining() time.Duration {
+	if t.attempt == nil {
+		return 0
+	}
+
+	return t.attempt.TimeRemaining()
+}
+
 // SerializeAttempt will serialize the current transaction attempt, allowing it
 // to be resumed later, potentially under a different transactions client.  It
 // is no longer safe to use this attempt once this has occurred, a new attempt
@@ -420,16 +428,9 @@ func (t *Transaction) SetATRLocation(location ATRLocation) error {
 // Note also that after a transaction is resumed, the custom atr location
 // may no longer reflect the originally configured value.
 func (t *Transaction) Config() PerTransactionConfig {
-	curTime := time.Now()
-
-	timeLeft := time.Duration(0)
-	if curTime.Before(t.expiryTime) {
-		timeLeft = curTime.Sub(t.expiryTime)
-	}
-
 	return PerTransactionConfig{
 		CustomATRLocation: t.atrLocation,
-		ExpirationTime:    timeLeft,
+		ExpirationTime:    t.TimeRemaining(),
 		DurabilityLevel:   t.durabilityLevel,
 		KeyValueTimeout:   t.keyValueTimeout,
 	}

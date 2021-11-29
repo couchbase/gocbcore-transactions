@@ -42,6 +42,7 @@ func ProtocolExtensions() []string {
 		"BF_CBD_3787",
 		"BF_CBD_3705",
 		"BF_CBD_3838",
+		"EXT_QUERY",
 	}
 }
 

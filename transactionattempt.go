@@ -49,7 +49,6 @@ type transactionAttempt struct {
 	atrScopeName      string
 	atrCollectionName string
 	atrKey            []byte
-	previousErrors    []*TransactionOperationFailedError
 
 	unstagingComplete bool
 
@@ -183,10 +182,27 @@ func (t *transactionAttempt) GetMutations() []StagedMutation {
 	return mutations
 }
 
+func (t *transactionAttempt) TimeRemaining() time.Duration {
+	curTime := time.Now()
+
+	timeLeft := time.Duration(0)
+	if curTime.Before(t.expiryTime) {
+		timeLeft = t.expiryTime.Sub(curTime)
+	}
+
+	return timeLeft
+}
+
 func (t *transactionAttempt) Serialize(cb func([]byte, error)) error {
 	var res jsonSerializedAttempt
 
 	t.waitForOpsAndLock(func(unlock func()) {
+		if err := t.checkCanCommitLocked(); err != nil {
+			unlock()
+			cb(nil, err)
+			return
+		}
+
 		res.ID.Transaction = t.transactionID
 		res.ID.Attempt = t.id
 
@@ -206,7 +222,7 @@ func (t *transactionAttempt) Serialize(cb func([]byte, error)) error {
 		res.Config.DurabilityLevel = durabilityLevelToString(t.durabilityLevel)
 		res.Config.NumAtrs = 1024
 
-		res.State.TimeLeftMs = int(t.expiryTime.Sub(time.Now()) / time.Millisecond)
+		res.State.TimeLeftMs = int(t.TimeRemaining().Milliseconds())
 
 		for _, mutation := range t.stagedMutations {
 			var mutationData jsonSerializedMutation
@@ -219,6 +235,9 @@ func (t *transactionAttempt) Serialize(cb func([]byte, error)) error {
 			mutationData.Type = stagedMutationTypeToString(mutation.OpType)
 
 			res.Mutations = append(res.Mutations, mutationData)
+		}
+		if len(res.Mutations) == 0 {
+			res.Mutations = []jsonSerializedMutation{}
 		}
 
 		unlock()

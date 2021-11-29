@@ -18,7 +18,6 @@ package transactions
 // transaction may require multiple attempts before being successful.
 type Attempt struct {
 	State             AttemptState
-	StateIsAmbiguous  bool
 	ID                string
 	AtrID             []byte
 	AtrBucketName     string
