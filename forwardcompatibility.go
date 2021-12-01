@@ -39,6 +39,7 @@ func ProtocolExtensions() []string {
 		"EXT_STORE_DURABILITY",
 		"EXT_REMOVE_COMPLETED",
 		"EXT_ALL_KV_COMBINATIONS",
+		"EXT_UNKNOWN_ATR_STATES",
 		"BF_CBD_3787",
 		"BF_CBD_3705",
 		"BF_CBD_3838",
@@ -68,6 +69,7 @@ const (
 	forwardCompatExtensionStoreDurability          forwardCompatExtension = "SD"
 	forwardCompatExtensionRemoveCompleted          forwardCompatExtension = "RC"
 	forwardCompatExtensionAllKvCombinations        forwardCompatExtension = "CO"
+	forwardCompatExtensionUnknownATRStates         forwardCompatExtension = "UA"
 	forwardCompatExtensionBFCBD3787                forwardCompatExtension = "BF3787"
 	forwardCompatExtensionBFCBD3705                forwardCompatExtension = "BF3705"
 	forwardCompatExtensionBFCBD3838                forwardCompatExtension = "BF3838"
@@ -111,6 +113,7 @@ var supportedforwardCompatExtensions = []forwardCompatExtension{
 	forwardCompatExtensionStoreDurability,
 	forwardCompatExtensionRemoveCompleted,
 	forwardCompatExtensionAllKvCombinations,
+	forwardCompatExtensionUnknownATRStates,
 	forwardCompatExtensionBFCBD3787,
 	forwardCompatExtensionBFCBD3705,
 	forwardCompatExtensionBFCBD3838,
