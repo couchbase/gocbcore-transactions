@@ -435,3 +435,24 @@ func (t *Transaction) Config() PerTransactionConfig {
 		KeyValueTimeout:   t.keyValueTimeout,
 	}
 }
+
+// UpdateStateOptions are the settings available to UpdateState.
+// This function must only be called once the transaction has entered query mode.
+// Internal: This should never be used and is not supported.
+type UpdateStateOptions struct {
+	ShouldNotCommit   bool
+	ShouldNotRollback bool
+	ShouldNotRetry    bool
+	HasExpired        bool
+	State             AttemptState
+}
+
+// UpdateState will update the internal state of the current attempt.
+// Internal: This should never be used and is not supported.
+func (t *Transaction) UpdateState(opts UpdateStateOptions) {
+	if t.attempt == nil {
+		return
+	}
+
+	t.attempt.UpdateState(opts)
+}

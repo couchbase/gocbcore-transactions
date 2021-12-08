@@ -124,6 +124,29 @@ func (t *transactionAttempt) ShouldRetry() bool {
 		(stateBits&transactionStateBitHasExpired) == 0
 }
 
+func (t *transactionAttempt) UpdateState(opts UpdateStateOptions) {
+	stateBits := uint32(0)
+	if opts.ShouldNotCommit {
+		stateBits |= transactionStateBitShouldNotCommit
+	}
+	if opts.ShouldNotRollback {
+		stateBits |= transactionStateBitShouldNotRollback
+	}
+	if opts.ShouldNotRetry {
+		stateBits |= transactionStateBitShouldNotRetry
+	}
+	if opts.HasExpired {
+		stateBits |= transactionStateBitHasExpired
+	}
+	t.applyStateBits(stateBits)
+
+	t.lock.LockSync()
+	if opts.State > 0 {
+		t.state = opts.State
+	}
+	t.lock.UnlockSync()
+}
+
 func (t *transactionAttempt) GetATRLocation() ATRLocation {
 	t.lock.LockSync()
 
